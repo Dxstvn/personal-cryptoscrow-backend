@@ -41,7 +41,7 @@ router.post("/signInEmailPass", async (req, res) => {
     console.log("User signed in via email and password");
     res.status(200).json({ message: "User signed in", uid: user.uid });
     // Perform UID check before sending response
-    if (user.uid !== "qmKQsr8ZKJb6p7HKeLRGzcB1dsA2") {
+    if (user.uid !== "qmKQsr8ZKJb6p7HKeLRGzcB1dsA2" || decodedToken.email !== "andyrowe00@gmail.com") {
       throw new Error("Unauthorized user");
     }
   } catch (error) {
@@ -63,7 +63,7 @@ router.post("/signInGoogle", async (req, res) => {
     const decodedToken = await auth.verifyIdToken(idToken);
     const uid = decodedToken.uid;
     // Perform UID check before sending response
-    if (uid !== "qmKQsr8ZKJb6p7HKeLRGzcB1dsA2") {
+    if (uid !== "qmKQsr8ZKJb6p7HKeLRGzcB1dsA2" || decodedToken.email !== "andyrowe00@gmail.com") {
       throw new Error("Unauthorized user");
     }
 
