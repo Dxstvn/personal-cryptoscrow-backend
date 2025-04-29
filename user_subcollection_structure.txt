@@ -1,0 +1,13 @@
+users (collection)
+  {userUID} (document)
+    email
+    first_name
+    last_name
+    phone_number
+    contacts (subcollection)
+      {contactID} (document)
+        email
+        first_name
+        last_name
+        phone_number
+        accepted

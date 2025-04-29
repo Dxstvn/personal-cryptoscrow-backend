@@ -1,0 +1,56 @@
+{
+  "name": "personal-crypto-escrow-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Manually creating backend for CryptoEscrow web app",
+  "main": "src/api/routes/auth/quicktest.js",
+  "scripts": {
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
+    "test:auth": "node --experimental-vm-modules node_modules/jest/bin/jest.js src/api/routes/auth/__tests__/auth.test.js"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "transform": {},
+    "moduleNameMapper": {
+      "^(\\.{1,2}/.*)\\.js$": "$1"
+    },
+    "setupFiles": [
+      "./jest.setup.js"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dxstvn/personal-crypto-escrow-backend.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Dxstvn/personal-crypto-escrow-backend/issues"
+  },
+  "homepage": "https://github.com/Dxstvn/personal-crypto-escrow-backend#readme",
+  "devDependencies": {
+    "@firebase/auth": "^0.22.0",
+    "@firebase/firestore": "4.7.11",
+    "express": "^4.19.2",
+    "firebase": "^10.11.0",
+    "firebase-admin": "^11.10.0",
+    "jest": "^29.7.0",
+    "supertest": "^6.3.4",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@coinbase/wallet-sdk": "^4.3.2",
+    "@firebase/firestore": "^4.7.11",
+    "@google-cloud/storage": "^7.16.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "firestore": "^1.1.6",
+    "multer": "^1.4.5-lts.2",
+    "nodemailer": "^6.10.1",
+    "web3": "^4.16.0",
+    "x": "^0.1.2"
+  },
+  "keywords": []
+}
