@@ -1,0 +1,21 @@
+{
+  "emulators": {
+    "auth": {
+      "port": 9099
+    },
+    "firestore": {
+      "port": 5004,
+      "rules": "firestore.rules",
+      "indexes": "firestore.indexes.json"
+    },
+    "storage": {
+      "port": 9199,
+      "rules": "storage.rules"
+    },
+    "ui": {
+      "enabled": true
+    },
+    "singleProjectMode": true,
+    "projectId": "demo-test"
+  }
+}

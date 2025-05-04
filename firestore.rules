@@ -1,0 +1,22 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if user is a participant
+    function isParticipant(dealId) {
+      return exists(/databases/$(database)/documents/deals/$(dealId)) &&
+             request.auth.uid in get(/databases/$(database)/documents/deals/$(dealId)).data.participants;
+    }
+
+    // Deals collection
+    match /deals/{dealId} {
+      // Allow read/write only for participants
+      allow read, write: if request.auth != null && isParticipant(dealId);
+
+      // Files subcollection
+      match /files/{fileId} {
+        // Allow read/write only for participants
+        allow read, write: if request.auth != null && isParticipant(dealId);
+      }
+    }
+  }
+}

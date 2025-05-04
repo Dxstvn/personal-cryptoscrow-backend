@@ -5,20 +5,16 @@
   "description": "Manually creating backend for CryptoEscrow web app",
   "main": "src/api/routes/auth/quicktest.js",
   "scripts": {
-    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
-    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
-    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
-    "test:auth": "node --experimental-vm-modules node_modules/jest/bin/jest.js src/api/routes/auth/__tests__/auth.test.js"
-  },
-  "jest": {
-    "testEnvironment": "node",
-    "transform": {},
-    "moduleNameMapper": {
-      "^(\\.{1,2}/.*)\\.js$": "$1"
-    },
-    "setupFiles": [
-      "./jest.setup.js"
-    ]
+    "start": "node src/api/routes/auth/quicktest.js",
+    "test": "NODE_ENV=test node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:watch": "NODE_ENV=test node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
+    "test:coverage": "NODE_ENV=test node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
+    "test:auth": "NODE_ENV=test node --experimental-vm-modules node_modules/jest/bin/jest.js src/api/routes/auth/__tests__/auth.test.js",
+    "emulators": "firebase emulators:start",
+    "test:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:auth:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 node --experimental-vm-modules node_modules/jest/bin/jest.js src/api/routes/auth/__tests__/auth.test.js",
+    "test:fileUploadDownload:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 node --experimental-vm-modules node_modules/jest/bin/jest.js src/api/routes/database/__tests__/fileUploadDownload.test.js",
+    "test:contactRoutes:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 node --experimental-vm-modules node_modules/jest/bin/jest.js src/api/routes/contact/__tests__/contactRoutes.test.js"
   },
   "repository": {
     "type": "git",
@@ -34,7 +30,7 @@
     "@firebase/auth": "^0.22.0",
     "@firebase/firestore": "4.7.11",
     "express": "^4.19.2",
-    "firebase": "^10.11.0",
+    "firebase": "^11.6.1",
     "firebase-admin": "^11.10.0",
     "jest": "^29.7.0",
     "supertest": "^6.3.4",
@@ -43,13 +39,15 @@
   "dependencies": {
     "@coinbase/wallet-sdk": "^4.3.2",
     "@firebase/firestore": "^4.7.11",
+    "@firebase/storage": "^0.13.7",
     "@google-cloud/storage": "^7.16.0",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "firestore": "^1.1.6",
     "multer": "^1.4.5-lts.2",
+    "node-fetch": "^3.3.2",
     "nodemailer": "^6.10.1",
-    "web3": "^4.16.0",
+    "uuid": "^11.1.0",
     "x": "^0.1.2"
   },
   "keywords": []

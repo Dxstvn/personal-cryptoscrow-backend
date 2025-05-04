@@ -1,10 +1,12 @@
 import express from "express";
 import loginRouter from "./loginSignUp.js";
-import fileUploadRouter from "../database/fileUpload.js";
+import fileUploadRouter from "../database/fileUploadDownload.js";
 import healthCheckRouter from "../health/health.js";
 import contactRouter from "../contact/contactRoutes.js";
+import walletAdditionRouter from "../wallet/walletUpdate.js";
 
 import cors from "cors";
+import { server } from "typescript";
 
 const app = express();
 const port = 3000;
@@ -19,10 +21,12 @@ app.use(express.json());
 app.use("/auth", loginRouter);
 app.use("/files", fileUploadRouter);
 app.use("/health", healthCheckRouter);
-app.use("/api/contact", contactRouter);
+app.use("/contact", contactRouter);
+app.use("/wallet", walletAdditionRouter);
 
 
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
 
+export default app;

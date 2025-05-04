@@ -1,48 +1,99 @@
 // Import required modules
 import request from 'supertest';
-import app from '../quicktest.js'; // Import your Express app
-import {
-  mockCreateUserWithEmailAndPassword,
-  mockSignInWithEmailAndPassword,
-  mockVerifyIdToken,
-  mockAuth,
-  mockAdminAuth
-} from './setup.js';
+import express from 'express';
+import loginRouter from '../loginSignUp.js';
+import { auth, adminAuth } from '/Users/dustinjasmin/personal-cryptoscrow-backend/jest.emulator.setup.js';
+
+// Create test app
+const app = express();
+app.use(express.json());
+app.use("/auth", loginRouter);
+
+// Mock user data for tests
+const mockUser = {
+  email: `testuser-${Date.now()}@example.com`,
+  password: 'password123',
+};
+
+const mockUserDuplicate = {
+  email: `duplicate-${Date.now()}@example.com`,
+  password: 'password123',
+};
 
 // Test suite for authentication routes
 describe('Authentication Routes', () => {
+  // Clean up before running tests
+  beforeAll(async () => {
+    try {
+      const userList = await adminAuth.listUsers(1000);
+      const userIds = userList.users.map(user => user.uid);
+      if (userIds.length > 0) {
+        console.log(`BeforeAll: Deleting ${userIds.length} users: ${userIds.join(', ')}`);
+        await Promise.all(userIds.map(uid => adminAuth.deleteUser(uid)));
+      } else {
+        console.log('BeforeAll: No users to delete');
+      }
+    } catch (error) {
+      console.error('BeforeAll cleanup failed:', error);
+      throw error;
+    }
+  });
+
+  // Clean up before each test
+  beforeEach(async () => {
+    try {
+      const userList = await adminAuth.listUsers(1000);
+      const userIds = userList.users.map(user => user.uid);
+      if (userIds.length > 0) {
+        console.log(`BeforeEach: Deleting ${userIds.length} users: ${userIds.join(', ')}`);
+        await Promise.all(userIds.map(uid => adminAuth.deleteUser(uid)));
+      } else {
+        console.log('BeforeEach: No users to delete');
+      }
+    } catch (error) {
+      console.error('Pre-test cleanup failed:', error);
+      throw error;
+    }
+  });
+
+  // Clean up after each test
+  afterEach(async () => {
+    try {
+      const userList = await adminAuth.listUsers(1000);
+      const userIds = userList.users.map(user => user.uid);
+      if (userIds.length > 0) {
+        console.log(`AfterEach: Deleting ${userIds.length} users: ${userIds.join(', ')}`);
+        await Promise.all(userIds.map(uid => adminAuth.deleteUser(uid)));
+      } else {
+        console.log('AfterEach: No users to delete');
+      }
+    } catch (error) {
+      console.error('Cleanup failed:', error);
+      throw error;
+    }
+  });
+
   // Email/Password Sign-Up Tests
   describe('Email/Password Sign-Up', () => {
     it('should successfully sign up a new user with valid credentials', async () => {
-      // Mock successful user creation
-      const mockUser = { uid: 'test-uid' };
-      mockCreateUserWithEmailAndPassword.mockResolvedValueOnce({ user: mockUser });
+      try {
+        const response = await request(app)
+          .post('/auth/signUpEmailPass')
+          .send(mockUser);
 
-      const userData = {
-        email: 'test@example.com',
-        password: 'password123'
-      };
-
-      const response = await request(app)
-        .post('/auth/signUpEmailPass')
-        .send(userData);
-
-      expect(response.status).toBe(201);
-      expect(response.body).toEqual({
-        message: 'User created',
-        uid: mockUser.uid
-      });
-      expect(mockCreateUserWithEmailAndPassword).toHaveBeenCalledWith(
-        mockAuth,
-        userData.email,
-        userData.password
-      );
+        expect(response.status).toBe(201);
+        expect(response.body).toHaveProperty('uid');
+        expect(response.body).toHaveProperty('message', 'User created');
+      } catch (error) {
+        console.error('Test error:', error);
+        throw error;
+      }
     });
 
     it('should reject sign-up with missing email', async () => {
       const response = await request(app)
         .post('/auth/signUpEmailPass')
-        .send({ password: 'password123' });
+        .send({ password: mockUser.password });
 
       expect(response.status).toBe(400);
       expect(response.body).toEqual({ error: 'Email and password are required' });
@@ -51,24 +102,29 @@ describe('Authentication Routes', () => {
     it('should reject sign-up with missing password', async () => {
       const response = await request(app)
         .post('/auth/signUpEmailPass')
-        .send({ email: 'test@example.com' });
+        .send({ email: mockUser.email });
 
       expect(response.status).toBe(400);
       expect(response.body).toEqual({ error: 'Email and password are required' });
     });
 
-    it('should handle Firebase errors during sign-up', async () => {
-      mockCreateUserWithEmailAndPassword.mockRejectedValueOnce({
-        code: 'auth/email-already-in-use',
-        message: 'Email already in use'
-      });
+    it('should handle duplicate email during sign-up', async () => {
+      // First create a user via the sign-up endpoint
+      const firstResponse = await request(app)
+        .post('/auth/signUpEmailPass')
+        .send(mockUserDuplicate);
+      expect(firstResponse.status).toBe(201);
 
+      // Sign in to confirm the user exists
+      const signInResponse = await request(app)
+        .post('/auth/signInEmailPass')
+        .send(mockUserDuplicate);
+      expect(signInResponse.status).toBe(200);
+
+      // Try to create another user with the same email
       const response = await request(app)
         .post('/auth/signUpEmailPass')
-        .send({
-          email: 'existing@example.com',
-          password: 'password123'
-        });
+        .send(mockUserDuplicate);
 
       expect(response.status).toBe(401);
       expect(response.body).toEqual({ error: 'Email already in use' });
@@ -77,41 +133,29 @@ describe('Authentication Routes', () => {
 
   // Email/Password Sign-In Tests
   describe('Email/Password Sign-In', () => {
-    it('should successfully sign in with valid credentials', async () => {
-      const mockUser = { uid: 'test-uid' };
-      mockSignInWithEmailAndPassword.mockResolvedValueOnce({ user: mockUser });
-
-      const userData = {
-        email: 'test@example.com',
-        password: 'password123'
-      };
-
-      const response = await request(app)
-        .post('/auth/signInEmailPass')
-        .send(userData);
-
-      expect(response.status).toBe(200);
-      expect(response.body).toEqual({
-        message: 'User signed in',
-        uid: mockUser.uid
+    beforeEach(async () => {
+      // Create a test user directly via the emulator
+      await adminAuth.createUser({
+        email: mockUser.email,
+        password: mockUser.password,
       });
-      expect(mockSignInWithEmailAndPassword).toHaveBeenCalledWith(
-        mockAuth,
-        userData.email,
-        userData.password
-      );
     });
 
-    it('should reject sign-in with invalid credentials', async () => {
-      mockSignInWithEmailAndPassword.mockRejectedValueOnce({
-        code: 'auth/wrong-password',
-        message: 'Invalid password'
-      });
+    it('should successfully sign in with valid credentials', async () => {
+      const response = await request(app)
+        .post('/auth/signInEmailPass')
+        .send(mockUser);
 
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('uid');
+      expect(response.body).toHaveProperty('message', 'User signed in');
+    });
+
+    it('should reject sign-in with invalid password', async () => {
       const response = await request(app)
         .post('/auth/signInEmailPass')
         .send({
-          email: 'test@example.com',
+          email: mockUser.email,
           password: 'wrongpassword'
         });
 
@@ -120,16 +164,11 @@ describe('Authentication Routes', () => {
     });
 
     it('should reject sign-in for non-existent user', async () => {
-      mockSignInWithEmailAndPassword.mockRejectedValueOnce({
-        code: 'auth/user-not-found',
-        message: 'User not found'
-      });
-
       const response = await request(app)
         .post('/auth/signInEmailPass')
         .send({
           email: 'nonexistent@example.com',
-          password: 'password123'
+          password: mockUser.password
         });
 
       expect(response.status).toBe(401);
@@ -140,31 +179,29 @@ describe('Authentication Routes', () => {
   // Google Sign-In Tests
   describe('Google Sign-In', () => {
     it('should successfully authenticate with valid Google ID token', async () => {
-      const mockDecodedToken = {
-        uid: 'qmKQsr8ZKJb6p7HKeLRGzcB1dsA2',
-        email: 'admin@example.com'
-      };
-      mockVerifyIdToken.mockResolvedValueOnce(mockDecodedToken);
+      // Create a test admin user
+      const adminUser = await adminAuth.createUser({
+        email: 'admin@example.com',
+        password: 'password123'
+      });
+      await adminAuth.setCustomUserClaims(adminUser.uid, { admin: true });
 
+      // For testing, we use the UID directly as the token
+      const customToken = adminUser.uid;
+      
       const response = await request(app)
         .post('/auth/signInGoogle')
-        .send({ idToken: 'valid-google-id-token' });
+        .send({ idToken: customToken });
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual({
         message: 'User authenticated',
-        uid: mockDecodedToken.uid,
+        uid: adminUser.uid,
         isAdmin: true
       });
-      expect(mockVerifyIdToken).toHaveBeenCalledWith('valid-google-id-token');
     });
 
     it('should reject Google sign-in with invalid token', async () => {
-      mockVerifyIdToken.mockRejectedValueOnce({
-        code: 'auth/invalid-id-token',
-        message: 'Invalid ID token'
-      });
-
       const response = await request(app)
         .post('/auth/signInGoogle')
         .send({ idToken: 'invalid-token' });
@@ -174,15 +211,18 @@ describe('Authentication Routes', () => {
     });
 
     it('should reject Google sign-in for non-admin user', async () => {
-      const mockDecodedToken = {
-        uid: 'non-admin-uid',
-        email: 'user@example.com'
-      };
-      mockVerifyIdToken.mockResolvedValueOnce(mockDecodedToken);
+      // Create a test non-admin user
+      const regularUser = await adminAuth.createUser({
+        email: 'user@example.com',
+        password: 'password123'
+      });
+      
+      // For testing, we use the UID directly as the token
+      const customToken = regularUser.uid;
 
       const response = await request(app)
         .post('/auth/signInGoogle')
-        .send({ idToken: 'valid-google-id-token' });
+        .send({ idToken: customToken });
 
       expect(response.status).toBe(401);
       expect(response.body).toEqual({ error: 'Unauthorized user' });
@@ -197,4 +237,4 @@ describe('Authentication Routes', () => {
       expect(response.body).toEqual({ error: 'Missing ID token' });
     });
   });
-}); 
+});
