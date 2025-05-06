@@ -1,10 +1,10 @@
+import 'dotenv/config';
 import express from "express";
 import loginRouter from "./loginSignUp.js";
 import fileUploadRouter from "../database/fileUploadDownload.js";
 import healthCheckRouter from "../health/health.js";
 import contactRouter from "../contact/contactRoutes.js";
 import walletAdditionRouter from "../wallet/walletUpdate.js";
-
 import cors from "cors";
 import { server } from "typescript";
 
