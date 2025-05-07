@@ -1,45 +1,54 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+// Use a version compatible with OpenZeppelin dependencies
+pragma solidity ^0.8.20; // <--- UPDATED VERSION
 
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/Ownable.sol"; // Optional: if you want an owner for emergency functions
 
 /**
  * @title PropertyEscrow
- * @dev A smart contract to manage escrow for property transactions.
- * The buyer deposits funds, and specifies conditions. Once all buyer-specified
- * conditions are met (confirmed by the buyer) and funds are deposited,
- * the funds can be released to the seller.
- * This contract is designed for a single escrow deal.
+ * @dev A smart contract to manage escrow for property transactions with a review and dispute period.
  */
 contract PropertyEscrow is ReentrancyGuard {
     address public seller;
     address public buyer;
     uint256 public escrowAmount;
 
+    uint256 public constant FINAL_APPROVAL_PERIOD = 48 hours; // 48 hours
+    uint256 public constant DISPUTE_RESOLUTION_PERIOD = 7 days; // 7 days
+
     enum State {
-        AWAITING_CONDITION_SETUP, // Initial state, seller has deployed, buyer needs to set conditions and deposit
-        AWAITING_DEPOSIT,         // Buyer has set conditions, awaiting funds
-        AWAITING_FULFILLMENT,     // Funds deposited, conditions set, awaiting buyer to confirm fulfillment
-        READY_FOR_RELEASE,        // All conditions met, funds deposited, ready for seller to claim or buyer to trigger release
+        AWAITING_CONDITION_SETUP, // Initial: buyer needs to set conditions
+        AWAITING_DEPOSIT,         // Conditions set, awaiting buyer funds
+        AWAITING_FULFILLMENT,     // Funds deposited, conditions set, awaiting buyer to confirm fulfillment of each
+        READY_FOR_FINAL_APPROVAL, // All conditions met by buyer, funds deposited, ready to start 48hr review
+        IN_FINAL_APPROVAL,        // 48hr review period active
+        IN_DISPUTE,               // Buyer raised a dispute during final approval
         COMPLETED,                // Funds released to seller
-        CANCELLED                 // Escrow cancelled, funds returned to buyer (if deposited)
+        CANCELLED                 // Escrow cancelled
     }
     State public currentState;
 
-    // Mapping from a condition ID (bytes32) to its status (true if fulfilled)
     mapping(bytes32 => bool) public conditionsFulfilled;
-    // Array to store the IDs of conditions required by the buyer
     bytes32[] public requiredConditionIds;
-
     bool public fundsDeposited;
+
+    uint256 public finalApprovalDeadline; // Timestamp when the 48-hour approval period ends
+    uint256 public disputeResolutionDeadline; // Timestamp when the 7-day dispute resolution period ends
+
+    mapping(address => bool) public hasApprovedFinalRelease; // Tracks if buyer/seller explicitly approved during final approval
 
     event EscrowCreated(address indexed seller, address indexed buyer, uint256 amount);
     event ConditionsSetByBuyer(bytes32[] conditionIds);
     event FundsDeposited(address indexed depositor, uint256 amount);
     event ConditionFulfilled(address indexed fulfiller, bytes32 indexed conditionId);
-    event FundsReleased(address indexed seller, uint256 amount);
+    event ConditionFulfilledReversed(address indexed buyer, bytes32 indexed conditionId);
+    event FinalApprovalPeriodStarted(uint256 deadline);
+    event DisputeRaised(address indexed buyer, bytes32[] currentlyUnfulfilledConditions, uint256 resolutionDeadline);
+    event ReleaseConfirmed(address indexed confirmer);
+    event FundsReleasedToSeller(address indexed seller, uint256 amount);
     event EscrowCancelled(address indexed canceller, address indexed refundee, uint256 refundAmount);
+
 
     modifier onlyBuyer() {
         require(msg.sender == buyer, "PropertyEscrow: Caller is not the buyer");
@@ -51,17 +60,16 @@ contract PropertyEscrow is ReentrancyGuard {
         _;
     }
 
+     modifier buyerOrSeller() {
+        require(msg.sender == buyer || msg.sender == seller, "PropertyEscrow: Caller is not buyer or seller");
+        _;
+    }
+
     modifier inState(State _state) {
         require(currentState == _state, "PropertyEscrow: Invalid state for this action");
         _;
     }
 
-    /**
-     * @dev Constructor to initialize the escrow.
-     * @param _seller The address of the seller.
-     * @param _buyer The address of the buyer.
-     * @param _escrowAmount The total amount to be held in escrow.
-     */
     constructor(address _seller, address _buyer, uint256 _escrowAmount) {
         require(_seller != address(0), "Seller address cannot be zero");
         require(_buyer != address(0), "Buyer address cannot be zero");
@@ -76,36 +84,23 @@ contract PropertyEscrow is ReentrancyGuard {
         emit EscrowCreated(_seller, _buyer, _escrowAmount);
     }
 
-    /**
-     * @dev Allows the buyer to define the conditions required for the transaction.
-     * This can only be called once.
-     * @param _conditionIds An array of unique identifiers for each condition.
-     * These IDs are managed off-chain and their meaning is
-     * understood by buyer and seller.
-     */
     function setConditions(bytes32[] memory _conditionIds)
         external
         onlyBuyer
         inState(State.AWAITING_CONDITION_SETUP)
     {
-        require(_conditionIds.length > 0, "At least one condition must be set by buyer, or use no-condition flow.");
-        // For simplicity, we allow this to be called once.
-        // More complex logic could allow additions if state is appropriate.
+        require(_conditionIds.length > 0, "At least one condition must be set.");
         require(requiredConditionIds.length == 0, "Conditions already set.");
 
         for (uint i = 0; i < _conditionIds.length; i++) {
             require(_conditionIds[i] != bytes32(0), "Condition ID cannot be zero");
             requiredConditionIds.push(_conditionIds[i]);
-            conditionsFulfilled[_conditionIds[i]] = false; // Initialize all as not fulfilled
+            conditionsFulfilled[_conditionIds[i]] = false;
         }
         currentState = State.AWAITING_DEPOSIT;
         emit ConditionsSetByBuyer(_conditionIds);
     }
 
-    /**
-     * @dev Allows the buyer to deposit funds into the escrow.
-     * This function is payable.
-     */
     function depositFunds()
         external
         payable
@@ -113,96 +108,185 @@ contract PropertyEscrow is ReentrancyGuard {
         inState(State.AWAITING_DEPOSIT)
         nonReentrant
     {
-        require(msg.value == escrowAmount, "PropertyEscrow: Incorrect deposit amount");
+        require(msg.value == escrowAmount, "Incorrect deposit amount");
         fundsDeposited = true;
         currentState = State.AWAITING_FULFILLMENT;
         emit FundsDeposited(msg.sender, msg.value);
     }
 
-    /**
-     * @dev Allows the buyer to mark a specific condition as fulfilled.
-     * @param _conditionId The ID of the condition to mark as fulfilled.
-     */
     function fulfillCondition(bytes32 _conditionId)
         external
         onlyBuyer
         inState(State.AWAITING_FULFILLMENT)
     {
-        bool found = false;
-        for (uint i = 0; i < requiredConditionIds.length; i++) {
-            if (requiredConditionIds[i] == _conditionId) {
-                found = true;
-                break;
-            }
-        }
-        require(found, "PropertyEscrow: Condition ID not part of this escrow's required conditions.");
-        require(!conditionsFulfilled[_conditionId], "PropertyEscrow: Condition already fulfilled.");
+        require(isConditionRequired(_conditionId), "Condition ID not part of this escrow.");
+        require(!conditionsFulfilled[_conditionId], "Condition already fulfilled.");
 
         conditionsFulfilled[_conditionId] = true;
         emit ConditionFulfilled(msg.sender, _conditionId);
 
         if (areAllBuyerConditionsMet()) {
-            currentState = State.READY_FOR_RELEASE;
+            currentState = State.READY_FOR_FINAL_APPROVAL;
         }
     }
 
-    /**
-     * @dev Allows the seller to release funds if all conditions are met and funds are deposited.
-     * Alternatively, the buyer could also call this to push the funds to the seller.
-     */
-    function releaseFundsToSeller()
+    function startFinalApprovalPeriod()
         external
-        (currentState == State.READY_FOR_RELEASE ? onlySeller : onlyBuyer) // Seller claims, or buyer can push
-        inState(State.READY_FOR_RELEASE)
-        nonReentrant
+        buyerOrSeller
+        inState(State.READY_FOR_FINAL_APPROVAL)
     {
-        // Redundant check as state READY_FOR_RELEASE implies these, but good for clarity
-        require(fundsDeposited, "PropertyEscrow: Funds not deposited yet.");
-        require(areAllBuyerConditionsMet(), "PropertyEscrow: Not all buyer conditions are met.");
+        require(fundsDeposited, "Funds not deposited.");
+        require(areAllBuyerConditionsMet(), "Not all conditions met.");
 
-        currentState = State.COMPLETED;
-        payable(seller).transfer(escrowAmount);
-        emit FundsReleased(seller, escrowAmount);
+        currentState = State.IN_FINAL_APPROVAL;
+        finalApprovalDeadline = block.timestamp + FINAL_APPROVAL_PERIOD;
+        // Reset previous final approvals for this new period
+        hasApprovedFinalRelease[buyer] = false;
+        hasApprovedFinalRelease[seller] = false;
+        emit FinalApprovalPeriodStarted(finalApprovalDeadline);
     }
 
-    /**
-     * @dev Allows either party to cancel the escrow based on the current state.
-     * If funds are deposited, they are returned to the buyer.
-     */
-    function cancelEscrow() external nonReentrant {
-        require(
-            msg.sender == buyer || msg.sender == seller,
-            "PropertyEscrow: Only buyer or seller can cancel."
-        );
-        require(
-            currentState != State.COMPLETED && currentState != State.CANCELLED,
-            "PropertyEscrow: Escrow is already finalized or cancelled."
-        );
+    function buyerWithdrawConditionApproval(bytes32 _conditionId)
+        external
+        onlyBuyer
+        inState(State.IN_FINAL_APPROVAL) // Can only withdraw if in final approval
+    {
+        require(isConditionRequired(_conditionId), "Condition ID not part of this escrow.");
+        require(conditionsFulfilled[_conditionId], "Condition not currently marked as fulfilled.");
 
-        State oldState = currentState;
-        currentState = State.CANCELLED;
+        conditionsFulfilled[_conditionId] = false; // Revert fulfillment
+        currentState = State.IN_DISPUTE;
+        disputeResolutionDeadline = block.timestamp + DISPUTE_RESOLUTION_PERIOD;
+        // Reset final approvals as the deal is now disputed
+        hasApprovedFinalRelease[buyer] = false;
+        hasApprovedFinalRelease[seller] = false;
+
+        emit ConditionFulfilledReversed(msg.sender, _conditionId);
+        emit DisputeRaised(msg.sender, getUnfulfilledConditionIds(), disputeResolutionDeadline);
+    }
+
+    // Buyer can re-fulfill a condition if they previously withdrew approval
+    function buyerReFulfillCondition(bytes32 _conditionId)
+        external
+        onlyBuyer
+        inState(State.IN_DISPUTE)
+    {
+        require(isConditionRequired(_conditionId), "Condition ID not part of this escrow.");
+        require(!conditionsFulfilled[_conditionId], "Condition already fulfilled or not disputed.");
+
+        conditionsFulfilled[_conditionId] = true;
+        emit ConditionFulfilled(msg.sender, _conditionId);
+
+        if (areAllBuyerConditionsMet()) {
+            // Dispute resolved by buyer re-fulfilling all conditions
+            // Go back to final approval period, potentially with a reset timer or straight to release if both parties had already approved.
+            // For simplicity here, we go back to READY_FOR_FINAL_APPROVAL to restart that phase.
+            currentState = State.READY_FOR_FINAL_APPROVAL;
+            // Consider if finalApprovalDeadline should be reset or if previous explicit approvals are still valid.
+            // Resetting explicit approvals for safety.
+            hasApprovedFinalRelease[buyer] = false;
+            hasApprovedFinalRelease[seller] = false;
+        }
+    }
+
+
+    function confirmAndReleaseFunds()
+        external
+        buyerOrSeller
+        nonReentrant
+    {
+        require(currentState == State.IN_FINAL_APPROVAL || currentState == State.IN_DISPUTE, "Not in a state for final release confirmation.");
+        require(fundsDeposited, "Funds not deposited.");
+        require(areAllBuyerConditionsMet(), "Not all conditions are met.");
+
+        bool canRelease = false;
+
+        if (currentState == State.IN_FINAL_APPROVAL) {
+            if (msg.sender == buyer) hasApprovedFinalRelease[buyer] = true;
+            if (msg.sender == seller) hasApprovedFinalRelease[seller] = true;
+            emit ReleaseConfirmed(msg.sender);
+
+            // Release if both parties explicitly approved OR if the deadline has passed and no dispute.
+            if (hasApprovedFinalRelease[buyer] && hasApprovedFinalRelease[seller]) {
+                canRelease = true;
+            } else if (block.timestamp >= finalApprovalDeadline) {
+                canRelease = true; // Deadline passed, no dispute raised (implicit from state)
+            }
+        } else { // currentState == State.IN_DISPUTE
+            // If in dispute, only an explicit agreement from both can release now, or seller re-fulfilling
+            // This function handles explicit agreement. Re-fulfillment moves state out of IN_DISPUTE.
+            if (msg.sender == buyer) hasApprovedFinalRelease[buyer] = true;
+            if (msg.sender == seller) hasApprovedFinalRelease[seller] = true;
+            emit ReleaseConfirmed(msg.sender);
+            if (hasApprovedFinalRelease[buyer] && hasApprovedFinalRelease[seller]) {
+                canRelease = true;
+            }
+        }
+
+        if (canRelease) {
+            _releaseFundsToSeller();
+        }
+    }
+
+    function _releaseFundsToSeller() internal {
+        currentState = State.COMPLETED;
+        uint256 balance = address(this).balance;
+        require(balance >= escrowAmount, "Insufficient balance for release"); // Sanity check
+        payable(seller).transfer(escrowAmount); // Transfer only the escrowAmount
+        emit FundsReleasedToSeller(seller, escrowAmount);
+
+        // Handle any remaining dust if balance > escrowAmount (should ideally not happen with precise deposits)
+        if (address(this).balance > 0) {
+            payable(buyer).transfer(address(this).balance); // Return any overpayment or dust to buyer
+        }
+    }
+
+    function cancelEscrow() external nonReentrant {
+        require(msg.sender == buyer || msg.sender == seller, "Only buyer or seller can cancel.");
+        require(currentState != State.COMPLETED && currentState != State.CANCELLED, "Escrow already finalized.");
+
         uint256 refundAmount = 0;
 
+        // Specific cancellation logic for IN_DISPUTE after deadline
+        if (currentState == State.IN_DISPUTE && msg.sender == buyer && block.timestamp >= disputeResolutionDeadline) {
+            // Dispute period ended, buyer claims refund
+        } else if (currentState == State.AWAITING_CONDITION_SETUP ||
+                   currentState == State.AWAITING_DEPOSIT ||
+                   currentState == State.AWAITING_FULFILLMENT ||
+                   (currentState == State.IN_FINAL_APPROVAL && block.timestamp < finalApprovalDeadline) || // Can cancel before approval deadline if not disputed
+                   (currentState == State.IN_DISPUTE && block.timestamp < disputeResolutionDeadline) // Can cancel during dispute if both agree (implicitly via off-chain, then one calls)
+        ) {
+            // Allow cancellation in these states
+        }
+         else {
+            revert("Cannot cancel in current state or conditions not met for cancellation.");
+        }
+
+        currentState = State.CANCELLED;
         if (fundsDeposited) {
-            refundAmount = address(this).balance; // Refund whatever is in the contract
+            refundAmount = address(this).balance;
             if (refundAmount > 0) {
-                 payable(buyer).transfer(refundAmount);
+                payable(buyer).transfer(refundAmount);
             }
         }
         emit EscrowCancelled(msg.sender, buyer, refundAmount);
     }
 
+
     // --- View Functions ---
 
-    /**
-     * @dev Checks if all buyer-specified conditions are met.
-     * @return True if all conditions are met, false otherwise.
-     */
+    function isConditionRequired(bytes32 _conditionId) internal view returns (bool) {
+        for (uint i = 0; i < requiredConditionIds.length; i++) {
+            if (requiredConditionIds[i] == _conditionId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     function areAllBuyerConditionsMet() public view returns (bool) {
         if (requiredConditionIds.length == 0 && currentState != State.AWAITING_CONDITION_SETUP) {
-            // If no conditions were set by buyer (after setup phase), consider them met.
-            // This path is for deals where buyer might not opt for any specific on-chain tracked conditions.
-            // The primary condition becomes fund deposit.
+             // This case should ideally not be hit if setConditions requires >0 conditions.
             return true;
         }
         for (uint i = 0; i < requiredConditionIds.length; i++) {
@@ -213,17 +297,33 @@ contract PropertyEscrow is ReentrancyGuard {
         return true;
     }
 
-    /**
-     * @dev Returns the list of condition IDs that the buyer requires to be fulfilled.
-     */
+    function getUnfulfilledConditionIds() public view returns (bytes32[] memory) {
+        uint unfulfilledCount = 0;
+        for (uint i = 0; i < requiredConditionIds.length; i++) {
+            if (!conditionsFulfilled[requiredConditionIds[i]]) {
+                unfulfilledCount++;
+            }
+        }
+        bytes32[] memory unfulfilled = new bytes32[](unfulfilledCount);
+        uint currentIndex = 0;
+        for (uint i = 0; i < requiredConditionIds.length; i++) {
+            if (!conditionsFulfilled[requiredConditionIds[i]]) {
+                unfulfilled[currentIndex] = requiredConditionIds[i];
+                currentIndex++;
+            }
+        }
+        return unfulfilled;
+    }
+
     function getRequiredConditionIds() external view returns (bytes32[] memory) {
         return requiredConditionIds;
     }
 
-    /**
-     * @dev Gets the current balance of the escrow contract.
-     */
     function getBalance() external view returns (uint256) {
         return address(this).balance;
+    }
+
+    function getContractState() external view returns (State) {
+        return currentState;
     }
 }

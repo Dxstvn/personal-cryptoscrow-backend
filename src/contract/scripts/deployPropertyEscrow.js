@@ -1,54 +1,47 @@
 // scripts/deployPropertyEscrow.js
-const hre = require("hardhat"); // Hardhat Runtime Environment
+import { ethers, network, run } from "hardhat"; // Hardhat Runtime Environment
 
 async function main() {
-  // Get the signers (the account that will deploy the contract)
-  const [deployer] = await hre.ethers.getSigners();
+  const [deployer] = await ethers.getSigners();
 
   console.log("Deploying contracts with the account:", deployer.address);
   console.log("Account balance:", (await deployer.getBalance()).toString());
 
   // --- Define constructor arguments for PropertyEscrow ---
-  // These would typically come from your application logic or configuration
-  // For this example, we'll use placeholder addresses and an amount.
-  // In a real scenario, the seller might be the deployer, or you might have a dedicated deployer account.
-  const sellerAddress = deployer.address; // Example: Deployer is the seller
-  const buyerAddress = "0x000000000000000000000000000000000000DEAD"; // Replace with actual buyer address
-  const escrowAmountInEth = "0.01"; // Example: 0.01 ETH
-  const escrowAmountInWei = hre.ethers.utils.parseEther(escrowAmountInEth);
+  // For manual deployment via Hardhat, these are usually fixed or taken from args/env for testing.
+  // The backend will provide these dynamically for actual deals.
+  const sellerAddress = deployer.address; // Example: Deployer is the seller for this test deployment
+  const buyerAddress = "0x000000000000000000000000000000000000DEAD"; // Replace with a test buyer address
+  const escrowAmountInEth = "0.001"; // Example: 0.001 ETH for test deployment
+  const escrowAmountInWei = ethers.utils.parseEther(escrowAmountInEth);
 
   console.log(`Attempting to deploy PropertyEscrow with:`);
   console.log(`  Seller: ${sellerAddress}`);
   console.log(`  Buyer: ${buyerAddress}`);
   console.log(`  Escrow Amount: ${escrowAmountInEth} ETH (${escrowAmountInWei.toString()} wei)`);
 
-  // Get the ContractFactory
-  const PropertyEscrow = await hre.ethers.getContractFactory("PropertyEscrow");
+  const PropertyEscrow = await ethers.getContractFactory("PropertyEscrow");
 
-  // Deploy the contract
-  // Pass constructor arguments here
   const escrowContract = await PropertyEscrow.deploy(
     sellerAddress,
     buyerAddress,
     escrowAmountInWei
   );
 
-  // Wait for the contract to be deployed
   await escrowContract.deployed();
 
   console.log("PropertyEscrow contract deployed to:", escrowContract.address);
   console.log("Transaction hash:", escrowContract.deployTransaction.hash);
 
-  // --- Optional: Verify on Etherscan (if network is not hardhat) ---
-  if (hre.network.name !== "hardhat" && hre.network.name !== "localhost" && process.env.ETHERSCAN_API_KEY) {
+  if (network.name !== "hardhat" && network.name !== "localhost" && process.env.ETHERSCAN_API_KEY) {
     console.log("Waiting for 5 block confirmations before attempting verification...");
-    await escrowContract.deployTransaction.wait(5); // Wait for 5 confirmations
+    await escrowContract.deployTransaction.wait(5);
 
     try {
       console.log("Attempting to verify contract on Etherscan...");
-      await hre.run("verify:verify", {
+      await run("verify:verify", {
         address: escrowContract.address,
-        constructorArguments: [ // Must match the order and types in your constructor
+        constructorArguments: [
           sellerAddress,
           buyerAddress,
           escrowAmountInWei,
@@ -64,8 +57,6 @@ async function main() {
   }
 }
 
-// We recommend this pattern to be able to use async/await everywhere
-// and properly handle errors.
 main()
   .then(() => process.exit(0))
   .catch((error) => {
