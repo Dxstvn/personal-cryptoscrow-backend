@@ -1,16 +1,16 @@
 // src/api/routes/transaction/__tests__/transactionRoutes.test.js
 import request from 'supertest';
 import express from 'express';
-import { jest } from '@jest/globals'; // Use Jest's ESM support
-import transactionRouter from '../transactionRoutes.js'; // Adjust path if needed
+import { jest } from '@jest/globals';
+import transactionRouter from '../transactionRoutes.js';
 import { adminAuth, adminFirestore, adminApp as testAdminApp, PROJECT_ID } from '../../../../../jest.emulator.setup.js';
-import { deleteAdminApp } from '../../../../../src/api/routes/auth/admin.js';
+import { deleteAdminApp } from '../../auth/admin.js';
 import { Timestamp } from 'firebase-admin/firestore';
-import { ethers } from 'ethers'; // For wallet address validation and amount conversion (optional here, but good practice)
+import { ethers } from 'ethers'; // Ensure ethers is imported
 import fetch from 'node-fetch';
 
 // --- Mock the Contract Deployer ---
-// Use jest.unstable_mockModule for ESM mocking
+// Path relative to this test file
 jest.unstable_mockModule('../../deployContract/contractDeployer.js', () => ({
   deployPropertyEscrowContract: jest.fn(),
 }));
@@ -22,26 +22,23 @@ const { deployPropertyEscrowContract } = await import('../../deployContract/cont
 // --- Test Setup ---
 const app = express();
 app.use(express.json());
-// Mount the router under a base path, e.g., /deals
 app.use('/deals', transactionRouter);
 
 const AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
 const DUMMY_API_KEY = 'demo-api-key';
 
-// --- Helper Functions (reuse from contact tests if possible) ---
+// --- Helper Functions ---
 async function createTestUser(email, profileData = {}) {
-    // Check if user exists first to avoid errors during cleanup/re-runs
     let userRecord;
     try {
         userRecord = await adminAuth.getUserByEmail(email);
-        // If user exists, ensure profile data is set/updated
         await adminFirestore.collection('users').doc(userRecord.uid).set({
             email: email.toLowerCase(),
             first_name: profileData.first_name || 'Test',
             last_name: profileData.last_name || 'User',
             phone_number: profileData.phone_number || '1234567890',
-            wallets: profileData.wallets || [], // Add default wallets if needed
-        }, { merge: true }); // Use merge to avoid overwriting existing data unnecessarily
+            wallets: profileData.wallets || [],
+        }, { merge: true });
     } catch (error) {
         if (error.code === 'auth/user-not-found') {
             userRecord = await adminAuth.createUser({ email, password: 'testpassword' });
@@ -58,8 +55,6 @@ async function createTestUser(email, profileData = {}) {
         }
     }
 
-
-    // Get ID token
     const signInUrl = `http://${AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${DUMMY_API_KEY}`;
     const response = await fetch(signInUrl, {
         method: 'POST',
@@ -76,39 +71,53 @@ async function createTestUser(email, profileData = {}) {
 
 async function cleanUpFirestore() {
     try {
-        const collections = ['deals', 'users', 'contactInvitations']; // Add other collections if needed
+        const collections = ['deals', 'users', 'contactInvitations'];
         for (const collectionName of collections) {
-            const snapshot = await adminFirestore.collection(collectionName).limit(500).get(); // Limit batch size
+            const snapshot = await adminFirestore.collection(collectionName).limit(500).get();
             if (snapshot.empty) continue;
             const batch = adminFirestore.batch();
+            const subcollectionPromises = [];
+
             snapshot.docs.forEach(doc => {
-                // Handle subcollections if necessary (e.g., files within deals)
                  if (collectionName === 'deals') {
-                    // Simple deletion of subcollection docs first (adjust if deeper nesting)
                      const filesSub = adminFirestore.collection('deals').doc(doc.id).collection('files');
-                    // Consider batching subcollection deletes if large
-                     filesSub.limit(500).get().then(subSnap => {
-                         subSnap.docs.forEach(subDoc => batch.delete(subDoc.ref));
-                     });
+                     subcollectionPromises.push(
+                         filesSub.limit(500).get().then(subSnap => {
+                             subSnap.docs.forEach(subDoc => batch.delete(subDoc.ref));
+                         }).catch(err => console.warn(`Warning: Could not clean subcollection for deal ${doc.id}`, err.message)) // Add catch for subcollection get
+                     );
                  }
                 batch.delete(doc.ref);
             });
+            await Promise.all(subcollectionPromises).catch(err => console.warn("Warning: Error during subcollection cleanup", err.message)); // Wait for subcollection deletes
             await batch.commit();
         }
-         console.log('Firestore cleaned up.');
+         // console.log('Firestore cleaned up.');
     } catch (error) {
-        console.warn("Firestore cleanup warning:", error.message);
+        // Ignore common emulator errors during cleanup
+        if (!error.message?.includes('RESOURCE_EXHAUSTED') && !error.message?.includes('UNAVAILABLE')) {
+            console.warn("Firestore cleanup warning:", error.code, error.message);
+        }
     }
 }
 
 async function cleanUpAuth() {
      try {
         const listUsersResult = await adminAuth.listUsers(1000);
-        const deletePromises = listUsersResult.users.map(user => adminAuth.deleteUser(user.uid));
-        await Promise.all(deletePromises);
-        console.log('Auth cleaned up.');
+        if (listUsersResult.users.length > 0) {
+            const deletePromises = listUsersResult.users.map(user => adminAuth.deleteUser(user.uid).catch(err => {
+                 // Ignore "user not found" during cleanup, might happen with parallel deletes
+                 if (err.code !== 'auth/user-not-found') {
+                     console.warn(`Auth cleanup warning for user ${user.uid}:`, err.message);
+                 }
+            }));
+            await Promise.all(deletePromises);
+            // console.log('Auth cleaned up.');
+        }
     } catch (error) {
-        console.warn("Auth cleanup warning:", error.message);
+         if (!error.message?.includes('find a running emulator')) { // Ignore emulator not running error
+            console.warn("Auth cleanup warning:", error.code, error.message);
+         }
     }
 }
 
@@ -118,32 +127,34 @@ describe('Transaction Routes (/deals)', () => {
     let buyerUser, sellerUser, otherUser;
     let buyerWallet = ethers.Wallet.createRandom().address;
     let sellerWallet = ethers.Wallet.createRandom().address;
+    let server;
 
-    beforeAll(async () => {
-        // Ensure emulators are running and accessible
-        // Optional: Add a check here
+     beforeAll((done) => {
+        server = app.listen(0, done);
     });
 
     afterAll(async () => {
         await cleanUpFirestore();
         await cleanUpAuth();
-        await deleteAdminApp();
+        // await deleteAdminApp(); // Let Jest handle process exit
+        await new Promise(resolve => server.close(resolve));
     });
 
-    beforeEach(async () => {
-        // Reset mocks before each test
-        jest.clearAllMocks();
 
-        // Clean up data
+    beforeEach(async () => {
+        jest.clearAllMocks();
+        // Ensure cleanup finishes before creating new users
         await cleanUpFirestore();
         await cleanUpAuth();
-
-        // Create fresh users for each test
-        buyerUser = await createTestUser('buyer@test.com');
-        sellerUser = await createTestUser('seller@test.com');
-        otherUser = await createTestUser('other@test.com');
-
-         // Default mock for successful deployment
+        try {
+            buyerUser = await createTestUser('buyer@test.com');
+            sellerUser = await createTestUser('seller@test.com');
+            otherUser = await createTestUser('other@test.com');
+        } catch (error) {
+            console.error("ERROR IN BEFORE EACH USER CREATION:", error);
+            // Optionally re-throw or handle to prevent tests from running with bad state
+            throw error;
+        }
         deployPropertyEscrowContract.mockResolvedValue('0xMockContractAddress123');
     });
 
@@ -151,7 +162,7 @@ describe('Transaction Routes (/deals)', () => {
     describe('POST /deals/create', () => {
         const dealData = {
             propertyAddress: "1 Test Lane",
-            amount: 1.0, // e.g., ETH
+            amount: 1.0,
             otherPartyEmail: 'seller@test.com',
             buyerWalletAddress: buyerWallet,
             sellerWalletAddress: sellerWallet,
@@ -169,26 +180,26 @@ describe('Transaction Routes (/deals)', () => {
             expect(response.status).toBe(201);
             expect(response.body).toHaveProperty('transactionId');
             expect(response.body).toHaveProperty('smartContractAddress', '0xMockContractAddress123');
-            expect(response.body).toHaveProperty('status', 'AWAITING_CONDITION_SETUP'); // Initial SC state
+            expect(response.body).toHaveProperty('status', 'AWAITING_CONDITION_SETUP');
+            expect(response.body.transactionDetails).toBeDefined();
             expect(response.body.transactionDetails.buyerId).toBe(buyerUser.uid);
             expect(response.body.transactionDetails.sellerId).toBe(sellerUser.uid);
             expect(response.body.transactionDetails.initiatedBy).toBe('BUYER');
             expect(response.body.transactionDetails.conditions).toHaveLength(1);
             expect(response.body.transactionDetails.conditions[0].id).toBe('cond-1');
             expect(response.body.transactionDetails.conditions[0].status).toBe('PENDING_BUYER_ACTION');
-            expect(response.body.transactionDetails.escrowAmountWei).toBe(ethers.utils.parseEther("1.0").toString());
+            // Use parseUnits for consistency in tests
+            expect(response.body.transactionDetails.escrowAmountWei).toBe(ethers.utils.parseUnits("1.0", 'ether').toString());
 
-            // Verify deployment mock was called
             expect(deployPropertyEscrowContract).toHaveBeenCalledTimes(1);
             expect(deployPropertyEscrowContract).toHaveBeenCalledWith(
-                sellerWallet, // SC seller address
-                buyerWallet,  // SC buyer address
-                ethers.utils.parseEther("1.0").toString(), // Wei amount
+                ethers.utils.getAddress(sellerWallet),
+                ethers.utils.getAddress(buyerWallet),
+                ethers.utils.parseUnits("1.0", 'ether').toString(),
                 process.env.DEPLOYER_PRIVATE_KEY,
                 process.env.RPC_URL
             );
 
-            // Verify Firestore document
             const doc = await adminFirestore.collection('deals').doc(response.body.transactionId).get();
             expect(doc.exists).toBe(true);
             expect(doc.data().smartContractAddress).toBe('0xMockContractAddress123');
@@ -198,15 +209,16 @@ describe('Transaction Routes (/deals)', () => {
         it('should create a deal initiated by seller and attempt deployment', async () => {
              const sellerDealData = {
                 ...dealData,
-                otherPartyEmail: 'buyer@test.com', // Seller initiates with buyer's email
+                otherPartyEmail: 'buyer@test.com',
                 initiatedBy: 'SELLER'
             };
             const response = await request(app)
                 .post('/deals/create')
-                .set('Authorization', `Bearer ${sellerUser.token}`) // Seller's token
+                .set('Authorization', `Bearer ${sellerUser.token}`)
                 .send(sellerDealData);
 
             expect(response.status).toBe(201);
+            expect(response.body.transactionDetails).toBeDefined();
             expect(response.body.transactionDetails.sellerId).toBe(sellerUser.uid);
             expect(response.body.transactionDetails.buyerId).toBe(buyerUser.uid);
             expect(response.body.transactionDetails.initiatedBy).toBe('SELLER');
@@ -215,7 +227,7 @@ describe('Transaction Routes (/deals)', () => {
             expect(deployPropertyEscrowContract).toHaveBeenCalledTimes(1);
         });
 
-        it('should handle deployment failure', async () => {
+        it('should handle deployment failure and return specific error', async () => {
             const deploymentError = new Error("RPC Timeout");
             deployPropertyEscrowContract.mockRejectedValue(deploymentError);
 
@@ -224,35 +236,51 @@ describe('Transaction Routes (/deals)', () => {
                 .set('Authorization', `Bearer ${buyerUser.token}`)
                 .send({ ...dealData, initiatedBy: 'BUYER' });
 
-            // Expecting failure because deployment is critical in this setup
             expect(response.status).toBe(500);
             expect(response.body).toHaveProperty('error', `Failed to deploy escrow contract: ${deploymentError.message}`);
             expect(deployPropertyEscrowContract).toHaveBeenCalledTimes(1);
 
-            // Verify no deal document was created (or handle partial creation if needed)
-             // Depending on implementation, you might check that the collection is empty
              const deals = await adminFirestore.collection('deals').get();
              expect(deals.empty).toBe(true);
         });
 
-         it('should fail if wallet addresses are missing', async () => {
+         it('should fail if buyer wallet address is invalid', async () => {
             const response = await request(app)
                 .post('/deals/create')
                 .set('Authorization', `Bearer ${buyerUser.token}`)
-                .send({ ...dealData, initiatedBy: 'BUYER', buyerWalletAddress: null }); // Missing buyer wallet
+                .send({ ...dealData, initiatedBy: 'BUYER', buyerWalletAddress: 'invalid-address' });
 
             expect(response.status).toBe(400);
-            expect(response.body).toHaveProperty('error', 'Buyer and Seller wallet addresses are required for escrow contract.');
+            expect(response.body).toHaveProperty('error', 'Valid buyer wallet address is required.');
         });
 
-        // Add more validation tests: missing amount, invalid initiator, self-transaction etc.
+         it('should fail if seller wallet address is invalid', async () => {
+            const response = await request(app)
+                .post('/deals/create')
+                .set('Authorization', `Bearer ${buyerUser.token}`)
+                .send({ ...dealData, initiatedBy: 'BUYER', sellerWalletAddress: 'invalid-address' });
+
+            expect(response.status).toBe(400);
+            expect(response.body).toHaveProperty('error', 'Valid seller wallet address is required.');
+        });
+
+
         it('should fail if amount is invalid', async () => {
             const response = await request(app)
                 .post('/deals/create')
                 .set('Authorization', `Bearer ${buyerUser.token}`)
                 .send({ ...dealData, initiatedBy: 'BUYER', amount: -5 });
             expect(response.status).toBe(400);
-            expect(response.body).toHaveProperty('error', 'Amount must be a positive number.');
+            expect(response.body).toHaveProperty('error', 'Amount must be a positive finite number.');
+        });
+
+         it('should fail if amount cannot be parsed', async () => {
+            const response = await request(app)
+                .post('/deals/create')
+                .set('Authorization', `Bearer ${buyerUser.token}`)
+                .send({ ...dealData, initiatedBy: 'BUYER', amount: "not-a-number" });
+            expect(response.status).toBe(400);
+             expect(response.body).toHaveProperty('error', 'Amount must be a positive finite number.');
         });
 
     });
@@ -263,17 +291,17 @@ describe('Transaction Routes (/deals)', () => {
         let testDealData;
 
         beforeEach(async () => {
+             // Define testDealData *inside* beforeEach to ensure ethers is available
              testDealData = {
-                // ... (data similar to creation, including SC address and status)
                 propertyAddress: "Get Deal Test St",
                 amount: 2.5,
-                escrowAmountWei: ethers.utils.parseEther("2.5").toString(),
+                escrowAmountWei: ethers.utils.parseUnits("2.5", 'ether').toString(), // Calculate here
                 sellerId: sellerUser.uid,
                 buyerId: buyerUser.uid,
                 buyerWalletAddress: buyerWallet,
                 sellerWalletAddress: sellerWallet,
                 participants: [sellerUser.uid, buyerUser.uid],
-                status: 'AWAITING_FULFILLMENT', // Example status
+                status: 'AWAITING_FULFILLMENT',
                 createdAt: Timestamp.now(),
                 updatedAt: Timestamp.now(),
                 initiatedBy: 'BUYER',
@@ -299,13 +327,14 @@ describe('Transaction Routes (/deals)', () => {
             expect(response.body.propertyAddress).toBe(testDealData.propertyAddress);
             expect(response.body.smartContractAddress).toBe(testDealData.smartContractAddress);
             expect(response.body.status).toBe(testDealData.status);
-            expect(response.body.conditions[0].id).toBe('get-cond');
+             // Add null check for conditions
+            expect(response.body.conditions?.[0]?.id).toBe('get-cond');
         });
 
         it('should retrieve a deal successfully for a participant (seller)', async () => {
             const response = await request(app)
                 .get(`/deals/${testDealId}`)
-                .set('Authorization', `Bearer ${sellerUser.token}`); // Seller token
+                .set('Authorization', `Bearer ${sellerUser.token}`);
 
             expect(response.status).toBe(200);
             expect(response.body.id).toBe(testDealId);
@@ -314,7 +343,7 @@ describe('Transaction Routes (/deals)', () => {
         it('should return 403 if user is not a participant', async () => {
             const response = await request(app)
                 .get(`/deals/${testDealId}`)
-                .set('Authorization', `Bearer ${otherUser.token}`); // Non-participant token
+                .set('Authorization', `Bearer ${otherUser.token}`);
 
             expect(response.status).toBe(403);
             expect(response.body).toHaveProperty('error', 'Access denied.');
@@ -333,10 +362,9 @@ describe('Transaction Routes (/deals)', () => {
      // --- GET /deals (List) ---
     describe('GET /deals', () => {
         beforeEach(async () => {
-            // Create some deals for testing listing/pagination
-            await adminFirestore.collection('deals').add({ participants: [buyerUser.uid, sellerUser.uid], createdAt: Timestamp.fromDate(new Date('2025-01-01')), status: 'COMPLETED' });
-            await adminFirestore.collection('deals').add({ participants: [buyerUser.uid, otherUser.uid], createdAt: Timestamp.fromDate(new Date('2025-01-05')), status: 'AWAITING_FULFILLMENT' });
-            await adminFirestore.collection('deals').add({ participants: [sellerUser.uid, otherUser.uid], createdAt: Timestamp.fromDate(new Date('2025-01-10')), status: 'IN_DISPUTE' }); // Not buyer's deal
+            await adminFirestore.collection('deals').add({ participants: [buyerUser.uid, sellerUser.uid], createdAt: Timestamp.fromDate(new Date('2025-01-01T10:00:00Z')), status: 'COMPLETED' });
+            await adminFirestore.collection('deals').add({ participants: [buyerUser.uid, otherUser.uid], createdAt: Timestamp.fromDate(new Date('2025-01-05T12:00:00Z')), status: 'AWAITING_FULFILLMENT' });
+            await adminFirestore.collection('deals').add({ participants: [sellerUser.uid, otherUser.uid], createdAt: Timestamp.fromDate(new Date('2025-01-10T14:00:00Z')), status: 'IN_DISPUTE' });
         });
 
         it('should retrieve deals for the authenticated user (buyer)', async () => {
@@ -346,10 +374,9 @@ describe('Transaction Routes (/deals)', () => {
 
             expect(response.status).toBe(200);
             expect(response.body).toBeInstanceOf(Array);
-            expect(response.body).toHaveLength(2); // Buyer is in 2 deals
-            // Check if deals are sorted by createdAt desc by default
-            expect(new Date(response.body[0].createdAt)).toEqual(new Date('2025-01-05'));
-            expect(new Date(response.body[1].createdAt)).toEqual(new Date('2025-01-01'));
+            expect(response.body).toHaveLength(2);
+            expect(response.body[0].createdAt).toBe(new Date('2025-01-05T12:00:00Z').toISOString());
+            expect(response.body[1].createdAt).toBe(new Date('2025-01-01T10:00:00Z').toISOString());
         });
 
          it('should retrieve deals for the authenticated user (seller)', async () => {
@@ -358,9 +385,9 @@ describe('Transaction Routes (/deals)', () => {
                 .set('Authorization', `Bearer ${sellerUser.token}`);
 
             expect(response.status).toBe(200);
-            expect(response.body).toHaveLength(2); // Seller is in 2 deals
-            expect(new Date(response.body[0].createdAt)).toEqual(new Date('2025-01-10'));
-            expect(new Date(response.body[1].createdAt)).toEqual(new Date('2025-01-01'));
+            expect(response.body).toHaveLength(2);
+            expect(response.body[0].createdAt).toBe(new Date('2025-01-10T14:00:00Z').toISOString());
+            expect(response.body[1].createdAt).toBe(new Date('2025-01-01T10:00:00Z').toISOString());
         });
 
         it('should return empty array if user has no deals', async () => {
@@ -372,8 +399,6 @@ describe('Transaction Routes (/deals)', () => {
             expect(response.status).toBe(200);
             expect(response.body).toEqual([]);
         });
-
-         // Add tests for pagination (limit, startAfter) if needed
     });
 
 
@@ -406,7 +431,6 @@ describe('Transaction Routes (/deals)', () => {
             expect(response.status).toBe(200);
             expect(response.body.message).toContain('FULFILLED_BY_BUYER');
 
-            // Verify Firestore update
             const doc = await adminFirestore.collection('deals').doc(dealId).get();
             const condition = doc.data().conditions.find(c => c.id === conditionId);
             expect(condition.status).toBe('FULFILLED_BY_BUYER');
@@ -416,7 +440,7 @@ describe('Transaction Routes (/deals)', () => {
         it('should fail if caller is not the buyer', async () => {
             const response = await request(app)
                 .put(`/deals/${dealId}/conditions/${conditionId}/buyer-review`)
-                .set('Authorization', `Bearer ${sellerUser.token}`) // Seller trying to call
+                .set('Authorization', `Bearer ${sellerUser.token}`)
                 .send({ newBackendStatus: 'FULFILLED_BY_BUYER' });
 
             expect(response.status).toBe(403);
@@ -447,21 +471,23 @@ describe('Transaction Routes (/deals)', () => {
     // --- PUT /deals/:transactionId/sync-status ---
     describe('PUT /deals/:transactionId/sync-status', () => {
          let dealId;
-         const deadlineISO = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
 
          beforeEach(async () => {
             const dealRef = await adminFirestore.collection('deals').add({
                 participants: [buyerUser.uid, sellerUser.uid],
-                status: 'READY_FOR_FINAL_APPROVAL', // Example starting status
+                status: 'READY_FOR_FINAL_APPROVAL',
                 createdAt: Timestamp.now(),
                 updatedAt: Timestamp.now(),
-                fundsDepositedByBuyer: true, // Assume funds are deposited for this test
+                fundsDepositedByBuyer: true,
+                fundsReleasedToSeller: false, // Explicitly set for test
+                timeline: [], // Initialize timeline
             });
             dealId = dealRef.id;
         });
 
         it('should sync backend status and deadlines correctly', async () => {
-            const response = await request(app)
+             const deadlineISO = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
+             const response = await request(app)
                 .put(`/deals/${dealId}/sync-status`)
                 .set('Authorization', `Bearer ${buyerUser.token}`)
                 .send({
@@ -473,7 +499,6 @@ describe('Transaction Routes (/deals)', () => {
             expect(response.status).toBe(200);
             expect(response.body.message).toContain('IN_FINAL_APPROVAL');
 
-            // Verify Firestore update
             const doc = await adminFirestore.collection('deals').doc(dealId).get();
             expect(doc.data().status).toBe('IN_FINAL_APPROVAL');
             expect(doc.data().finalApprovalDeadlineBackend.toDate().toISOString()).toBe(deadlineISO);
@@ -481,7 +506,7 @@ describe('Transaction Routes (/deals)', () => {
         });
 
          it('should update fundsReleasedToSeller when synced to COMPLETED', async () => {
-            await adminFirestore.collection('deals').doc(dealId).update({ fundsReleasedToSeller: false }); // Ensure it's false initially
+            await adminFirestore.collection('deals').doc(dealId).update({ fundsReleasedToSeller: false });
 
             const response = await request(app)
                 .put(`/deals/${dealId}/sync-status`)
@@ -492,8 +517,9 @@ describe('Transaction Routes (/deals)', () => {
 
             const doc = await adminFirestore.collection('deals').doc(dealId).get();
             expect(doc.data().status).toBe('COMPLETED');
-            expect(doc.data().fundsReleasedToSeller).toBe(true); // Should be updated
-            expect(doc.data().timeline.some(e => e.event.includes('Funds confirmed released'))).toBe(true);
+            expect(doc.data().fundsReleasedToSeller).toBe(true);
+            // Check the specific timeline event added in the route
+            expect(doc.data().timeline.some(e => e.event === 'Funds confirmed released to seller on-chain.')).toBe(true);
         });
 
         it('should fail if newSCStatus is invalid', async () => {
@@ -509,7 +535,7 @@ describe('Transaction Routes (/deals)', () => {
         it('should fail if user is not a participant', async () => {
             const response = await request(app)
                 .put(`/deals/${dealId}/sync-status`)
-                .set('Authorization', `Bearer ${otherUser.token}`) // Non-participant
+                .set('Authorization', `Bearer ${otherUser.token}`)
                 .send({ newSCStatus: 'COMPLETED' });
 
             expect(response.status).toBe(403);
@@ -518,13 +544,9 @@ describe('Transaction Routes (/deals)', () => {
     });
 
      // --- Conceptual Sync Endpoints ---
-     // These test that the backend updates correctly when notified about an SC event
      describe('Conceptual Sync Endpoints', () => {
         let dealId;
         const conditionId = 'cond-sync';
-        const finalDeadlineISO = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
-        const disputeDeadlineISO = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
-
 
         beforeEach(async () => {
             const dealRef = await adminFirestore.collection('deals').add({
@@ -539,7 +561,8 @@ describe('Transaction Routes (/deals)', () => {
         });
 
         it('POST /sc/start-final-approval should update backend status and deadline', async () => {
-            const response = await request(app)
+             const finalApprovalDeadlineISO = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
+             const response = await request(app)
                 .post(`/deals/${dealId}/sc/start-final-approval`)
                 .set('Authorization', `Bearer ${buyerUser.token}`)
                 .send({ finalApprovalDeadlineISO });
@@ -549,12 +572,12 @@ describe('Transaction Routes (/deals)', () => {
 
             const doc = await adminFirestore.collection('deals').doc(dealId).get();
             expect(doc.data().status).toBe('IN_FINAL_APPROVAL');
-            expect(doc.data().finalApprovalDeadlineBackend.toDate().toISOString()).toBe(finalDeadlineISO);
+            expect(doc.data().finalApprovalDeadlineBackend.toDate().toISOString()).toBe(finalApprovalDeadlineISO);
         });
 
         it('POST /sc/raise-dispute should update backend status, condition status, and deadline', async () => {
-             // First, move to IN_FINAL_APPROVAL
-             await adminFirestore.collection('deals').doc(dealId).update({ status: 'IN_FINAL_APPROVAL' });
+             const disputeResolutionDeadlineISO = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+             await adminFirestore.collection('deals').doc(dealId).update({ status: 'IN_FINAL_APPROVAL' }); // Prerequisite state
 
              const response = await request(app)
                 .post(`/deals/${dealId}/sc/raise-dispute`)
@@ -566,9 +589,9 @@ describe('Transaction Routes (/deals)', () => {
 
             const doc = await adminFirestore.collection('deals').doc(dealId).get();
             expect(doc.data().status).toBe('IN_DISPUTE');
-            expect(doc.data().disputeResolutionDeadlineBackend.toDate().toISOString()).toBe(disputeDeadlineISO);
+            expect(doc.data().disputeResolutionDeadlineBackend.toDate().toISOString()).toBe(disputeResolutionDeadlineISO);
             const condition = doc.data().conditions.find(c => c.id === conditionId);
-            expect(condition.status).toBe('ACTION_WITHDRAWN_BY_BUYER'); // Or DISPUTED_BY_BUYER if you prefer
+            expect(condition.status).toBe('ACTION_WITHDRAWN_BY_BUYER');
         });
      });
 
