@@ -5,6 +5,7 @@ import fileUploadRouter from "../database/fileUploadDownload.js";
 import healthCheckRouter from "../health/health.js";
 import contactRouter from "../contact/contactRoutes.js";
 import walletAdditionRouter from "../wallet/walletUpdate.js";
+import transactionRouter from "../transaction/transaction.js";
 import cors from "cors";
 import { server } from "typescript";
 
@@ -23,6 +24,7 @@ app.use("/files", fileUploadRouter);
 app.use("/health", healthCheckRouter);
 app.use("/contact", contactRouter);
 app.use("/wallet", walletAdditionRouter);
+app.use("/transaction", transactionRouter);
 
 
 app.listen(port, () => {
