@@ -4,22 +4,14 @@ import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { adminApp } from '../auth/admin.js';
 import { deployPropertyEscrowContract } from '../deployContract/contractDeployer.js';
 // Import ethers v6 functions directly
-import { isAddress, getAddress, parseUnits } from 'ethers';
-import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+import { isAddress, getAddress, parseUnits } from 'ethers'; // This is the import we are interested in
 
 const router = express.Router();
 const db = getFirestore(adminApp);
 
-// --- Environment Variables ---
 const DEPLOYER_PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY;
-// Assuming RPC_URL is the correct variable name based on your previous test file
-const RPC_URL = process.env.RPC_URL || process.env.SEPOLIA_RPC_URL; // Use RPC_URL or fallback
+const RPC_URL = process.env.RPC_URL || process.env.SEPOLIA_RPC_URL;
 
-// --- Authentication Middleware ---
 async function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -30,27 +22,56 @@ async function authenticateToken(req, res, next) {
         const auth = getAdminAuth(adminApp);
         const decodedToken = await auth.verifyIdToken(token);
         req.userId = decodedToken.uid;
+        req.userEmail = decodedToken.email;
         next();
     } catch (err) {
-        console.error('Auth: Invalid or expired token.', err.code || err.message);
+        console.error('[ROUTE AUTH ERROR] Auth: Invalid or expired token.', err.code || err.message);
         return res.status(403).json({ error: 'Authentication failed. Invalid or expired token.' });
     }
 }
 
-// --- Helper ---
 function areAllBackendConditionsFulfilled(conditions = []) {
     if (!conditions || conditions.length === 0) return true;
     return conditions.every(condition => condition.status === 'FULFILLED_BY_BUYER');
 }
 
-
-// --- Route to Create a New Transaction ---
 router.post('/create', authenticateToken, async (req, res) => {
     const initiatorId = req.userId;
+    const initiatorEmail = req.userEmail;
     const {
         initiatedBy, propertyAddress, amount, otherPartyEmail,
         initialConditions, buyerWalletAddress, sellerWalletAddress
     } = req.body;
+
+    // --- TEMPORARY DEBUG LOGS ---
+    console.log(`[ROUTE LOG] /create - Request body received:`, JSON.stringify(req.body, null, 2));
+    console.log(`[ROUTE LOG] /create - Destructured buyerWalletAddress: "${buyerWalletAddress}" (type: ${typeof buyerWalletAddress})`);
+    console.log(`[ROUTE LOG] /create - Destructured sellerWalletAddress: "${sellerWalletAddress}" (type: ${typeof sellerWalletAddress})`);
+
+    let isBuyerAddrValidRouteCheck = false;
+    if (buyerWalletAddress && typeof buyerWalletAddress === 'string') {
+        try {
+            isBuyerAddrValidRouteCheck = isAddress(buyerWalletAddress); // Call the actual/mocked isAddress
+            console.log(`[ROUTE LOG] /create - Result of isAddress("${buyerWalletAddress}"): ${isBuyerAddrValidRouteCheck}`);
+        } catch (e) {
+            console.error(`[ROUTE LOG] /create - Error calling isAddress on buyerWalletAddress ("${buyerWalletAddress}"):`, e.message);
+        }
+    } else {
+        console.log(`[ROUTE LOG] /create - buyerWalletAddress is null, undefined, or not a string.`);
+    }
+
+    let isSellerAddrValidRouteCheck = false;
+    if (sellerWalletAddress && typeof sellerWalletAddress === 'string') {
+        try {
+            isSellerAddrValidRouteCheck = isAddress(sellerWalletAddress);
+            console.log(`[ROUTE LOG] /create - Result of isAddress("${sellerWalletAddress}"): ${isSellerAddrValidRouteCheck}`);
+        } catch (e) {
+            console.error(`[ROUTE LOG] /create - Error calling isAddress on sellerWalletAddress ("${sellerWalletAddress}"):`, e.message);
+        }
+    } else {
+        console.log(`[ROUTE LOG] /create - sellerWalletAddress is null, undefined, or not a string.`);
+    }
+    // --- END TEMPORARY DEBUG LOGS ---
 
     // --- Input Validations ---
     if (!initiatedBy || (initiatedBy !== 'BUYER' && initiatedBy !== 'SELLER')) {
@@ -62,38 +83,38 @@ router.post('/create', authenticateToken, async (req, res) => {
     if (typeof amount !== 'number' || amount <= 0 || !Number.isFinite(amount)) {
         return res.status(400).json({ error: 'Amount must be a positive finite number.' });
     }
-    if (typeof otherPartyEmail !== 'string' || otherPartyEmail.trim() === '') {
-        return res.status(400).json({ error: 'Other party email is required.' });
-    }
-    // Use direct ethers v6 functions
-    if (!buyerWalletAddress || !isAddress(buyerWalletAddress)) {
-        return res.status(400).json({ error: 'Valid buyer wallet address is required.' });
-    }
-     if (!sellerWalletAddress || !isAddress(sellerWalletAddress)) {
-        return res.status(400).json({ error: 'Valid seller wallet address is required.' });
-    }
-    if (initialConditions && (!Array.isArray(initialConditions) || !initialConditions.every(c => c && c.id && typeof c.description === 'string' && typeof c.type === 'string'))) {
-        return res.status(400).json({ error: 'Initial conditions must be an array of objects with "id", "type", and "description".' });
+    if (typeof otherPartyEmail !== 'string' || otherPartyEmail.trim() === '' || !otherPartyEmail.includes('@')) {
+        return res.status(400).json({ error: 'Valid other party email is required.' });
     }
 
-    console.log(`Transaction creation request by UID: ${initiatorId}, Role: ${initiatedBy}`);
+    // This is the critical validation block
+    if (!buyerWalletAddress || !isAddress(buyerWalletAddress)) { // Re-check for logging context
+        console.error(`[ROUTE VALIDATION FAIL] Failing buyer wallet validation. Buyer Wallet: "${buyerWalletAddress}", isAddress Result: ${isBuyerAddrValidRouteCheck}`);
+        return res.status(400).json({ error: 'Valid buyer wallet address is required.' });
+    }
+    if (!sellerWalletAddress || !isAddress(sellerWalletAddress)) { // Re-check for logging context
+        console.error(`[ROUTE VALIDATION FAIL] Failing seller wallet validation. Seller Wallet: "${sellerWalletAddress}", isAddress Result: ${isSellerAddrValidRouteCheck}`);
+        return res.status(400).json({ error: 'Valid seller wallet address is required.' });
+    }
+    // End critical validation block
+
+    if (initialConditions && (!Array.isArray(initialConditions) || !initialConditions.every(c => c && typeof c.id === 'string' && c.id.trim() !== '' && typeof c.description === 'string' && typeof c.type === 'string'))) {
+        return res.status(400).json({ error: 'Initial conditions must be an array of objects with non-empty "id", "type", and "description".' });
+    }
+
+    console.log(`[ROUTE LOG] /create - Transaction creation request by UID: ${initiatorId} (${initiatorEmail}), Role: ${initiatedBy}`);
 
     let escrowAmountWeiString;
     try {
-        // Use direct ethers v6 function
         escrowAmountWeiString = parseUnits(String(amount), 'ether').toString();
     } catch (parseError) {
-        console.error("Error parsing amount to Wei:", parseError);
-        return res.status(400).json({ error: `Invalid amount format: ${amount}` });
+        console.error("[ROUTE ERROR] Error parsing amount to Wei:", parseError);
+        return res.status(400).json({ error: `Invalid amount format: ${amount}. ${parseError.message}` });
     }
 
     try {
-        const initiatorDoc = await db.collection('users').doc(initiatorId).get();
-        if (!initiatorDoc.exists) {
-            return res.status(404).json({ error: 'Initiator user profile not found.' });
-        }
         const normalizedOtherPartyEmail = otherPartyEmail.trim().toLowerCase();
-        if (initiatorDoc.data().email?.toLowerCase() === normalizedOtherPartyEmail) {
+        if (initiatorEmail.toLowerCase() === normalizedOtherPartyEmail) {
             return res.status(400).json({ error: 'Cannot create a transaction with yourself.' });
         }
 
@@ -102,14 +123,14 @@ router.post('/create', authenticateToken, async (req, res) => {
             return res.status(404).json({ error: `User with email ${otherPartyEmail} not found.` });
         }
         const otherPartyId = otherPartyQuery.docs[0].id;
+        const otherPartyData = otherPartyQuery.docs[0].data();
 
         let buyerIdFs, sellerIdFs, status;
-        // Use direct ethers v6 function (getAddress checksums the address)
-        let finalBuyerWallet = getAddress(buyerWalletAddress);
-        let finalSellerWallet = getAddress(sellerWalletAddress);
+        const finalBuyerWallet = getAddress(buyerWalletAddress);
+        const finalSellerWallet = getAddress(sellerWalletAddress);
 
         if (finalBuyerWallet === finalSellerWallet) {
-             return res.status(400).json({ error: 'Buyer and Seller wallet addresses cannot be the same.' });
+            return res.status(400).json({ error: 'Buyer and Seller wallet addresses cannot be the same.' });
         }
 
         if (initiatedBy === 'SELLER') {
@@ -123,12 +144,13 @@ router.post('/create', authenticateToken, async (req, res) => {
             propertyAddress: propertyAddress.trim(), amount: Number(amount), escrowAmountWei: escrowAmountWeiString,
             sellerId: sellerIdFs, buyerId: buyerIdFs, buyerWalletAddress: finalBuyerWallet, sellerWalletAddress: finalSellerWallet,
             participants: [sellerIdFs, buyerIdFs], status, createdAt: now, updatedAt: now, initiatedBy,
+            otherPartyEmail: normalizedOtherPartyEmail, initiatorEmail: initiatorEmail.toLowerCase(),
             conditions: (initialConditions || []).map(cond => ({
-                id: cond.id, type: cond.type.trim() || 'CUSTOM', description: String(cond.description).trim(),
+                id: cond.id.trim(), type: cond.type.trim() || 'CUSTOM', description: String(cond.description).trim(),
                 status: 'PENDING_BUYER_ACTION', documents: [], createdBy: initiatorId, createdAt: now, updatedAt: now,
             })),
             documents: [],
-            timeline: [{ event: `Transaction initiated by ${initiatedBy.toLowerCase()} (UID: ${initiatorId}).`, timestamp: now, userId: initiatorId }],
+            timeline: [{ event: `Transaction initiated by ${initiatedBy.toLowerCase()} (${initiatorEmail}). Other party: ${otherPartyData.email}.`, timestamp: now, userId: initiatorId }],
             smartContractAddress: null, fundsDepositedByBuyer: false, fundsReleasedToSeller: false,
             finalApprovalDeadlineBackend: null, disputeResolutionDeadlineBackend: null,
         };
@@ -137,70 +159,47 @@ router.post('/create', authenticateToken, async (req, res) => {
         }
 
         let deployedContractAddress = null;
-        // Use RPC_URL consistently
         if (!DEPLOYER_PRIVATE_KEY || !RPC_URL) {
-            console.warn("Deployment skipped: DEPLOYER_PRIVATE_KEY or RPC_URL not set in .env");
-            newTransactionData.timeline.push({ event: `Smart contract deployment SKIPPED due to missing configuration.`, timestamp: Timestamp.now(), system: true });
+            console.warn("[ROUTE WARN] Deployment skipped: DEPLOYER_PRIVATE_KEY or RPC_URL not set in .env. Transaction will be off-chain only.");
+            newTransactionData.timeline.push({ event: `Smart contract deployment SKIPPED (off-chain only mode).`, timestamp: Timestamp.now(), system: true });
         } else {
             try {
-                console.log(`Deploying PropertyEscrow contract for deal...`);
+                console.log(`[ROUTE LOG] Attempting to deploy PropertyEscrow contract. Buyer: ${finalBuyerWallet}, Seller: ${finalSellerWallet}, Amount: ${newTransactionData.escrowAmountWei}`);
                 deployedContractAddress = await deployPropertyEscrowContract(
                     finalSellerWallet, finalBuyerWallet, newTransactionData.escrowAmountWei,
-                    DEPLOYER_PRIVATE_KEY, RPC_URL // Use RPC_URL
+                    DEPLOYER_PRIVATE_KEY, RPC_URL
                 );
                 newTransactionData.smartContractAddress = deployedContractAddress;
-                newTransactionData.status = 'AWAITING_CONDITION_SETUP';
-                newTransactionData.timeline.push({ event: `PropertyEscrow smart contract deployed at ${deployedContractAddress}. Status: AWAITING_CONDITION_SETUP.`, timestamp: Timestamp.now(), system: true });
-                console.log(`Smart contract deployed: ${deployedContractAddress}`);
+                newTransactionData.timeline.push({ event: `PropertyEscrow smart contract deployed at ${deployedContractAddress}.`, timestamp: Timestamp.now(), system: true });
+                console.log(`[ROUTE LOG] Smart contract deployed: ${deployedContractAddress}`);
             } catch (deployError) {
-                console.error('Smart contract deployment failed:', deployError);
-                 newTransactionData.timeline.push({ event: `Smart contract deployment FAILED: ${deployError.message}.`, timestamp: Timestamp.now(), system: true });
-                 console.error("Deal data at time of failed deployment:", newTransactionData);
-                // Don't return immediately, save the deal record first
-                // return res.status(500).json({ error: `Failed to deploy escrow contract: ${deployError.message}` });
+                console.error('[ROUTE ERROR] Smart contract deployment failed:', deployError.message, deployError.stack);
+                newTransactionData.timeline.push({ event: `Smart contract deployment FAILED: ${deployError.message}. Proceeding as off-chain.`, timestamp: Timestamp.now(), system: true });
             }
         }
 
         const transactionRef = await db.collection('deals').add(newTransactionData);
-        console.log(`Transaction stored in Firestore: ${transactionRef.id}`);
+        console.log(`[ROUTE LOG] Transaction stored in Firestore: ${transactionRef.id}. Status: ${newTransactionData.status}. SC: ${newTransactionData.smartContractAddress || 'None'}`);
 
-        // If deployment failed earlier, return the error *after* saving the record
-        if (deployedContractAddress === null && DEPLOYER_PRIVATE_KEY && RPC_URL) {
-             // Find the deployment error message in the timeline if possible
-             const deployErrorEvent = newTransactionData.timeline.find(e => e.event.includes("FAILED"));
-             const errorMessage = deployErrorEvent ? deployErrorEvent.event : "Smart contract deployment failed post-save.";
-             return res.status(500).json({
-                 error: `Transaction created (ID: ${transactionRef.id}) but contract deployment failed: ${errorMessage}`,
-                 transactionId: transactionRef.id,
-                 status: newTransactionData.status,
-             });
-        }
-
-
-        // Prepare response details (convert Timestamps)
-        const responseDetails = {
-            ...newTransactionData, id: transactionRef.id,
-            createdAt: newTransactionData.createdAt.toDate().toISOString(),
-            updatedAt: newTransactionData.updatedAt.toDate().toISOString(),
-            timeline: newTransactionData.timeline.map(t => ({ ...t, timestamp: t.timestamp.toDate().toISOString() })),
-            conditions: newTransactionData.conditions.map(c => ({ ...c, createdAt: c.createdAt.toDate().toISOString(), updatedAt: c.updatedAt.toDate().toISOString() }))
-        };
-         if (newTransactionData.finalApprovalDeadlineBackend) responseDetails.finalApprovalDeadlineBackend = newTransactionData.finalApprovalDeadlineBackend.toDate().toISOString();
-         if (newTransactionData.disputeResolutionDeadlineBackend) responseDetails.disputeResolutionDeadlineBackend = newTransactionData.disputeResolutionDeadlineBackend.toDate().toISOString();
-
-        res.status(201).json({
+        const responsePayload = {
             message: 'Transaction initiated successfully.', transactionId: transactionRef.id,
-            status: newTransactionData.status, smartContractAddress: deployedContractAddress,
-            // transactionDetails: responseDetails // Consider if you need the full details back
-        });
+            status: newTransactionData.status, smartContractAddress: newTransactionData.smartContractAddress,
+        };
+        if (deployedContractAddress === null && DEPLOYER_PRIVATE_KEY && RPC_URL) {
+            responsePayload.deploymentWarning = "Smart contract deployment was attempted but failed. The transaction has been created for off-chain tracking.";
+        }
+        res.status(201).json(responsePayload);
 
     } catch (error) {
-        console.error('Error in /create transaction route:', error);
+        console.error('[ROUTE ERROR] Error in /create transaction route:', error.message, error.stack);
         res.status(500).json({ error: 'Internal server error during transaction creation.' });
     }
 });
 
-// --- GET /deals/:transactionId ---
+// ... (rest of the routes: GET /, GET /:transactionId, PUTs, POSTs for SC interactions) ...
+// Make sure no other routes are accidentally duplicated or malformed.
+
+// Example for GET /:transactionId (ensure logging is not excessive here unless debugging this route)
 router.get('/:transactionId', authenticateToken, async (req, res) => {
     const { transactionId } = req.params;
     const userId = req.userId;
@@ -211,10 +210,9 @@ router.get('/:transactionId', authenticateToken, async (req, res) => {
         }
         const transactionData = doc.data();
         if (!Array.isArray(transactionData.participants) || !transactionData.participants.includes(userId)) {
-            console.warn(`Access denied for user ${userId} on deal ${transactionId}`);
+            console.warn(`[ROUTE WARN] Access denied for user ${userId} on deal ${transactionId}`);
             return res.status(403).json({ error: 'Access denied.' });
         }
-        // Prepare response details (convert Timestamps)
         const responseDetails = {
             ...transactionData, id: doc.id,
             createdAt: transactionData.createdAt?.toDate()?.toISOString() ?? null,
@@ -226,12 +224,11 @@ router.get('/:transactionId', authenticateToken, async (req, res) => {
          if (transactionData.disputeResolutionDeadlineBackend) responseDetails.disputeResolutionDeadlineBackend = transactionData.disputeResolutionDeadlineBackend.toDate().toISOString();
         res.status(200).json(responseDetails);
     } catch (error) {
-        console.error(`Error fetching transaction ${transactionId}:`, error);
+        console.error(`[ROUTE ERROR] Error fetching transaction ${transactionId}:`, error);
         res.status(500).json({ error: 'Internal server error.' });
     }
 });
 
-// --- GET /deals ---
 router.get('/', authenticateToken, async (req, res) => {
     const userId = req.userId;
     const { limit = 10, startAfter, orderBy = 'createdAt', orderDirection = 'desc' } = req.query;
@@ -244,25 +241,22 @@ router.get('/', authenticateToken, async (req, res) => {
         if (startAfter) {
              if (orderBy === 'createdAt' || orderBy === 'updatedAt') {
                  try {
-                    // Attempt to parse as ISO string first
                     let startDate = new Date(startAfter);
-                    // If parsing failed, try parsing as seconds.nanoseconds (Firestore Timestamp format)
                     if (isNaN(startDate.getTime())) {
                         const parts = startAfter.match(/seconds=(\d+).*nanoseconds=(\d+)/);
                         if (parts) {
                            startDate = new Timestamp(parseInt(parts[1], 10), parseInt(parts[2], 10)).toDate();
                         } else {
-                             throw new Error("Unrecognized startAfter format");
+                             throw new Error("Unrecognized startAfter format for timestamp field.");
                         }
                     }
                     const startAfterTimestamp = Timestamp.fromDate(startDate);
                     query = query.startAfter(startAfterTimestamp);
                  } catch (dateError) {
-                     console.warn("Invalid startAfter format:", startAfter, dateError);
-                     return res.status(400).json({ error: "Invalid startAfter format. Use ISO 8601 or Firestore Timestamp string." });
+                     console.warn("[ROUTE WARN] Invalid startAfter format for timestamp:", startAfter, dateError.message);
+                     return res.status(400).json({ error: "Invalid startAfter format for timestamp field. Use ISO 8601 or Firestore Timestamp string." });
                  }
             } else {
-                 // For other fields, assume it's the direct value
                  query = query.startAfter(startAfter);
              }
         }
@@ -272,7 +266,6 @@ router.get('/', authenticateToken, async (req, res) => {
 
         const transactions = snapshot.docs.map(doc => {
             const data = doc.data();
-            // Prepare response details (convert Timestamps)
             const responseDetails = {
                  ...data, id: doc.id,
                 createdAt: data.createdAt?.toDate()?.toISOString() ?? null,
@@ -286,25 +279,23 @@ router.get('/', authenticateToken, async (req, res) => {
         });
         res.status(200).json(transactions);
     } catch (error) {
-        console.error(`Error fetching transactions for UID ${userId}:`, error);
-        if (error.code === 'invalid-argument' && error.message.includes('order by')) {
-             return res.status(400).json({ error: `Invalid orderBy field: ${orderBy}. Ensure it exists and is indexed if needed.` });
+        console.error(`[ROUTE ERROR] Error fetching transactions for UID ${userId}:`, error.message, error.stack);
+        if (error.message.includes('order by') || error.message.includes('invalid-argument')) {
+             return res.status(400).json({ error: `Invalid orderBy field or query: ${orderBy}. Ensure it exists and is indexed if needed.` });
         }
         res.status(500).json({ error: 'Internal server error.' });
     }
 });
 
-
-// --- PUT /deals/:transactionId/conditions/:conditionId/buyer-review ---
 router.put('/:transactionId/conditions/:conditionId/buyer-review', authenticateToken, async (req, res) => {
     const { transactionId, conditionId } = req.params;
     const { newBackendStatus, reviewComment } = req.body;
     const userId = req.userId;
 
     if (!newBackendStatus || !['FULFILLED_BY_BUYER', 'PENDING_BUYER_ACTION', 'ACTION_WITHDRAWN_BY_BUYER'].includes(newBackendStatus)) {
-        return res.status(400).json({ error: 'Invalid newBackendStatus for condition.' });
+        return res.status(400).json({ error: 'Invalid newBackendStatus for condition. Must be FULFILLED_BY_BUYER, PENDING_BUYER_ACTION, or ACTION_WITHDRAWN_BY_BUYER.' });
     }
-    console.log(`Buyer (UID: ${userId}) updating backend status for condition ${conditionId} in TX ${transactionId} to ${newBackendStatus}`);
+    // console.log(`[ROUTE LOG] Buyer (UID: ${userId}) updating backend status for condition ${conditionId} in TX ${transactionId} to ${newBackendStatus}`);
 
     try {
         const transactionRef = db.collection('deals').doc(transactionId);
@@ -315,75 +306,61 @@ router.put('/:transactionId/conditions/:conditionId/buyer-review', authenticateT
             if (!doc.exists) throw { status: 404, message: 'Transaction not found.' };
             let txData = doc.data();
 
-            if (userId !== txData.buyerId) throw { status: 403, message: 'Only the buyer can update condition status.' };
+            if (userId !== txData.buyerId) throw { status: 403, message: 'Only the buyer can update this condition status.' };
 
             const conditionIndex = (txData.conditions || []).findIndex(c => c.id === conditionId);
-            if (conditionIndex === -1) throw { status: 404, message: 'Condition not found.' };
+            if (conditionIndex === -1) throw { status: 404, message: 'Condition not found within the transaction.' };
 
-            const updatedConditions = [...(txData.conditions || [])];
+            const updatedConditions = JSON.parse(JSON.stringify(txData.conditions || []));
             const oldConditionStatus = updatedConditions[conditionIndex].status;
+
             updatedConditions[conditionIndex].status = newBackendStatus;
             updatedConditions[conditionIndex].updatedAt = now;
-            if (reviewComment) updatedConditions[conditionIndex].reviewComment = reviewComment;
-            else updatedConditions[conditionIndex].reviewComment = FieldValue.delete(); // Remove if null/undefined
+            if (reviewComment !== undefined) {
+                updatedConditions[conditionIndex].reviewComment = reviewComment;
+            } else {
+                delete updatedConditions[conditionIndex].reviewComment;
+            }
 
             const timelineEvent = {
                 event: `Buyer (UID: ${userId}) updated backend status for condition "${updatedConditions[conditionIndex].description || conditionId}" from ${oldConditionStatus} to ${newBackendStatus}.`,
                 timestamp: now, userId,
             };
-             if (reviewComment) timelineEvent.comment = reviewComment;
+             if (reviewComment !== undefined) timelineEvent.comment = reviewComment;
 
             const updatePayload = {
                 conditions: updatedConditions,
                 updatedAt: now,
                 timeline: FieldValue.arrayUnion(timelineEvent)
             };
-
-            // Check if all conditions are now met AFTER this update
-            const allBackendConditionsMet = areAllBackendConditionsFulfilled(updatedConditions);
-            if (allBackendConditionsMet && txData.fundsDepositedByBuyer && txData.status !== 'READY_FOR_FINAL_APPROVAL' && txData.status !== 'IN_FINAL_APPROVAL') {
-                // Example: Transition status if appropriate (logic depends on your state machine)
-                // updatePayload.status = 'READY_FOR_FINAL_APPROVAL'; // Or similar
-                console.log(`All backend conditions for TX ${transactionId} marked as fulfilled by buyer.`);
-                // Add timeline event for this state change if needed
-            }
-             if (newBackendStatus === 'ACTION_WITHDRAWN_BY_BUYER' && txData.status === 'READY_FOR_ONCHAIN_FINAL_APPROVAL_SETUP') {
-                // Potentially revert status if a condition is withdrawn during approval setup
-                // updatePayload.status = 'AWAITING_BUYER_CONDITION_CONFIRMATION'; // Example status revert
-            }
-
             t.update(transactionRef, updatePayload);
         });
         res.status(200).json({ message: `Backend condition status updated to: ${newBackendStatus}.` });
     } catch (error) {
-        console.error(`Error updating backend condition for TX ${transactionId}, Cond ${conditionId}:`, error.status ? error.message : error);
+        console.error(`[ROUTE ERROR] Error updating backend condition for TX ${transactionId}, Cond ${conditionId}:`, error.status ? error.message : error.stack);
         res.status(error.status || 500).json({ error: error.message || 'Internal server error.' });
     }
 });
 
-
-// --- PUT /deals/:transactionId/sync-status ---
 router.put('/:transactionId/sync-status', authenticateToken, async (req, res) => {
     const { transactionId } = req.params;
     const { newSCStatus, eventMessage, finalApprovalDeadlineISO, disputeResolutionDeadlineISO } = req.body;
-    const userId = req.userId; // User performing the sync (could be buyer, seller, or system)
+    const userId = req.userId;
 
     if (!newSCStatus || typeof newSCStatus !== 'string') {
-        return res.status(400).json({ error: 'New Smart Contract status (newSCStatus) is required.' });
+        return res.status(400).json({ error: 'New Smart Contract status (newSCStatus) is required and must be a string.' });
     }
-    // Define valid statuses based on your contract's state machine
     const ALLOWED_SC_STATUSES = [
         'AWAITING_CONDITION_SETUP', 'PENDING_BUYER_REVIEW', 'PENDING_SELLER_REVIEW',
         'AWAITING_DEPOSIT', 'AWAITING_FULFILLMENT',
         'READY_FOR_FINAL_APPROVAL', 'IN_FINAL_APPROVAL', 'IN_DISPUTE',
         'COMPLETED', 'CANCELLED'
-        // Add any other valid statuses from your contract/flow
     ];
     if (!ALLOWED_SC_STATUSES.includes(newSCStatus)) {
         return res.status(400).json({ error: `Invalid smart contract status value: ${newSCStatus}.` });
     }
 
-    console.log(`Syncing/Updating status for TX ID: ${transactionId} to SC State "${newSCStatus}" by UID: ${userId}`);
+    // console.log(`[ROUTE LOG] Syncing/Updating backend status for TX ID: ${transactionId} to SC State "${newSCStatus}" by UID: ${userId}`);
 
     try {
         const transactionRef = db.collection('deals').doc(transactionId);
@@ -396,94 +373,59 @@ router.put('/:transactionId/sync-status', authenticateToken, async (req, res) =>
             const txData = doc.data();
             const currentBackendStatus = txData.status;
 
-            // Allow any participant (or potentially a system role) to sync status
             if (!Array.isArray(txData.participants) || !txData.participants.includes(userId)) {
-                // Consider if a system/admin should bypass this check
-                throw { status: 403, message: 'Access denied. Not a participant.' };
+                throw { status: 403, message: 'Access denied. Not a participant of this transaction.' };
             }
 
-            const updatePayload = {
-                status: newSCStatus, // Update backend status to match SC status
-                updatedAt: now,
-            };
-
-            // Prepare timeline events to add
+            const updatePayload = { status: newSCStatus, updatedAt: now };
             const timelineEventsToAdd = [];
-            // Add a generic sync event if no specific message provided
-            if (!eventMessage) {
-                 timelineEventsToAdd.push({
-                    event: `Backend status synced to ${newSCStatus} based on smart contract state. Synced by UID: ${userId}.`,
-                    timestamp: now,
-                    userId: userId, // Log who triggered the sync
-                    systemTriggered: false // Indicate user trigger
-                 });
-            } else {
-                 timelineEventsToAdd.push({
-                    event: eventMessage, // Use provided message
-                    timestamp: now,
-                    userId: userId,
-                    systemTriggered: false
-                 });
-            }
+            const baseEventMessage = eventMessage || `Backend status synced to ${newSCStatus} based on smart contract state.`;
+            timelineEventsToAdd.push({
+                event: `${baseEventMessage} Synced by UID: ${userId}.`,
+                timestamp: now, userId, systemTriggered: !eventMessage
+            });
 
-
-            // Update deadlines if provided and relevant to the new status
             if (newSCStatus === 'IN_FINAL_APPROVAL' && finalApprovalDeadlineISO) {
                 try {
                     updatePayload.finalApprovalDeadlineBackend = Timestamp.fromDate(new Date(finalApprovalDeadlineISO));
-                     timelineEventsToAdd.push({ event: `Final approval deadline set/updated to ${finalApprovalDeadlineISO}.`, timestamp: now, system: true });
-                } catch (e) { console.warn("Invalid finalApprovalDeadlineISO format during sync"); }
+                    timelineEventsToAdd.push({ event: `Final approval deadline set/updated to ${finalApprovalDeadlineISO}.`, timestamp: now, system: true });
+                } catch (e) { console.warn("[ROUTE WARN] Invalid finalApprovalDeadlineISO format during sync:", finalApprovalDeadlineISO); }
             }
             if (newSCStatus === 'IN_DISPUTE' && disputeResolutionDeadlineISO) {
                  try {
                     updatePayload.disputeResolutionDeadlineBackend = Timestamp.fromDate(new Date(disputeResolutionDeadlineISO));
                     timelineEventsToAdd.push({ event: `Dispute resolution deadline set/updated to ${disputeResolutionDeadlineISO}.`, timestamp: now, system: true });
-                 } catch (e) { console.warn("Invalid disputeResolutionDeadlineISO format during sync"); }
+                 } catch (e) { console.warn("[ROUTE WARN] Invalid disputeResolutionDeadlineISO format during sync:", disputeResolutionDeadlineISO); }
             }
 
-            // Update flags based on the *new* SC status, if not already set
-            const needsFundsDepositedUpdate = (newSCStatus === 'AWAITING_FULFILLMENT' || newSCStatus === 'READY_FOR_FINAL_APPROVAL' || newSCStatus === 'IN_FINAL_APPROVAL' || newSCStatus === 'COMPLETED') && !txData.fundsDepositedByBuyer;
-            const needsFundsReleasedUpdate = newSCStatus === 'COMPLETED' && !txData.fundsReleasedToSeller;
-
-            if (needsFundsDepositedUpdate) {
+            const fundsDepositedStates = ['AWAITING_FULFILLMENT', 'READY_FOR_FINAL_APPROVAL', 'IN_FINAL_APPROVAL', 'COMPLETED'];
+            if (fundsDepositedStates.includes(newSCStatus) && !txData.fundsDepositedByBuyer) {
                 updatePayload.fundsDepositedByBuyer = true;
-                timelineEventsToAdd.push({
-                    event: `Funds confirmed deposited based on smart contract state sync.`,
-                    timestamp: now, system: true
-                });
+                timelineEventsToAdd.push({ event: `Funds confirmed deposited (synced from SC).`, timestamp: now, system: true });
             }
-            if (needsFundsReleasedUpdate) {
+            if (newSCStatus === 'COMPLETED' && !txData.fundsReleasedToSeller) {
                 updatePayload.fundsReleasedToSeller = true;
-                 timelineEventsToAdd.push({
-                    event: `Funds confirmed released to seller based on smart contract state sync.`,
-                    timestamp: now, system: true
-                });
+                timelineEventsToAdd.push({ event: `Funds confirmed released to seller (synced from SC).`, timestamp: now, system: true });
             }
 
-            // Add all timeline events using arrayUnion
             updatePayload.timeline = FieldValue.arrayUnion(...timelineEventsToAdd);
-
-            console.log(`Updating backend status for TX ${transactionId} from ${currentBackendStatus} to ${newSCStatus}`);
+            // console.log(`[ROUTE LOG] Updating backend status for TX ${transactionId} from ${currentBackendStatus} to ${newSCStatus}.`);
             t.update(transactionRef, updatePayload);
         });
         res.status(200).json({ message: `Transaction backend status synced/updated to ${newSCStatus}.`});
     } catch (error) {
-        console.error(`Error syncing/updating TX ${transactionId} status:`, error.status ? error.message : error);
+        console.error(`[ROUTE ERROR] Error syncing/updating TX ${transactionId} status:`, error.status ? error.message : error.stack);
         res.status(error.status || 500).json({ error: error.message || 'Internal server error.' });
     }
 });
 
-
-// --- POST /deals/:transactionId/sc/start-final-approval ---
-// This endpoint is likely triggered by the frontend *after* a successful on-chain transaction
-// to start the final approval period. It syncs the backend state.
 router.post('/:transactionId/sc/start-final-approval', authenticateToken, async (req, res) => {
     const { transactionId } = req.params;
-    const { finalApprovalDeadlineISO } = req.body; // Expecting deadline from frontend based on contract event/call
-    const userId = req.userId; // User who initiated the frontend action
+    const { finalApprovalDeadlineISO } = req.body;
+    const userId = req.userId;
 
     if (!finalApprovalDeadlineISO) {
-        return res.status(400).json({ error: "finalApprovalDeadlineISO is required." });
+        return res.status(400).json({ error: "finalApprovalDeadlineISO is required (ISO string format)." });
     }
 
     try {
@@ -492,8 +434,12 @@ router.post('/:transactionId/sc/start-final-approval', authenticateToken, async 
         let finalApprovalTimestamp;
         try {
              finalApprovalTimestamp = Timestamp.fromDate(new Date(finalApprovalDeadlineISO));
+             if (finalApprovalTimestamp.toDate() <= now.toDate()) {
+                throw new Error("Final approval deadline must be in the future.");
+             }
         } catch (e) {
-             return res.status(400).json({ error: "Invalid finalApprovalDeadlineISO format." });
+             console.warn("[ROUTE WARN] Invalid finalApprovalDeadlineISO:", finalApprovalDeadlineISO, e.message);
+             return res.status(400).json({ error: `Invalid finalApprovalDeadlineISO format or value: ${e.message}` });
         }
 
         await db.runTransaction(async (t) => {
@@ -501,108 +447,98 @@ router.post('/:transactionId/sc/start-final-approval', authenticateToken, async 
             if (!doc.exists) throw { status: 404, message: "Transaction not found." };
             const txData = doc.data();
 
-            // Ensure the user is a participant (or potentially just the seller who triggers this)
             if (!txData.participants?.includes(userId)) {
                 throw { status: 403, message: "Access denied. Not a participant." };
             }
-            // Add specific role checks if needed (e.g., only seller can trigger this sync)
-            // if (txData.sellerId !== userId) {
-            //     throw { status: 403, message: "Only the seller can initiate the final approval sync." };
-            // }
-
             t.update(transactionRef, {
-                status: 'IN_FINAL_APPROVAL', // Update backend status
+                status: 'IN_FINAL_APPROVAL',
                 finalApprovalDeadlineBackend: finalApprovalTimestamp,
                 updatedAt: now,
                 timeline: FieldValue.arrayUnion({
-                    event: `Final approval period started (synced from on-chain action). Synced by UID: ${userId}.`,
+                    event: `Final approval period started (synced from on-chain action by UID: ${userId}). Deadline: ${finalApprovalDeadlineISO}.`,
                     timestamp: now,
                     userId: userId
                 })
             });
         });
-
         res.status(200).json({ message: "Backend synced: Final approval period started." });
     } catch (error) {
-        console.error(`Error syncing start-final-approval for TX ${transactionId}:`, error.status ? error.message : error);
+        console.error(`[ROUTE ERROR] Error syncing start-final-approval for TX ${transactionId}:`, error.status ? error.message : error.stack);
         res.status(error.status || 500).json({ error: error.message || 'Internal server error.' });
     }
 });
 
-// --- POST /deals/:transactionId/sc/raise-dispute ---
-// Similar to above, triggered after an on-chain dispute action.
 router.post('/:transactionId/sc/raise-dispute', authenticateToken, async (req, res) => {
     const { transactionId } = req.params;
-    // conditionId might not be strictly necessary if the contract event doesn't specify it,
-    // but useful for backend logging/tracking.
     const { conditionId, disputeResolutionDeadlineISO } = req.body;
-    const userId = req.userId; // User who raised the dispute
+    const userId = req.userId;
 
     if (!disputeResolutionDeadlineISO) {
-         return res.status(400).json({ error: "disputeResolutionDeadlineISO is required." });
+        return res.status(400).json({ error: "disputeResolutionDeadlineISO is required (ISO string format)." });
     }
-     if (!conditionId) {
-         console.warn(`Missing conditionId for dispute sync on TX ${transactionId}. Proceeding without specific condition update.`);
-     }
 
     try {
         const transactionRef = db.collection('deals').doc(transactionId);
         const now = Timestamp.now();
         let disputeDeadlineTimestamp;
-         try {
-             disputeDeadlineTimestamp = Timestamp.fromDate(new Date(disputeResolutionDeadlineISO));
-         } catch (e) {
-             return res.status(400).json({ error: "Invalid disputeResolutionDeadlineISO format." });
-         }
-
+        try {
+            disputeDeadlineTimestamp = Timestamp.fromDate(new Date(disputeResolutionDeadlineISO));
+            if (disputeDeadlineTimestamp.toDate() <= now.toDate()) {
+                throw new Error("Dispute resolution deadline must be in the future.");
+            }
+        } catch (e) {
+            console.warn("[ROUTE WARN] Invalid disputeResolutionDeadlineISO:", disputeResolutionDeadlineISO, e.message);
+            return res.status(400).json({ error: `Invalid disputeResolutionDeadlineISO format or value: ${e.message}` });
+        }
 
         await db.runTransaction(async (t) => {
             const doc = await t.get(transactionRef);
             if (!doc.exists) throw { status: 404, message: "Transaction not found for dispute sync." };
             const txData = doc.data();
+            const currentStatus = txData.status;
 
-            if (!txData.participants?.includes(userId)) {
-                 throw { status: 403, message: "Access denied. Not a participant." };
+            if (currentStatus === 'IN_DISPUTE' || currentStatus === 'COMPLETED' || currentStatus === 'CANCELLED') {
+                throw { status: 400, message: `Deal is not in a state where a dispute can be raised (current status: ${currentStatus}).` };
             }
-             // Typically, only the buyer raises disputes in escrow
-             if (txData.buyerId !== userId) {
-                 throw { status: 403, message: "Only the buyer can raise a dispute via this sync endpoint." };
-             }
+            if (!txData.participants?.includes(userId)) {
+                throw { status: 403, message: "Access denied. Not a participant." };
+            }
+            if (txData.buyerId !== userId) {
+                throw { status: 403, message: "Only the buyer can raise a dispute via this sync endpoint." };
+            }
 
             const updatePayload = {
-                status: 'IN_DISPUTE', // Update backend status
+                status: 'IN_DISPUTE',
                 disputeResolutionDeadlineBackend: disputeDeadlineTimestamp,
                 updatedAt: now,
                 timeline: FieldValue.arrayUnion({
-                    event: `Dispute raised (synced from on-chain action)${conditionId ? ` regarding condition ID: ${conditionId}` : ''}. Synced by UID: ${userId}.`,
+                    event: `Dispute raised (synced from on-chain action by UID: ${userId})${conditionId ? ` regarding condition ID: ${conditionId}` : ''}. Deadline: ${disputeResolutionDeadlineISO}.`,
                     timestamp: now,
                     userId: userId
                 })
             };
 
-            // Optionally update the specific condition status if conditionId is provided
             if (conditionId) {
                 const conditionIndex = (txData.conditions || []).findIndex(c => c.id === conditionId);
                 if (conditionIndex !== -1) {
-                    let updatedConditions = [...txData.conditions];
-                    // You might set a specific status like 'DISPUTED' or revert it
-                    updatedConditions[conditionIndex].status = 'ACTION_WITHDRAWN_BY_BUYER'; // Example: Revert buyer fulfillment
+                    let updatedConditions = JSON.parse(JSON.stringify(txData.conditions));
+                    updatedConditions[conditionIndex].status = 'ACTION_WITHDRAWN_BY_BUYER';
                     updatedConditions[conditionIndex].updatedAt = now;
+                    updatedConditions[conditionIndex].disputeComment = `Dispute raised by UID ${userId} at ${now.toDate().toISOString()}`;
                     updatePayload.conditions = updatedConditions;
+                    console.log(`[ROUTE LOG] Condition ${conditionId} in TX ${transactionId} marked due to dispute.`);
                 } else {
-                    console.warn(`Condition ID ${conditionId} not found in deal ${transactionId} during dispute sync.`);
+                    console.warn(`[ROUTE WARN] Condition ID ${conditionId} not found in deal ${transactionId} during dispute sync, but proceeding with deal status update.`);
                 }
             }
-
             t.update(transactionRef, updatePayload);
+            console.log(`[ROUTE LOG] TX ${transactionId} status updated to IN_DISPUTE by UID ${userId}.`);
         });
-
         res.status(200).json({ message: "Backend synced: Dispute raised." });
     } catch (error) {
-        console.error(`Error syncing raise-dispute for TX ${transactionId}:`, error.status ? error.message : error);
+        console.error(`[ROUTE ERROR] Error syncing raise-dispute for TX ${transactionId}:`, error.status ? error.message : error.stack);
         res.status(error.status || 500).json({ error: error.message || 'Internal server error.' });
     }
 });
-
 
 export default router;

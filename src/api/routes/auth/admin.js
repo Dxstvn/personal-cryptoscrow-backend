@@ -18,7 +18,7 @@ function initializeAdmin() {
   let options;
 
   if (isTest) {
-    console.log("Using Test configuration for Admin SDK.");
+    console.log("Using Test configuration for Admin SDK with emulators.");
     options = {
       projectId: "demo-test",
       storageBucket: "demo-test.appspot.com"

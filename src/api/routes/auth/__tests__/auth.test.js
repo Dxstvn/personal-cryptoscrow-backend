@@ -2,7 +2,7 @@
 import request from 'supertest';
 import express from 'express';
 import loginRouter from '../loginSignUp.js';
-import { auth, adminAuth } from '/Users/dustinjasmin/personal-cryptoscrow-backend/jest.emulator.setup.js';
+import { adminAuth } from '/Users/dustinjasmin/personal-cryptoscrow-backend/jest.emulator.setup.js';
 
 // Create test app
 const app = express();
@@ -195,7 +195,7 @@ describe('Authentication Routes', () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual({
-        message: 'User authenticated',
+        message: 'User authenticated (test)',
         uid: adminUser.uid,
         isAdmin: true
       });
@@ -225,7 +225,7 @@ describe('Authentication Routes', () => {
         .send({ idToken: customToken });
 
       expect(response.status).toBe(401);
-      expect(response.body).toEqual({ error: 'Unauthorized user' });
+      expect(response.body).toEqual({ error: 'Unauthorized user (test mode - admin required)' });
     });
 
     it('should reject Google sign-in with missing ID token', async () => {

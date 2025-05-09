@@ -1,86 +1,17 @@
 import request from 'supertest';
 import express from 'express';
 import contactRouter from '../contactRoutes.js'; // Adjust path relative to test file
-import { adminAuth, adminFirestore, adminApp as testAdminApp, PROJECT_ID } from '../../../../../jest.emulator.setup.js'; // Use test setup
+import { adminFirestore }  from '../../../../../jest.emulator.setup.js'; // Use test setup
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { deleteAdminApp } from '../../../../../src/api/routes/auth/admin.js'; // Import the delete function
-import fetch from 'node-fetch';
+import {createTestUser, cleanUp } from '../../../../helperFunctions.js';
 
 // --- Test Setup ---
 const app = express();
 app.use(express.json());
 app.use('/api/contacts', contactRouter); // Assuming routes are mounted under /api/contacts
 
-const AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
-const DUMMY_API_KEY = 'demo-api-key';
-const FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || 'localhost:5004'; // Needed for cleanup maybe
 
-
-// Reusable createTestUser helper (same as before)
-async function createTestUser(email, profileData = {}) {
-  const userRecord = await adminAuth.createUser({ email, password: 'testpass' });
-  // Add user profile to Firestore 'users' collection
-  await adminFirestore.collection('users').doc(userRecord.uid).set({
-      email: email.toLowerCase(),
-      first_name: profileData.first_name || 'Test',
-      last_name: profileData.last_name || 'User',
-      phone_number: profileData.phone_number || '1234567890',
-      wallets: profileData.wallets || ['wallet1', 'wallet2'],
-      // Add other default fields if necessary
-  });
-
-  const signInUrl = `http://${AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${DUMMY_API_KEY}`;
-  let response;
-  try {
-    response = await fetch(signInUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password: 'testpass', returnSecureToken: true }),
-    });
-    const data = await response.json();
-    if (!response.ok || !data.idToken) {
-      console.error('Failed Test User Sign-In:', { status: response.status, body: data });
-      throw new Error(`Failed to get token for ${email}. Status: ${response.status}`);
-    }
-    return { uid: userRecord.uid, token: data.idToken, email: email.toLowerCase() };
-  } catch (error) {
-    console.error(`Error creating test user ${email}:`, error);
-    if (!response) throw new Error(`Network error fetching token at ${signInUrl}`);
-    throw error;
-  }
-}
-
-// Updated Cleanup Helper
-async function cleanUp() {
-  // Clear Auth
-  try {
-    const usersList = await adminAuth.listUsers();
-    const deleteUserPromises = usersList.users.map(user => adminAuth.deleteUser(user.uid));
-    await Promise.all(deleteUserPromises);
-  } catch (error) { /* Handle potential cleanup errors */ }
-
-  // Clear Firestore (Users, Contacts Subcollections, Invitations)
-  try {
-    const collectionsToClear = ['users', 'contactInvitations'];
-    for (const collectionName of collectionsToClear) {
-      const snapshot = await adminFirestore.collection(collectionName).get();
-      const deletePromises = [];
-      snapshot.forEach(doc => {
-          // If 'users', potentially delete subcollections first if structure requires it
-          if (collectionName === 'users') {
-             // Simple deletion of subcollection docs first (adjust if deeper nesting)
-              const contactSub = adminFirestore.collection('users').doc(doc.id).collection('contacts');
-              deletePromises.push(contactSub.get().then(subSnap => {
-                 const subDeletePromises = subSnap.docs.map(subDoc => subDoc.ref.delete());
-                 return Promise.all(subDeletePromises);
-              }));
-          }
-          deletePromises.push(doc.ref.delete());
-      });
-      await Promise.all(deletePromises);
-    }
-  } catch (error) { /* Handle potential cleanup errors */ }
-}
 
 // --- Tests ---
 describe('Contact Routes API (/api/contacts)', () => {

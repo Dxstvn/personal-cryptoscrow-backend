@@ -15,7 +15,7 @@
     "test:auth:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 node --experimental-vm-modules node_modules/jest/bin/jest.js src/api/routes/auth/__tests__/auth.test.js",
     "test:fileUploadDownload:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 node --experimental-vm-modules node_modules/jest/bin/jest.js src/api/routes/database/__tests__/fileUploadDownload.test.js",
     "test:contactRoutes:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 node --experimental-vm-modules node_modules/jest/bin/jest.js src/api/routes/contact/__tests__/contactRoutes.test.js",
-    "test:transactionRoutes:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 node --experimental-vm-modules node_modules/jest/bin/jest.js --clearCache && node --experimental-vm-modules node_modules/jest/bin/jest.js src/api/routes/transaction/__tests__/transactionRoutes.test.js"
+    "test:transactionRoutes:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 node --experimental-vm-modules node_modules/jest/bin/jest.js src/api/routes/transaction/__tests__/transactionRoutes.test.js"
   },
   "repository": {
     "type": "git",

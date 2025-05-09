@@ -39,11 +39,13 @@ adminFirestore.settings({
   host: 'localhost:5004',
   ssl: false,
 });
-
+const FIREBASE_AUTH_EMULATOR_HOST="localhost:9099"
+const FIRESTORE_EMULATOR_HOST="localhost:5004"
+const FIREBASE_STORAGE_EMULATOR_HOST="localhost:9199"
 // Log environment for debugging
-console.log(`Auth Emulator Host: ${process.env.FIREBASE_AUTH_EMULATOR_HOST}`);
-console.log(`Firestore Emulator Host: ${process.env.FIRESTORE_EMULATOR_HOST}`);
-console.log(`Storage Emulator Host: ${process.env.FIREBASE_STORAGE_EMULATOR_HOST}`);
+console.log(`Auth Emulator Host: ${FIREBASE_AUTH_EMULATOR_HOST}`);
+console.log(`Firestore Emulator Host: ${FIRESTORE_EMULATOR_HOST}`);
+console.log(`Storage Emulator Host: ${FIREBASE_STORAGE_EMULATOR_HOST}`);
 console.log(`Test Project ID: ${PROJECT_ID}`);
 
 
@@ -54,4 +56,4 @@ export {
   adminFirestore,
   PROJECT_ID,
   adminApp
-}; 
+};
