@@ -15,7 +15,11 @@
     "test:auth:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 node --experimental-vm-modules node_modules/jest/bin/jest.js src/api/routes/auth/__tests__/auth.test.js",
     "test:fileUploadDownload:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 node --experimental-vm-modules node_modules/jest/bin/jest.js src/api/routes/database/__tests__/fileUploadDownload.test.js",
     "test:contactRoutes:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 node --experimental-vm-modules node_modules/jest/bin/jest.js src/api/routes/contact/__tests__/contactRoutes.test.js",
-    "test:transactionRoutes:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 node --experimental-vm-modules node_modules/jest/bin/jest.js src/api/routes/transaction/__tests__/transactionRoutes.test.js"
+    "test:transactionRoutes:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 node --experimental-vm-modules node_modules/jest/bin/jest.js src/api/routes/transaction/__tests__/transactionRoutes.test.js",
+    "test:services:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 node --experimental-vm-modules node_modules/jest/bin/jest.js src/services/__tests__",
+    "test:databaseService:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 node --experimental-vm-modules node_modules/jest/bin/jest.js src/services/__tests__/databaseService.test.js",
+    "test:blockchainService:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 node --experimental-vm-modules node_modules/jest/bin/jest.js src/services/__tests__/blockchainService.test.js",
+    "test:scheduledJobs:emulator": "NODE_ENV=test FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 node --experimental-vm-modules node_modules/jest/bin/jest.js src/jobs/__tests__/scheduledJobs.test.js"
   },
   "repository": {
     "type": "git",
@@ -50,6 +54,7 @@
     "jsonwebtoken": "^9.0.2",
     "lodash": "^4.17.21",
     "multer": "^1.4.5-lts.2",
+    "node-cron": "^3.0.3",
     "node-fetch": "^3.3.2",
     "nodemailer": "^6.10.1",
     "uuid": "^11.1.0",
