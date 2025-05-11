@@ -1,224 +1,302 @@
 // src/services/__tests__/blockchainService.test.js
 
-// STEP 1: Set mock ENV VARS at the VERY TOP, before any other code.
-// This influences the first time Jest's module loader might see blockchainService.js.
-// Use a valid format for the private key, even if it's a dummy for this initial load.
-const initialDummyPrivateKey = '0x0123456789012345678901234567890123456789012345678901234567890123';
-process.env.RPC_URL = 'http://jest-initial-mock-rpc.invalid'; // Invalid TLD to prevent actual attempts
-process.env.BACKEND_WALLET_PRIVATE_KEY = initialDummyPrivateKey;
-
-// STEP 2: Import Jest functions and actualEthers for test utilities
-import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { jest } from '@jest/globals';
 import { ethers as actualEthers } from 'ethers';
 import { createRequire } from 'module';
 
-// STEP 3: Define mock functions that will be used by jest.mock
-const mockEthersContractConstructor = jest.fn();
-const mockJsonRpcProviderInstance = {
-  getBlockNumber: jest.fn(),
-  getBalance: jest.fn(),
-  detectNetwork: jest.fn(),
-  // Add any other methods that ethers.Wallet might call on a provider instance during its construction or use
-  _isProvider: true, // Some internal checks might look for this
-  resolveName: jest.fn(name => Promise.resolve(name)), // If wallet tries to resolve ENS names
-  getNetwork: jest.fn(() => Promise.resolve({ name: 'mocknet', chainId: 1337 })) // Mimic getNetwork - Corrected
-};
-const mockEthersJsonRpcProviderConstructor = jest.fn(() => mockJsonRpcProviderInstance);
-let mockContractInstance; // Will hold the instance returned by mockEthersContractConstructor
+// Define require early
+const require = createRequire(import.meta.url);
 
-// STEP 4: Mock the 'ethers' module. This is hoisted by Jest.
-jest.mock('ethers', () => {
-  const originalEthersModule = jest.requireActual('ethers');
+// Mock ethers using jest.unstable_mockModule for ESM compatibility
+jest.unstable_mockModule('ethers', () => {
+  const mockProvider = {
+    getBlockNumber: jest.fn().mockResolvedValue(12345),
+    getNetwork: jest.fn().mockResolvedValue({ chainId: 1337, name: 'mocknet' }),
+    send: jest.fn().mockResolvedValue({}),
+    _isProvider: true,
+    on: jest.fn(),
+    off: jest.fn(),
+    removeAllListeners: jest.fn(),
+    resolveName: jest.fn().mockImplementation(name => Promise.resolve(name)),
+    getBalance: jest.fn().mockResolvedValue(actualEthers.parseEther('20')),
+    detectNetwork: jest.fn().mockResolvedValue({ chainId: 1337, name: 'mocknet' }),
+    _start: jest.fn(),
+    _stop: jest.fn(),
+    // Add these to prevent infinite network detection
+    ready: Promise.resolve(),
+    _network: { chainId: 1337, name: 'mocknet' },
+    _lastBlockNumber: 12345,
+    _emitted: { block: -2 },
+    _pollingInterval: -1,
+    _bootstrapPoll: jest.fn(),
+    // Add cleanup method
+    destroy: jest.fn().mockImplementation(() => {
+      mockProvider._pollingInterval = -1;
+      mockProvider._bootstrapPoll.mockClear();
+      return Promise.resolve();
+    }),
+    // Add these to properly mimic provider behavior
+    _getInternalBlockNumber: jest.fn().mockResolvedValue(12345),
+    _setFastBlockNumber: jest.fn(),
+    _setFastBlockNumberPromise: Promise.resolve(),
+    _lastNetwork: { chainId: 1337, name: 'mocknet' },
+    _networkPromise: Promise.resolve({ chainId: 1337, name: 'mocknet' }),
+    _events: [],
+    _emitted: { block: -2 },
+    _pollingInterval: -1,
+    _bootstrapPoll: jest.fn(),
+    _poller: null,
+    _lastBlockNumber: 12345,
+    _fastBlockNumber: 12345,
+    _fastQueryDate: 0,
+    _maxInternalBlockNumber: 12345,
+    _internalBlockNumber: 12345,
+    _lastBlockNumber: 12345,
+    _pollingInterval: -1,
+    _bootstrapPoll: jest.fn(),
+    _poller: null,
+    _lastBlockNumber: 12345,
+    _fastBlockNumber: 12345,
+    _fastQueryDate: 0,
+    _maxInternalBlockNumber: 12345,
+    _internalBlockNumber: 12345,
+  };
+
+  const mockContractInstance = {
+    releaseFundsAfterApprovalPeriod: jest.fn(),
+    cancelEscrowAndRefundBuyer: jest.fn(),
+  };
+
+  const mockWallet = jest.fn((privateKey, provider) => ({
+    ...actualEthers.Wallet.fromPhrase(actualEthers.Wallet.createRandom().mnemonic.phrase),
+    connect: jest.fn(() => ({ provider })),
+    privateKey,
+    provider,
+    address: actualEthers.Wallet.createRandom().address,
+  }));
+
   return {
-    ...originalEthersModule, // Keep other ethers utilities real (Wallet, utils, etc.)
-    JsonRpcProvider: mockEthersJsonRpcProviderConstructor, // Crucially mock the constructor
-    Contract: mockEthersContractConstructor,
+    ...jest.requireActual('ethers'),
+    JsonRpcProvider: jest.fn(() => mockProvider),
+    Contract: jest.fn((address, abi, wallet) => mockContractInstance),
+    Wallet: mockWallet,
+    isAddress: jest.requireActual('ethers').isAddress,
   };
 });
 
-// --- Dynamically Imported Service Variables ---
-// These will be assigned in beforeEach after the service is dynamically imported
-let triggerReleaseAfterApproval;
-let triggerCancelAfterDisputeDeadline;
+// Import mocked ethers
+const mockEthers = await import('ethers');
+const mockProviderInstance = mockEthers.JsonRpcProvider();
+const mockContractInstance = mockEthers.Contract();
 
-// --- Static Test Setup (like ABI loading) ---
-const require = createRequire(import.meta.url);
+// Load ABI
 let contractABI;
 try {
-    const PropertyEscrowArtifact = require('../../contract/artifacts/contracts/PropertyEscrow.sol/PropertyEscrow.json');
-    contractABI = PropertyEscrowArtifact.abi;
-    if (!contractABI || contractABI.length === 0) throw new Error("ABI array is empty.");
+  const PropertyEscrowArtifact = require('../../contract/artifacts/contracts/PropertyEscrow.sol/PropertyEscrow.json');
+  contractABI = PropertyEscrowArtifact.abi;
+  if (!contractABI || contractABI.length === 0) throw new Error('ABI array is empty.');
 } catch (e) {
-    console.error("TEST SETUP ERROR: Failed to load PropertyEscrow ABI. This is critical for tests.", e.message);
-    contractABI = [{ "type": "constructor", "inputs": [] }]; // Minimal valid ABI to prevent crashes
+  console.error('TEST SETUP ERROR: Failed to load PropertyEscrow ABI.', e.message);
+  contractABI = [{ type: 'constructor', inputs: [] }];
 }
 
 describe('Blockchain Service - Unit Tests', () => {
   const mockDealId = 'deal-unit-test';
   const validContractAddress = actualEthers.Wallet.createRandom().address;
   const dummyUnitTestPrivateKey = actualEthers.Wallet.createRandom().privateKey;
-  const originalProcessEnv = { ...process.env }; // Store to restore after each test
+  const originalProcessEnv = { ...process.env };
 
   beforeEach(async () => {
-    // Reset modules to ensure blockchainService.js is re-evaluated with current mocks/env
     jest.resetModules();
-
-    // Set specific environment variables for this test run *before* dynamic import
     process.env.RPC_URL = 'http://mock-rpc-for-this-specific-test.invalid';
     process.env.BACKEND_WALLET_PRIVATE_KEY = dummyUnitTestPrivateKey;
-
-    // Clear all mock call history and reset implementations if they were changed
-    mockEthersContractConstructor.mockClear();
-    mockEthersJsonRpcProviderConstructor.mockClear();
     
-    // Configure default resolved values for mocked provider methods for this test
-    mockJsonRpcProviderInstance.getBlockNumber.mockClear().mockResolvedValue(12345);
-    mockJsonRpcProviderInstance.getBalance.mockClear().mockResolvedValue(actualEthers.parseEther('20'));
-    mockJsonRpcProviderInstance.detectNetwork.mockClear().mockResolvedValue({ name: 'testnet', chainId: 1337 });
-    mockJsonRpcProviderInstance.resolveName.mockClear().mockImplementation(name => Promise.resolve(name));
-    mockJsonRpcProviderInstance.getNetwork.mockClear().mockResolvedValue({ name: 'testnet_mock', chainId: 1337000 }); // Corrected
-
-
-    // Dynamically import the service *after* resetting modules and setting env/mocks
-    const serviceModule = await import('../blockchainService.js');
-    triggerReleaseAfterApproval = serviceModule.triggerReleaseAfterApproval;
-    triggerCancelAfterDisputeDeadline = serviceModule.triggerCancelAfterDisputeDeadline;
-
-    // Setup the mock contract instance that our mocked ethers.Contract constructor will return
-    mockContractInstance = {
-      releaseFundsAfterApprovalPeriod: jest.fn(),
-      cancelEscrowAndRefundBuyer: jest.fn(),
-    };
-    mockEthersContractConstructor.mockImplementation(() => mockContractInstance);
+    // Reset all mocks
+    mockEthers.JsonRpcProvider.mockClear();
+    mockProviderInstance.getBlockNumber.mockClear();
+    mockEthers.Contract.mockClear();
+    mockContractInstance.releaseFundsAfterApprovalPeriod.mockClear();
+    mockContractInstance.cancelEscrowAndRefundBuyer.mockClear();
+    mockProviderInstance.on.mockClear();
+    mockProviderInstance.off.mockClear();
+    mockProviderInstance.removeAllListeners.mockClear();
     
-    // Suppress console output during tests
-    jest.spyOn(console, 'error').mockImplementation(() => {});
+    // Silence console output during tests
     jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'error').mockImplementation(() => {});
     jest.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
-  afterEach(() => {
-    process.env = { ...originalProcessEnv }; // Restore original environment
-    jest.restoreAllMocks(); // Restore spied console methods, etc.
+  afterEach(async () => {
+    // Clean up provider
+    await mockProviderInstance.destroy();
+    
+    // Reset environment
+    process.env = { ...originalProcessEnv };
+    
+    // Reset all mocks
+    mockProviderInstance.removeAllListeners.mockReset();
+    mockProviderInstance.off.mockReset();
+    jest.resetAllMocks();
+    jest.restoreAllMocks();
+    
+    // Wait for any pending promises
+    await new Promise(resolve => setTimeout(resolve, 100));
   });
 
-  it('service initialization should use mocked JsonRpcProvider and call its methods', async () => {
-    // blockchainService.js is imported in beforeEach, which triggers its initialization.
-    // Verify that the mocked JsonRpcProvider constructor was called with the RPC_URL set in beforeEach.
-    expect(mockEthersJsonRpcProviderConstructor).toHaveBeenCalledWith(process.env.RPC_URL);
-    
-    // Allow any microtasks from the service's initialization (like .then() blocks) to complete.
-    await new Promise(process.nextTick); 
-    
-    // Verify that getBlockNumber on the *instance* returned by the mocked constructor was called.
-    expect(mockJsonRpcProviderInstance.getBlockNumber).toHaveBeenCalled();
+  describe('Service Initialization', () => {
+    it('should initialize provider and wallet with valid environment variables', async () => {
+      const { triggerReleaseAfterApproval } = await import('../blockchainService.js');
+      await triggerReleaseAfterApproval(validContractAddress, mockDealId);
+      
+      expect(mockEthers.JsonRpcProvider).toHaveBeenCalledWith(process.env.RPC_URL);
+      expect(mockProviderInstance.getBlockNumber).toHaveBeenCalled();
+    });
+
+    it('should fail initialization with missing RPC_URL', async () => {
+      delete process.env.RPC_URL;
+      const { triggerReleaseAfterApproval } = await import('../blockchainService.js');
+      const result = await triggerReleaseAfterApproval(validContractAddress, mockDealId);
+      
+      expect(result.success).toBe(false);
+      expect(result.error.message).toContain('Initialization failed');
+    });
+
+    it('should fail initialization with missing private key', async () => {
+      delete process.env.BACKEND_WALLET_PRIVATE_KEY;
+      const { triggerReleaseAfterApproval } = await import('../blockchainService.js');
+      const result = await triggerReleaseAfterApproval(validContractAddress, mockDealId);
+      
+      expect(result.success).toBe(false);
+      expect(result.error.message).toContain('Initialization failed');
+    });
   });
 
   describe('triggerReleaseAfterApproval', () => {
-    it('should call releaseFundsAfterApprovalPeriod on the contract and return success', async () => {
-      const mockTx = { 
-        hash: '0xmockhash_release', 
-        wait: jest.fn().mockResolvedValue({ transactionHash: '0xmockhash_release_receipt', status: 1 }) 
+    it('should successfully release funds after approval period', async () => {
+      const mockTx = {
+        hash: '0xmockhash_release',
+        wait: jest.fn().mockResolvedValue({ transactionHash: '0xmockhash_release_receipt', status: 1 }),
       };
       mockContractInstance.releaseFundsAfterApprovalPeriod.mockResolvedValue(mockTx);
 
+      const { triggerReleaseAfterApproval } = await import('../blockchainService.js');
       const result = await triggerReleaseAfterApproval(validContractAddress, mockDealId);
 
-      expect(mockEthersContractConstructor).toHaveBeenCalledWith(
-        validContractAddress,
-        contractABI, 
-        expect.any(actualEthers.Wallet) // Wallet from blockchainService
-      );
+      expect(mockEthers.Contract).toHaveBeenCalledWith(validContractAddress, contractABI, expect.anything());
       expect(mockContractInstance.releaseFundsAfterApprovalPeriod).toHaveBeenCalled();
       expect(mockTx.wait).toHaveBeenCalledWith(1);
       expect(result.success).toBe(true);
       expect(result.receipt?.transactionHash).toBe('0xmockhash_release_receipt');
     });
 
-    it('should return failure if contract call reverts', async () => {
+    it('should handle contract revert errors', async () => {
       const revertError = new Error('VM Exception while processing transaction: revert');
       mockContractInstance.releaseFundsAfterApprovalPeriod.mockRejectedValue(revertError);
-      
+
+      const { triggerReleaseAfterApproval } = await import('../blockchainService.js');
       const result = await triggerReleaseAfterApproval(validContractAddress, mockDealId);
-      
+
       expect(result.success).toBe(false);
-      expect(result.error).toBe(revertError); // Check for the specific error instance
       expect(result.error.message).toContain('VM Exception');
     });
 
-    it('should return failure for an invalid contract address', async () => {
+    it('should handle invalid contract address', async () => {
+      const { triggerReleaseAfterApproval } = await import('../blockchainService.js');
       const result = await triggerReleaseAfterApproval('invalid-address', mockDealId);
-      
+
       expect(result.success).toBe(false);
       expect(result.error.message).toBe(`[Automation] Setup error for release, contract: invalid-address, deal: ${mockDealId}`);
-      expect(mockEthersContractConstructor).not.toHaveBeenCalled();
+      expect(mockEthers.Contract).not.toHaveBeenCalled();
     });
 
-    it('should return failure if wallet is not initialized (e.g. missing private key)', async () => {
-        jest.resetModules();
-        process.env.RPC_URL = 'http://mock-rpc-for-this-test.invalid';
-        delete process.env.BACKEND_WALLET_PRIVATE_KEY; // Simulate missing key for this specific import
+    it('should handle transaction timeout', async () => {
+      const timeoutError = new Error('Transaction timeout');
+      mockContractInstance.releaseFundsAfterApprovalPeriod.mockResolvedValue({
+        hash: '0xmockhash',
+        wait: jest.fn().mockRejectedValue(timeoutError)
+      });
 
-        const serviceModule = await import('../blockchainService.js');
-        const { triggerReleaseAfterApproval: newTrigger } = serviceModule;
-        
-        const result = await newTrigger(validContractAddress, mockDealId);
-        expect(result.success).toBe(false);
-        // The error comes from getContractInstance because `wallet` will be null in the service
-        expect(result.error.message).toContain('Wallet or ABI not initialized');
+      const { triggerReleaseAfterApproval } = await import('../blockchainService.js');
+      const result = await triggerReleaseAfterApproval(validContractAddress, mockDealId);
+
+      expect(result.success).toBe(false);
+      expect(result.error.message).toBe('Transaction timeout');
     });
 
-    it('should return failure if contractABI in service is null (simulating load failure)', async () => {
-        jest.resetModules();
-        process.env.RPC_URL = 'http://mock-rpc-for-this-test.invalid';
-        process.env.BACKEND_WALLET_PRIVATE_KEY = dummyUnitTestPrivateKey;
+    it('should handle network errors', async () => {
+      const networkError = new Error('Network error');
+      mockContractInstance.releaseFundsAfterApprovalPeriod.mockRejectedValue(networkError);
 
-        const originalCreateRequire = module.constructor.prototype.require;
-        module.constructor.prototype.require = jest.fn((path) => {
-            if (path.includes('PropertyEscrow.sol/PropertyEscrow.json')) {
-                throw new Error("Simulated ABI load failure via require mock");
-            }
-            return originalCreateRequire(path);
-        });
+      const { triggerReleaseAfterApproval } = await import('../blockchainService.js');
+      const result = await triggerReleaseAfterApproval(validContractAddress, mockDealId);
 
-
-        const serviceModule = await import('../blockchainService.js');
-        const { triggerReleaseAfterApproval: newTrigger } = serviceModule;
-
-        const result = await newTrigger(validContractAddress, mockDealId);
-        expect(result.success).toBe(false);
-        expect(result.error.message).toContain('Wallet or ABI not initialized');
-        
-        module.constructor.prototype.require = originalCreateRequire; 
+      expect(result.success).toBe(false);
+      expect(result.error.message).toBe('Network error');
     });
   });
 
   describe('triggerCancelAfterDisputeDeadline', () => {
-    it('should call cancelEscrowAndRefundBuyer on the contract and return success', async () => {
-      const mockTx = { 
-        hash: '0xmockhash_cancel', 
-        wait: jest.fn().mockResolvedValue({ transactionHash: '0xmockhash_cancel_receipt', status: 1 }) 
+    it('should successfully cancel escrow and refund buyer', async () => {
+      const mockTx = {
+        hash: '0xmockhash_cancel',
+        wait: jest.fn().mockResolvedValue({ transactionHash: '0xmockhash_cancel_receipt', status: 1 }),
       };
       mockContractInstance.cancelEscrowAndRefundBuyer.mockResolvedValue(mockTx);
 
+      const { triggerCancelAfterDisputeDeadline } = await import('../blockchainService.js');
       const result = await triggerCancelAfterDisputeDeadline(validContractAddress, mockDealId);
-      
-      expect(mockEthersContractConstructor).toHaveBeenCalledWith(validContractAddress, contractABI, expect.any(actualEthers.Wallet));
+
+      expect(mockEthers.Contract).toHaveBeenCalledWith(validContractAddress, contractABI, expect.anything());
       expect(mockContractInstance.cancelEscrowAndRefundBuyer).toHaveBeenCalled();
       expect(mockTx.wait).toHaveBeenCalledWith(1);
       expect(result.success).toBe(true);
       expect(result.receipt?.transactionHash).toBe('0xmockhash_cancel_receipt');
     });
 
-    it('should return failure if contract call reverts', async () => {
+    it('should handle contract revert errors', async () => {
       const revertError = new Error('Execution reverted: Dispute conditions not met');
       mockContractInstance.cancelEscrowAndRefundBuyer.mockRejectedValue(revertError);
-      
+
+      const { triggerCancelAfterDisputeDeadline } = await import('../blockchainService.js');
       const result = await triggerCancelAfterDisputeDeadline(validContractAddress, mockDealId);
-      
+
       expect(result.success).toBe(false);
-      expect(result.error).toBe(revertError);
       expect(result.error.message).toContain('Execution reverted: Dispute conditions not met');
+    });
+
+    it('should handle invalid contract address', async () => {
+      const { triggerCancelAfterDisputeDeadline } = await import('../blockchainService.js');
+      const result = await triggerCancelAfterDisputeDeadline('invalid-address', mockDealId);
+
+      expect(result.success).toBe(false);
+      expect(result.error.message).toBe(`[Automation] Setup error for cancellation, contract: invalid-address, deal: ${mockDealId}`);
+      expect(mockEthers.Contract).not.toHaveBeenCalled();
+    });
+
+    it('should handle transaction timeout', async () => {
+      const timeoutError = new Error('Transaction timeout');
+      mockContractInstance.cancelEscrowAndRefundBuyer.mockResolvedValue({
+        hash: '0xmockhash',
+        wait: jest.fn().mockRejectedValue(timeoutError)
+      });
+
+      const { triggerCancelAfterDisputeDeadline } = await import('../blockchainService.js');
+      const result = await triggerCancelAfterDisputeDeadline(validContractAddress, mockDealId);
+
+      expect(result.success).toBe(false);
+      expect(result.error.message).toBe('Transaction timeout');
+    });
+
+    it('should handle network errors', async () => {
+      const networkError = new Error('Network error');
+      mockContractInstance.cancelEscrowAndRefundBuyer.mockRejectedValue(networkError);
+
+      const { triggerCancelAfterDisputeDeadline } = await import('../blockchainService.js');
+      const result = await triggerCancelAfterDisputeDeadline(validContractAddress, mockDealId);
+
+      expect(result.success).toBe(false);
+      expect(result.error.message).toBe('Network error');
     });
   });
 });

@@ -6,49 +6,39 @@ import { createRequire } from 'module';
 const RPC_URL = process.env.RPC_URL;
 const BACKEND_PRIVATE_KEY = process.env.BACKEND_WALLET_PRIVATE_KEY;
 
-if (!RPC_URL || !BACKEND_PRIVATE_KEY) {
-  console.error(
-    "CRITICAL ERROR: RPC_URL or BACKEND_WALLET_PRIVATE_KEY is not set in environment variables for blockchainService. Automated tasks will likely fail."
-  );
-  // Depending on your application's needs, you might want to throw an error here
-  // or have a flag that disables automated tasks if these are missing.
-}
-
-// --- Initialize Provider and Wallet ---
-// Ensure provider and wallet are initialized only if essential ENV VARS are set
+// --- Lazy Initialization ---
 let provider;
 let wallet;
+let contractABI;
 
-if (RPC_URL && BACKEND_PRIVATE_KEY) {
+// Function to initialize provider and wallet
+function initializeService() {
+  if (!RPC_URL || !BACKEND_PRIVATE_KEY) {
+    console.warn("[BlockchainService] Missing RPC_URL or BACKEND_WALLET_PRIVATE_KEY. Automated tasks will be disabled.");
+    return false;
+  }
   try {
     provider = new ethers.JsonRpcProvider(RPC_URL);
     wallet = new ethers.Wallet(BACKEND_PRIVATE_KEY, provider);
     console.log(`[BlockchainService] Automation service initialized. Using wallet: ${wallet.address}`);
-    // Test connectivity (optional, but good for startup)
+    // Test connectivity
     provider.getBlockNumber().then(blockNumber => {
       console.log(`[BlockchainService] Successfully connected to network. Current block: ${blockNumber}`);
     }).catch(err => {
-      console.error(`[BlockchainService] CRITICAL: Failed to connect to network at ${RPC_URL}. Error: ${err.message}`);
+      console.error(`[BlockchainService] Failed to connect to network at ${RPC_URL}. Error: ${err.message}`);
     });
+    return true;
   } catch (error) {
-    console.error(`[BlockchainService] CRITICAL: Error initializing provider or wallet: ${error.message}`);
-    // Prevent service from being used if initialization fails
+    console.error(`[BlockchainService] Error initializing provider or wallet: ${error.message}`);
     provider = null;
     wallet = null;
+    return false;
   }
-} else {
-  console.warn("[BlockchainService] Service not fully initialized due to missing RPC_URL or BACKEND_PRIVATE_KEY.");
 }
 
-
 // --- Load Contract ABI ---
-// Use createRequire for compatibility, especially if PropertyEscrow.json is not an ES module
-const require = createRequire(import.meta.url);
-let contractABI;
 try {
-  // Adjust the path to your PropertyEscrow.json artifact
-  // This path assumes blockchainService.js is in src/services/
-  // and PropertyEscrow.json is in src/contract/artifacts/contracts/PropertyEscrow.sol/
+  const require = createRequire(import.meta.url);
   const PropertyEscrowArtifact = require('../contract/artifacts/contracts/PropertyEscrow.sol/PropertyEscrow.json');
   contractABI = PropertyEscrowArtifact.abi;
   if (!contractABI || contractABI.length === 0) {
@@ -56,8 +46,8 @@ try {
   }
   console.log("[BlockchainService] PropertyEscrow ABI loaded successfully.");
 } catch (err) {
-  console.error(`[BlockchainService] CRITICAL ERROR: Failed to load PropertyEscrow ABI. Automated tasks will fail. Error: ${err.message}`);
-  contractABI = null; // Ensure ABI is null if loading fails
+  console.error(`[BlockchainService] Failed to load PropertyEscrow ABI. Automated tasks will fail. Error: ${err.message}`);
+  contractABI = null;
 }
 
 /**
@@ -84,6 +74,11 @@ function getContractInstance(contractAddress) {
  * @returns {Promise<{success: boolean, receipt?: ethers.TransactionReceipt, error?: any}>}
  */
 export async function triggerReleaseAfterApproval(contractAddress, dealId) {
+  if (!provider || !wallet) {
+    if (!initializeService()) {
+      return { success: false, error: new Error(`[Automation] Initialization failed for release, contract: ${contractAddress}, deal: ${dealId}`) };
+    }
+  }
   const escrowContract = getContractInstance(contractAddress);
   if (!escrowContract) {
     return { success: false, error: new Error(`[Automation] Setup error for release, contract: ${contractAddress}, deal: ${dealId}`) };
@@ -91,27 +86,13 @@ export async function triggerReleaseAfterApproval(contractAddress, dealId) {
 
   console.log(`[Automation] Attempting to call releaseFundsAfterApprovalPeriod for contract: ${contractAddress} (Deal ID: ${dealId})`);
   try {
-    // Optional: Add gas estimation and overrides if needed
-    // const gasPrice = await provider.getGasPrice(); // For legacy transactions
-    // const feeData = await provider.getFeeData(); // For EIP-1559 transactions
-
-    const tx = await escrowContract.releaseFundsAfterApprovalPeriod({
-      // Example gas overrides (use with caution, test thoroughly):
-      // gasLimit: ethers.utils.hexlify(300000), // Example fixed gas limit
-      // maxFeePerGas: feeData.maxFeePerGas,
-      // maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
-    });
-
+    const tx = await escrowContract.releaseFundsAfterApprovalPeriod();
     console.log(`[Automation] releaseFundsAfterApprovalPeriod tx sent: ${tx.hash} for contract ${contractAddress} (Deal ID: ${dealId})`);
-    const receipt = await tx.wait(1); // Wait for 1 confirmation
+    const receipt = await tx.wait(1);
     console.log(`[Automation] releaseFundsAfterApprovalPeriod tx CONFIRMED: ${receipt.transactionHash} for contract ${contractAddress} (Deal ID: ${dealId})`);
     return { success: true, receipt };
   } catch (error) {
     console.error(`[Automation] ERROR calling releaseFundsAfterApprovalPeriod for ${contractAddress} (Deal ID: ${dealId}):`, error.message);
-    // Log more detailed error information if available
-    if (error.data) console.error('[Automation] Error data:', error.data);
-    if (error.transaction) console.error('[Automation] Error transaction:', error.transaction);
-    if (error.receipt) console.error('[Automation] Error receipt (if tx was mined but reverted):', error.receipt);
     return { success: false, error };
   }
 }
@@ -123,6 +104,11 @@ export async function triggerReleaseAfterApproval(contractAddress, dealId) {
  * @returns {Promise<{success: boolean, receipt?: ethers.TransactionReceipt, error?: any}>}
  */
 export async function triggerCancelAfterDisputeDeadline(contractAddress, dealId) {
+  if (!provider || !wallet) {
+    if (!initializeService()) {
+      return { success: false, error: new Error(`[Automation] Initialization failed for cancellation, contract: ${contractAddress}, deal: ${dealId}`) };
+    }
+  }
   const escrowContract = getContractInstance(contractAddress);
   if (!escrowContract) {
     return { success: false, error: new Error(`[Automation] Setup error for cancellation, contract: ${contractAddress}, deal: ${dealId}`) };
@@ -130,16 +116,13 @@ export async function triggerCancelAfterDisputeDeadline(contractAddress, dealId)
 
   console.log(`[Automation] Attempting to call cancelEscrowAndRefundBuyer for contract: ${contractAddress} (Deal ID: ${dealId})`);
   try {
-    const tx = await escrowContract.cancelEscrowAndRefundBuyer({
-      // Add gas overrides if needed, similar to triggerReleaseAfterApproval
-    });
+    const tx = await escrowContract.cancelEscrowAndRefundBuyer();
     console.log(`[Automation] cancelEscrowAndRefundBuyer tx sent: ${tx.hash} for contract ${contractAddress} (Deal ID: ${dealId})`);
     const receipt = await tx.wait(1);
     console.log(`[Automation] cancelEscrowAndRefundBuyer tx CONFIRMED: ${receipt.transactionHash} for contract ${contractAddress} (Deal ID: ${dealId})`);
     return { success: true, receipt };
   } catch (error) {
     console.error(`[Automation] ERROR calling cancelEscrowAndRefundBuyer for ${contractAddress} (Deal ID: ${dealId}):`, error.message);
-    if (error.data) console.error('[Automation] Error data:', error.data);
     return { success: false, error };
   }
 }
