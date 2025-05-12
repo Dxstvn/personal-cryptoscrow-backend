@@ -1,250 +1,338 @@
 // src/jobs/__tests__/scheduledJobs.test.js
-import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import cron from 'node-cron';
-import * as databaseService from '../../services/databaseService.js'; // Import all as a module
-import * as blockchainService from '../../services/blockchainService.js'; // Import all as a module
-import { startScheduledJobs, checkAndProcessContractDeadlines } from '../scheduledJobs.js'; // Function to test directly
-import { Timestamp } from 'firebase-admin/firestore'; // Assuming Timestamp is used in the test
+import { jest, describe, it, expect, beforeEach, afterEach, beforeAll } from '@jest/globals';
+import { Timestamp } from 'firebase-admin/firestore';
 
 // --- Mock external dependencies ---
+
+// Mock node-cron
+const mockCronSchedule = jest.fn(() => ({ start: jest.fn(), stop: jest.fn() }));
+const mockCronValidate = jest.fn().mockReturnValue(true);
 jest.mock('node-cron', () => ({
-  schedule: jest.fn(),
-  validate: jest.fn().mockReturnValue(true), // Assuming valid cron patterns
+  __esModule: true,
+  schedule: mockCronSchedule,
+  validate: mockCronValidate,
+  default: {
+    schedule: mockCronSchedule,
+    validate: mockCronValidate,
+  }
 }));
 
+
+// Mock databaseService functions
+const mockGetDealsPastFinalApproval = jest.fn();
+const mockGetDealsPastDisputeDeadline = jest.fn();
+const mockUpdateDealStatusInDB = jest.fn();
 jest.mock('../../services/databaseService.js', () => ({
-  getDealsPastFinalApproval: jest.fn(),
-  getDealsPastDisputeDeadline: jest.fn(),
-  updateDealStatusInDB: jest.fn(),
+  __esModule: true,
+  getDealsPastFinalApproval: mockGetDealsPastFinalApproval,
+  getDealsPastDisputeDeadline: mockGetDealsPastDisputeDeadline,
+  updateDealStatusInDB: mockUpdateDealStatusInDB,
 }));
 
+// Mock blockchainService functions and ABI
+const mockTriggerReleaseAfterApproval = jest.fn();
+const mockTriggerCancelAfterDisputeDeadline = jest.fn();
+let mockContractABI = [{ type: 'function', name: 'dummyFunctionForTest' }]; // Default mock ABI
 jest.mock('../../services/blockchainService.js', () => ({
-  triggerReleaseAfterApproval: jest.fn(),
-  triggerCancelAfterDisputeDeadline: jest.fn(),
-  // Ensure contractABI is mocked if scheduledJobs.js directly accesses it (it doesn't in the current version)
+  __esModule: true,
+  triggerReleaseAfterApproval: mockTriggerReleaseAfterApproval,
+  triggerCancelAfterDisputeDeadline: mockTriggerCancelAfterDisputeDeadline,
+  get contractABI() { return mockContractABI; },
 }));
 
-// Helper to reset all mocks
-const resetAllMocks = () => {
-  cron.schedule.mockClear();
-  databaseService.getDealsPastFinalApproval.mockReset();
-  databaseService.getDealsPastDisputeDeadline.mockReset();
-  databaseService.updateDealStatusInDB.mockReset();
-  blockchainService.triggerReleaseAfterApproval.mockReset();
-  blockchainService.triggerCancelAfterDisputeDeadline.mockReset();
-};
-
+// --- Test Suite ---
 describe('Scheduled Jobs (scheduledJobs.js)', () => {
-  let consoleLogSpy;
-  let consoleErrorSpy;
-  let consoleWarnSpy;
+  let originalEnv;
+  let consoleLogSpy, consoleErrorSpy, consoleWarnSpy;
 
-  const originalEnv = { ...process.env }; // Store original environment variables
+  // Variables to hold the functions/variables from the module under test
+  // Note: scheduledJobsModule is not strictly needed anymore as we don't call the test reset fn
+  let startScheduledJobs;
+  let checkAndProcessContractDeadlines;
 
-  beforeEach(() => {
-    resetAllMocks();
-    // Spy on console methods to check logging output
+  beforeAll(() => {
+    originalEnv = { ...process.env };
+    // Ensure NODE_ENV is set to 'test' for the finally block logic in scheduledJobs.js
+    process.env.NODE_ENV = 'test';
+  });
+
+  beforeEach(async () => {
+    // Set default environment variables *before* resetting modules
+    process.env.BACKEND_WALLET_PRIVATE_KEY = 'test_pk_for_scheduler';
+    process.env.RPC_URL = 'test_rpc_url_for_scheduler';
+    process.env.CRON_SCHEDULE_DEADLINE_CHECKS = '*/5 * * * *';
+
+    // 1. Reset Jest modules
+    jest.resetModules();
+
+    // 2. Reset mock ABI to default
+    mockContractABI = [{ type: 'function', name: 'dummyFunctionForTest' }];
+
+    // 3. Re-import the module under test
+    // We need to re-import to get the functions with potentially reset internal state
+    const scheduledJobsModule = await import('../scheduledJobs.js');
+    startScheduledJobs = scheduledJobsModule.startScheduledJobs;
+    checkAndProcessContractDeadlines = scheduledJobsModule.checkAndProcessContractDeadlines;
+
+    // 4. Clear call history and specific implementations from ALL mocks
+    jest.clearAllMocks();
+
+    // 5. Set default mock implementations for services AFTER clearing mocks
+    mockGetDealsPastFinalApproval.mockResolvedValue([]);
+    mockGetDealsPastDisputeDeadline.mockResolvedValue([]);
+    mockTriggerReleaseAfterApproval.mockResolvedValue({ success: true, receipt: { transactionHash: '0xreleasehash' } });
+    mockTriggerCancelAfterDisputeDeadline.mockResolvedValue({ success: true, receipt: { transactionHash: '0xcancelhash' } });
+    mockUpdateDealStatusInDB.mockResolvedValue(undefined);
+    mockCronSchedule.mockImplementation(() => ({ start: jest.fn(), stop: jest.fn() }));
+    mockCronValidate.mockReturnValue(true);
+
+    // 6. Spy on console methods
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
-    // Set default mock implementations
-    databaseService.getDealsPastFinalApproval.mockResolvedValue([]);
-    databaseService.getDealsPastDisputeDeadline.mockResolvedValue([]);
-    blockchainService.triggerReleaseAfterApproval.mockResolvedValue({ success: true, receipt: { transactionHash: '0xreleasehash' } });
-    blockchainService.triggerCancelAfterDisputeDeadline.mockResolvedValue({ success: true, receipt: { transactionHash: '0xcancelhash' } });
-    databaseService.updateDealStatusInDB.mockResolvedValue(undefined);
-
-    // Ensure essential env vars are set for tests that need them for job scheduling
-    process.env.BACKEND_WALLET_PRIVATE_KEY = 'test_pk';
-    process.env.RPC_URL = 'test_rpc_url';
-    process.env.CRON_SCHEDULE_DEADLINE_CHECKS = '*/5 * * * *'; // Test cron schedule
+    // 7. Removed explicit flag reset - now handled internally in the finally block of checkAndProcessContractDeadlines
   });
 
   afterEach(() => {
-    consoleLogSpy.mockRestore();
-    consoleErrorSpy.mockRestore();
-    consoleWarnSpy.mockRestore();
-    process.env = { ...originalEnv }; // Restore original environment
-    jest.useRealTimers(); // Ensure real timers are used after each test if fake ones were used
+    // Restore original environment variables (except NODE_ENV)
+    const nodeEnv = process.env.NODE_ENV;
+    process.env = { ...originalEnv };
+    process.env.NODE_ENV = nodeEnv; // Keep NODE_ENV as 'test'
+
+    // Restore console spies and clear mocks
+    jest.restoreAllMocks();
+    jest.useRealTimers();
   });
 
+  // --- Tests for startScheduledJobs ---
   describe('startScheduledJobs', () => {
-    it('should schedule the cron job with the correct schedule from env', () => {
+     it('should schedule the cron job with the correct schedule from env', () => {
       startScheduledJobs();
-      expect(cron.schedule).toHaveBeenCalledTimes(1);
-      expect(cron.schedule).toHaveBeenCalledWith(
-        process.env.CRON_SCHEDULE_DEADLINE_CHECKS,
-        expect.any(Function), // The checkAndProcessContractDeadlines function (or a wrapper)
-        expect.objectContaining({ scheduled: true })
+      expect(mockCronSchedule).toHaveBeenCalledTimes(1);
+      expect(mockCronSchedule).toHaveBeenCalledWith(
+        '*/5 * * * *',
+        checkAndProcessContractDeadlines,
+        expect.objectContaining({ scheduled: true, timezone: "America/New_York" })
       );
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('[Scheduler] Initializing cron job with schedule: "*/5 * * * *"'));
       expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('[Scheduler] Automated contract deadline check job scheduled.'));
     });
 
     it('should use default cron schedule if env variable is not set', () => {
       delete process.env.CRON_SCHEDULE_DEADLINE_CHECKS;
       startScheduledJobs();
-      expect(cron.schedule).toHaveBeenCalledWith(
-        '*/30 * * * *', // Default schedule
-        expect.any(Function),
-        expect.anything()
+      expect(mockCronSchedule).toHaveBeenCalledTimes(1);
+      expect(mockCronSchedule).toHaveBeenCalledWith(
+        '*/30 * * * *',
+        checkAndProcessContractDeadlines,
+        expect.objectContaining({ scheduled: true, timezone: "America/New_York" })
       );
+       expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('[Scheduler] Initializing cron job with schedule: "*/30 * * * *"'));
     });
 
     it('should NOT schedule jobs if BACKEND_WALLET_PRIVATE_KEY is missing', () => {
       delete process.env.BACKEND_WALLET_PRIVATE_KEY;
       startScheduledJobs();
-      expect(cron.schedule).not.toHaveBeenCalled();
+      expect(mockCronSchedule).not.toHaveBeenCalled();
       expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('Automated contract call jobs DISABLED due to missing BACKEND_WALLET_PRIVATE_KEY or RPC_URL.'));
     });
 
     it('should NOT schedule jobs if RPC_URL is missing', () => {
       delete process.env.RPC_URL;
       startScheduledJobs();
-      expect(cron.schedule).not.toHaveBeenCalled();
+      expect(mockCronSchedule).not.toHaveBeenCalled();
       expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('Automated contract call jobs DISABLED due to missing BACKEND_WALLET_PRIVATE_KEY or RPC_URL.'));
     });
 
-    // If blockchainService.js directly checks for ABI and scheduledJobs.js relies on that check
-    // you might need a test like this. However, current scheduledJobs.js checks ABI via blockchainService initialization.
-    // it('should NOT schedule jobs if contract ABI is not loaded (simulated)', () => {
-    //   // This requires a way to simulate ABI loading failure within blockchainService,
-    //   // or for scheduledJobs to directly check an ABI status.
-    //   // For now, this scenario is indirectly covered by blockchainService's own init checks.
-    // });
+    // --- Reinstate local reset for this specific test ---
+    it('should NOT schedule jobs if contractABI is effectively null/undefined', async () => {
+        // Set necessary env vars first
+        process.env.BACKEND_WALLET_PRIVATE_KEY = 'test_pk_for_scheduler';
+        process.env.RPC_URL = 'test_rpc_url_for_scheduler';
+
+        // Reset modules AFTER setting env vars
+        jest.resetModules();
+
+        // Modify the mock ABI value *before* importing the module under test again
+        mockContractABI = null;
+
+        // Re-import the necessary parts after modifying the mock
+        const { startScheduledJobs: localStart } = await import('../scheduledJobs.js');
+        // Re-setup console spy locally
+        const localConsoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+        // Clear the cron mock specifically for this test run BEFORE calling the function
+        mockCronSchedule.mockClear();
+
+        // Execute
+        localStart();
+
+        // Assert
+        expect(mockCronSchedule).not.toHaveBeenCalled(); // Check calls *after* mockClear
+        expect(localConsoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('Automated contract call jobs DISABLED due to ABI loading failure.'));
+
+        // Teardown
+        mockContractABI = [{ type: 'function', name: 'dummyFunctionForTest' }]; // Reset ABI for other tests
+        localConsoleWarnSpy.mockRestore();
+    });
+    // --- End Reinstate local reset ---
   });
 
+  // --- Tests for checkAndProcessContractDeadlines ---
+  // These tests should now work correctly as the flag is reset internally
   describe('checkAndProcessContractDeadlines', () => {
+    // Mock data for deals
     const mockDealRelease = {
       id: 'dealRelease001',
       status: 'IN_FINAL_APPROVAL',
       smartContractAddress: '0xContractToRelease',
-      finalApprovalDeadlineBackend: Timestamp.now(), // Assuming it's past
+      finalApprovalDeadlineBackend: Timestamp.fromDate(new Date(Date.now() - 1000)), // Past deadline
     };
     const mockDealCancel = {
       id: 'dealCancel001',
       status: 'IN_DISPUTE',
       smartContractAddress: '0xContractToCancel',
-      disputeResolutionDeadlineBackend: Timestamp.now(), // Assuming it's past
+      disputeResolutionDeadlineBackend: Timestamp.fromDate(new Date(Date.now() - 1000)), // Past deadline
     };
 
-    it('should do nothing if no deals are found', async () => {
+    it('should call DB checks and do nothing else if no deals are found', async () => {
       await checkAndProcessContractDeadlines();
-      expect(databaseService.getDealsPastFinalApproval).toHaveBeenCalledTimes(1);
-      expect(databaseService.getDealsPastDisputeDeadline).toHaveBeenCalledTimes(1);
-      expect(blockchainService.triggerReleaseAfterApproval).not.toHaveBeenCalled();
-      expect(blockchainService.triggerCancelAfterDisputeDeadline).not.toHaveBeenCalled();
+      expect(mockGetDealsPastFinalApproval).toHaveBeenCalledTimes(1);
+      expect(mockGetDealsPastDisputeDeadline).toHaveBeenCalledTimes(1);
+      expect(mockTriggerReleaseAfterApproval).not.toHaveBeenCalled();
+      expect(mockTriggerCancelAfterDisputeDeadline).not.toHaveBeenCalled();
+      expect(mockUpdateDealStatusInDB).not.toHaveBeenCalled();
     });
 
     it('should process a deal for release successfully', async () => {
-      databaseService.getDealsPastFinalApproval.mockResolvedValue([mockDealRelease]);
-
+      mockGetDealsPastFinalApproval.mockResolvedValue([mockDealRelease]);
       await checkAndProcessContractDeadlines();
-
-      expect(blockchainService.triggerReleaseAfterApproval).toHaveBeenCalledWith(mockDealRelease.smartContractAddress, mockDealRelease.id);
-      expect(databaseService.updateDealStatusInDB).toHaveBeenCalledWith(
+      expect(mockTriggerReleaseAfterApproval).toHaveBeenCalledTimes(1);
+      expect(mockTriggerReleaseAfterApproval).toHaveBeenCalledWith(mockDealRelease.smartContractAddress, mockDealRelease.id);
+      expect(mockUpdateDealStatusInDB).toHaveBeenCalledTimes(1);
+      expect(mockUpdateDealStatusInDB).toHaveBeenCalledWith(
         mockDealRelease.id,
         'COMPLETED',
         expect.stringContaining('Funds automatically released'),
         '0xreleasehash'
       );
+      expect(mockTriggerCancelAfterDisputeDeadline).not.toHaveBeenCalled();
     });
 
     it('should process a deal for cancellation successfully', async () => {
-      databaseService.getDealsPastDisputeDeadline.mockResolvedValue([mockDealCancel]);
-
+      mockGetDealsPastDisputeDeadline.mockResolvedValue([mockDealCancel]);
       await checkAndProcessContractDeadlines();
-
-      expect(blockchainService.triggerCancelAfterDisputeDeadline).toHaveBeenCalledWith(mockDealCancel.smartContractAddress, mockDealCancel.id);
-      expect(databaseService.updateDealStatusInDB).toHaveBeenCalledWith(
+      expect(mockTriggerCancelAfterDisputeDeadline).toHaveBeenCalledTimes(1);
+      expect(mockTriggerCancelAfterDisputeDeadline).toHaveBeenCalledWith(mockDealCancel.smartContractAddress, mockDealCancel.id);
+      expect(mockUpdateDealStatusInDB).toHaveBeenCalledTimes(1);
+      expect(mockUpdateDealStatusInDB).toHaveBeenCalledWith(
         mockDealCancel.id,
         'CANCELLED',
         expect.stringContaining('Escrow automatically cancelled'),
         '0xcancelhash'
       );
+      expect(mockTriggerReleaseAfterApproval).not.toHaveBeenCalled();
     });
 
     it('should handle blockchain call failure for release and update DB accordingly', async () => {
-      databaseService.getDealsPastFinalApproval.mockResolvedValue([mockDealRelease]);
-      blockchainService.triggerReleaseAfterApproval.mockResolvedValue({ success: false, error: new Error('Blockchain Error Release') });
-
+      mockGetDealsPastFinalApproval.mockResolvedValue([mockDealRelease]);
+      const releaseError = new Error('Blockchain Error Release');
+      mockTriggerReleaseAfterApproval.mockResolvedValue({ success: false, error: releaseError });
       await checkAndProcessContractDeadlines();
-
-      expect(blockchainService.triggerReleaseAfterApproval).toHaveBeenCalledWith(mockDealRelease.smartContractAddress, mockDealRelease.id);
-      expect(databaseService.updateDealStatusInDB).toHaveBeenCalledWith(
+      expect(mockTriggerReleaseAfterApproval).toHaveBeenCalledTimes(1);
+      expect(mockTriggerReleaseAfterApproval).toHaveBeenCalledWith(mockDealRelease.smartContractAddress, mockDealRelease.id);
+      expect(mockUpdateDealStatusInDB).toHaveBeenCalledTimes(1);
+      expect(mockUpdateDealStatusInDB).toHaveBeenCalledWith(
         mockDealRelease.id,
-        mockDealRelease.status, // Status should not change on failure, or to a specific error status
-        expect.stringContaining('Attempted auto-release for deal dealRelease001 FAILED. Error: Blockchain Error Release'),
-        // No transaction hash on failure
+        mockDealRelease.status,
+        expect.stringContaining(`Attempted auto-release for deal ${mockDealRelease.id} FAILED. Error: ${releaseError.message}`),
+        null
       );
-      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('FAILED to process auto-release'), expect.any(String));
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining(`FAILED to process auto-release for deal ${mockDealRelease.id}`), releaseError.message);
     });
 
     it('should handle blockchain call failure for cancellation and update DB accordingly', async () => {
-      databaseService.getDealsPastDisputeDeadline.mockResolvedValue([mockDealCancel]);
-      blockchainService.triggerCancelAfterDisputeDeadline.mockResolvedValue({ success: false, error: new Error('Blockchain Error Cancel') });
-
+      mockGetDealsPastDisputeDeadline.mockResolvedValue([mockDealCancel]);
+      const cancelError = new Error('Blockchain Error Cancel');
+      mockTriggerCancelAfterDisputeDeadline.mockResolvedValue({ success: false, error: cancelError });
       await checkAndProcessContractDeadlines();
-
-      expect(blockchainService.triggerCancelAfterDisputeDeadline).toHaveBeenCalledWith(mockDealCancel.smartContractAddress, mockDealCancel.id);
-      expect(databaseService.updateDealStatusInDB).toHaveBeenCalledWith(
+      expect(mockTriggerCancelAfterDisputeDeadline).toHaveBeenCalledTimes(1);
+      expect(mockTriggerCancelAfterDisputeDeadline).toHaveBeenCalledWith(mockDealCancel.smartContractAddress, mockDealCancel.id);
+      expect(mockUpdateDealStatusInDB).toHaveBeenCalledTimes(1);
+      expect(mockUpdateDealStatusInDB).toHaveBeenCalledWith(
         mockDealCancel.id,
         mockDealCancel.status,
-        expect.stringContaining('Attempted auto-cancellation for deal dealCancel001 FAILED. Error: Blockchain Error Cancel')
+        expect.stringContaining(`Attempted auto-cancellation for deal ${mockDealCancel.id} FAILED. Error: ${cancelError.message}`),
+        null
       );
-      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('FAILED to process auto-cancellation'), expect.any(String));
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining(`FAILED to process auto-cancellation for deal ${mockDealCancel.id}`), cancelError.message);
     });
 
-    it('should skip processing if deal has no smartContractAddress for release', async () => {
+    it('should skip processing and warn if deal has no smartContractAddress for release', async () => {
       const dealNoSC = { ...mockDealRelease, smartContractAddress: null };
-      databaseService.getDealsPastFinalApproval.mockResolvedValue([dealNoSC]);
-
+      mockGetDealsPastFinalApproval.mockResolvedValue([dealNoSC]);
       await checkAndProcessContractDeadlines();
-
-      expect(blockchainService.triggerReleaseAfterApproval).not.toHaveBeenCalled();
-      expect(databaseService.updateDealStatusInDB).not.toHaveBeenCalledWith(dealNoSC.id, 'COMPLETED', expect.anything());
+      expect(mockTriggerReleaseAfterApproval).not.toHaveBeenCalled();
       expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining(`Deal ${dealNoSC.id} is past final approval but has no smartContractAddress.`));
+      expect(mockUpdateDealStatusInDB).not.toHaveBeenCalled();
     });
 
-    it('should skip processing if deal has no smartContractAddress for cancellation', async () => {
+    it('should skip processing and warn if deal has no smartContractAddress for cancellation', async () => {
       const dealNoSC = { ...mockDealCancel, smartContractAddress: undefined };
-      databaseService.getDealsPastDisputeDeadline.mockResolvedValue([dealNoSC]);
-
+      mockGetDealsPastDisputeDeadline.mockResolvedValue([dealNoSC]);
       await checkAndProcessContractDeadlines();
-
-      expect(blockchainService.triggerCancelAfterDisputeDeadline).not.toHaveBeenCalled();
-      expect(databaseService.updateDealStatusInDB).not.toHaveBeenCalledWith(dealNoSC.id, 'CANCELLED', expect.anything());
+      expect(mockTriggerCancelAfterDisputeDeadline).not.toHaveBeenCalled();
       expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining(`Deal ${dealNoSC.id} is past dispute deadline but has no smartContractAddress.`));
+      expect(mockUpdateDealStatusInDB).not.toHaveBeenCalled();
     });
 
     it('should prevent concurrent job runs', async () => {
-      // Simulate job is already running
-      // This requires checkAndProcessContractDeadlines to be exported or a way to set isJobRunning
-      // For this test, we'll call it twice quickly. The internal lock should prevent the second full execution.
-      databaseService.getDealsPastFinalApproval.mockImplementation(async () => {
-        // Simulate a long running job
+      // This test relies on the internal flag logic and the finally block reset
+      mockGetDealsPastFinalApproval.mockImplementationOnce(async () => {
+        // We can no longer easily check the internal flag here, but the logic depends on it
         await new Promise(resolve => setTimeout(resolve, 50));
-        return [];
+        return [mockDealRelease];
       });
+      mockTriggerReleaseAfterApproval.mockResolvedValue({ success: true, receipt: {transactionHash: '0xconcurrenttx'} });
 
-      const promise1 = checkAndProcessContractDeadlines();
-      const promise2 = checkAndProcessContractDeadlines(); // This should hit the lock
+      const promise1 = checkAndProcessContractDeadlines(); // First call should run
+      const promise2 = checkAndProcessContractDeadlines(); // Second call should see the flag and skip
 
-      await Promise.all([promise1, promise2]);
+      await Promise.allSettled([promise1, promise2]);
 
-      // getDealsPastFinalApproval should only be called once by the first invocation
-      expect(databaseService.getDealsPastFinalApproval).toHaveBeenCalledTimes(1);
+      expect(mockGetDealsPastFinalApproval).toHaveBeenCalledTimes(1);
+      expect(mockTriggerReleaseAfterApproval).toHaveBeenCalledTimes(1);
+      expect(mockUpdateDealStatusInDB).toHaveBeenCalledTimes(1);
       expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Deadline check job already running. Skipping this cycle.'));
     });
 
     it('should log critical error if database query fails unexpectedly', async () => {
-        const dbError = new Error('Firestore query failed');
-        databaseService.getDealsPastFinalApproval.mockRejectedValue(dbError);
-        // No need to mock getDealsPastDisputeDeadline if the first one throws and stops execution
+      const dbError = new Error('Firestore query failed');
+      mockGetDealsPastFinalApproval.mockRejectedValue(dbError);
+      await checkAndProcessContractDeadlines();
+      expect(consoleErrorSpy).toHaveBeenCalledWith('[Scheduler] CRITICAL ERROR in deadline check job:', dbError);
+      expect(mockTriggerReleaseAfterApproval).not.toHaveBeenCalled();
+      expect(mockTriggerCancelAfterDisputeDeadline).not.toHaveBeenCalled();
+      // We assume the finally block reset the flag internally
+    });
+
+    it('should reset isJobRunning flag even if processing logic throws error', async () => {
+        mockGetDealsPastFinalApproval.mockResolvedValue([mockDealRelease]);
+        const unexpectedError = new Error('Unexpected blockchain service crash');
+        mockTriggerReleaseAfterApproval.mockRejectedValue(unexpectedError);
+
+        await checkAndProcessContractDeadlines(); // Should trigger internal finally block reset
+
+        expect(consoleErrorSpy).toHaveBeenCalledWith('[Scheduler] CRITICAL ERROR in deadline check job:', unexpectedError);
+
+        // Run again to ensure it doesn't skip (implicitly tests reset)
+        mockGetDealsPastFinalApproval.mockResolvedValue([]);
+        mockTriggerReleaseAfterApproval.mockResolvedValue({ success: true, receipt: { transactionHash: '0xreleasehash' } });
+        consoleLogSpy.mockClear(); // Clear log spy for second run check
 
         await checkAndProcessContractDeadlines();
-
-        expect(consoleErrorSpy).toHaveBeenCalledWith('[Scheduler] CRITICAL ERROR in deadline check job:', dbError);
+        expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('Deadline check job already running.'));
     });
   });
 });
