@@ -1,146 +1,153 @@
-// src/jobs/scheduledJobs.js
+// src/services/scheduledJobs.js
 import cron from 'node-cron';
 import {
   getDealsPastFinalApproval,
   getDealsPastDisputeDeadline,
   updateDealStatusInDB
-} from '../services/databaseService.js'; // Adjust path if databaseService.js is elsewhere
-import {
-  triggerReleaseAfterApproval,
-  triggerCancelAfterDisputeDeadline,
-  contractABI // Import contractABI explicitly
-} from '../services/blockchainService.js'; // Adjust path
+} from './databaseService.js'; // Assuming databaseService.js is in the same directory
 
-// Module-level variable to prevent concurrent job runs.
-// Kept internal to the module now.
+// Import the entire blockchainService module as a namespace
+import * as blockchainService from './blockchainService.js'; // Assuming blockchainService.js is in the same directory
+import { Timestamp } from 'firebase-admin/firestore';
+
+// Module-level variable to prevent concurrent job runs
 let _isJobRunning = false;
 
-// Removed __TEST_ONLY_resetJobRunningFlag function
+/**
+ * @internal Resets the job running flag. FOR TESTING PURPOSES ONLY.
+ */
+export function __TEST_ONLY_resetJobRunningFlag() {
+  if (process.env.NODE_ENV === 'test') {
+    console.log('[TEST ENV DEBUG] __TEST_ONLY_resetJobRunningFlag called: Setting _isJobRunning to false.');
+  }
+  _isJobRunning = false;
+}
 
 /**
  * Main job function to check and process contract deadlines.
  */
 export async function checkAndProcessContractDeadlines() {
-  // Check if the job is already running
+  if (process.env.NODE_ENV === 'test') {
+    console.log(`[TEST ENV DEBUG] Entering checkAndProcessContractDeadlines. Current _isJobRunning: ${_isJobRunning}`);
+  }
+
   if (_isJobRunning) {
     console.log('[Scheduler] Deadline check job already running. Skipping this cycle.');
     return;
   }
-  // Set the flag to indicate the job has started
   _isJobRunning = true;
-  console.log(`[Scheduler] Running job to check contract deadlines at ${new Date().toISOString()}...`);
+  if (process.env.NODE_ENV === 'test') {
+    console.log(`[TEST ENV DEBUG] _isJobRunning set to true. Current _isJobRunning: ${_isJobRunning}`);
+  }
+
+  console.log(`[Scheduler] Starting deadline check job at ${new Date().toISOString()}...`);
 
   try {
-    // --- Process Releases ---
-    const dealsToRelease = await getDealsPastFinalApproval();
-    if (dealsToRelease.length > 0) {
-      console.log(`[Scheduler] Found ${dealsToRelease.length} deal(s) past final approval deadline.`);
+    // These will now correctly call the mocked functions from databaseService.js
+    const dealsPastFinalApproval = await getDealsPastFinalApproval();
+    if (process.env.NODE_ENV === 'test') {
+        console.log(`[TEST ENV DEBUG] Fetched ${dealsPastFinalApproval.length} deals past final approval.`);
     }
-    for (const deal of dealsToRelease) {
+    for (const deal of dealsPastFinalApproval) {
       if (!deal.smartContractAddress) {
-        console.warn(`[Scheduler] Deal ${deal.id} is past final approval but has no smartContractAddress. Skipping automated release.`);
+        console.warn(`[Scheduler] Deal ${deal.id} is past final approval but has no smartContractAddress. Skipping.`);
         continue;
       }
-      console.log(`[Scheduler] Processing auto-release for deal: ${deal.id}, contract: ${deal.smartContractAddress}`);
-      const result = await triggerReleaseAfterApproval(deal.smartContractAddress, deal.id);
-      if (result && result.success) {
-        await updateDealStatusInDB(
-          deal.id,
-          'COMPLETED',
-          `Funds automatically released after approval period. Tx: ${result.receipt?.transactionHash}`,
-          result.receipt?.transactionHash
-        );
-        console.log(`[Scheduler] Successfully processed auto-release for deal ${deal.id}.`);
+      console.log(`[Scheduler] Processing auto-release for deal ${deal.id} at contract ${deal.smartContractAddress}`);
+      // Use blockchainService namespace to call its functions
+      const releaseResult = await blockchainService.triggerReleaseAfterApproval(deal.smartContractAddress, deal.id);
+      if (releaseResult.success) {
+        console.log(`[Scheduler] Successfully auto-released funds for deal ${deal.id}. Tx: ${releaseResult.receipt?.transactionHash}`);
+        await updateDealStatusInDB(deal.id, {
+          status: 'FundsReleased',
+          autoReleaseTxHash: releaseResult.receipt?.transactionHash,
+          lastAutomaticProcessAttempt: Timestamp.now()
+        });
       } else {
-        const errorMessage = result?.error?.message || 'Unknown error during release';
-        console.error(`[Scheduler] FAILED to process auto-release for deal ${deal.id}:`, errorMessage);
-        await updateDealStatusInDB(
-            deal.id,
-            deal.status,
-            `Attempted auto-release for deal ${deal.id} FAILED. Error: ${errorMessage}. Needs review.`,
-            null
-        );
+        console.error(`[Scheduler] FAILED to process auto-release for deal ${deal.id}. Error:`, releaseResult.error);
+        await updateDealStatusInDB(deal.id, {
+          status: 'AutoReleaseFailed',
+          processingError: `Blockchain call failed: ${releaseResult.error}`,
+          lastAutomaticProcessAttempt: Timestamp.now()
+        });
       }
-    } // End of dealsToRelease loop
-
-    // --- Process Cancellations ---
-    const dealsToCancel = await getDealsPastDisputeDeadline();
-    if (dealsToCancel.length > 0) {
-      console.log(`[Scheduler] Found ${dealsToCancel.length} deal(s) past dispute resolution deadline.`);
     }
-    for (const deal of dealsToCancel) {
+
+    const dealsPastDisputeDeadline = await getDealsPastDisputeDeadline();
+    if (process.env.NODE_ENV === 'test') {
+        console.log(`[TEST ENV DEBUG] Fetched ${dealsPastDisputeDeadline.length} deals past dispute deadline.`);
+    }
+    for (const deal of dealsPastDisputeDeadline) {
       if (!deal.smartContractAddress) {
-        console.warn(`[Scheduler] Deal ${deal.id} is past dispute deadline but has no smartContractAddress. Skipping automated cancellation.`);
+        console.warn(`[Scheduler] Deal ${deal.id} is past dispute deadline but has no smartContractAddress. Skipping.`);
         continue;
       }
-      console.log(`[Scheduler] Processing auto-cancellation for deal: ${deal.id}, contract: ${deal.smartContractAddress}`);
-      const result = await triggerCancelAfterDisputeDeadline(deal.smartContractAddress, deal.id);
-      if (result && result.success) {
-        await updateDealStatusInDB(
-          deal.id,
-          'CANCELLED',
-          `Escrow automatically cancelled and refunded after dispute deadline. Tx: ${result.receipt?.transactionHash}`,
-          result.receipt?.transactionHash
-        );
-        console.log(`[Scheduler] Successfully processed auto-cancellation for deal ${deal.id}.`);
+      console.log(`[Scheduler] Processing auto-cancellation for deal ${deal.id} at contract ${deal.smartContractAddress}`);
+      // Use blockchainService namespace
+      const cancelResult = await blockchainService.triggerCancelAfterDisputeDeadline(deal.smartContractAddress, deal.id);
+      if (cancelResult.success) {
+        console.log(`[Scheduler] Successfully auto-cancelled deal ${deal.id}. Tx: ${cancelResult.receipt?.transactionHash}`);
+        await updateDealStatusInDB(deal.id, {
+          status: 'CancelledAfterDisputeDeadline',
+          autoCancelTxHash: cancelResult.receipt?.transactionHash,
+          lastAutomaticProcessAttempt: Timestamp.now()
+        });
       } else {
-        const errorMessage = result?.error?.message || 'Unknown error during cancellation';
-        console.error(`[Scheduler] FAILED to process auto-cancellation for deal ${deal.id}:`, errorMessage);
-        await updateDealStatusInDB(
-            deal.id,
-            deal.status,
-            `Attempted auto-cancellation for deal ${deal.id} FAILED. Error: ${errorMessage}. Needs review.`,
-            null
-        );
+        console.error(`[Scheduler] FAILED to process auto-cancellation for deal ${deal.id}. Error:`, cancelResult.error);
+        await updateDealStatusInDB(deal.id, {
+          status: 'AutoCancellationFailed',
+          processingError: `Blockchain call failed: ${cancelResult.error}`,
+          lastAutomaticProcessAttempt: Timestamp.now()
+        });
       }
-    } // End of dealsToCancel loop
-
+    }
   } catch (error) {
     console.error('[Scheduler] CRITICAL ERROR in deadline check job:', error);
-  } finally {
-    // IMPORTANT: Ensure the job running flag is reset regardless of success or failure
-    _isJobRunning = false; // Always reset in production/normal runs
-
-    // --- ADDED FOR TEST RELIABILITY ---
-    // Explicitly reset the flag if running in the test environment
-    // This helps overcome potential state issues between Jest tests.
     if (process.env.NODE_ENV === 'test') {
-        _isJobRunning = false;
-        // console.log('[TEST ENV] Resetting _isJobRunning flag in finally block.'); // Optional debug log
+        console.log('[TEST ENV DEBUG] Error caught in checkAndProcessContractDeadlines main try-catch:', error);
     }
-    // --- END TEST ADDITION ---
-
+  } finally {
+    _isJobRunning = false;
+    if (process.env.NODE_ENV === 'test') {
+      console.log(`[TEST ENV DEBUG] In finally block, _isJobRunning set to false. Current _isJobRunning: ${_isJobRunning}`);
+    }
     console.log(`[Scheduler] Deadline check job finished at ${new Date().toISOString()}.`);
   }
 }
 
 /**
  * Initializes and starts the scheduled jobs.
- * Checks for necessary environment variables and contract ABI before scheduling.
  */
 export function startScheduledJobs() {
-  // Check for essential environment variables first
+  if (process.env.NODE_ENV === 'test') {
+    // Access contractABI via the blockchainService namespace to ensure it gets the mocked version's current state
+    console.log('[TEST ENV DEBUG] startScheduledJobs called. Value of blockchainService.contractABI:',
+      blockchainService.contractABI ? 'Exists' : 'NULL or Undefined',
+    );
+  }
+
   if (!process.env.BACKEND_WALLET_PRIVATE_KEY || !process.env.RPC_URL) {
     console.warn("[Scheduler] Automated contract call jobs DISABLED due to missing BACKEND_WALLET_PRIVATE_KEY or RPC_URL.");
     return;
   }
-  // Check if the contract ABI loaded correctly (imported from blockchainService)
-  if (!contractABI) {
-    console.warn("[Scheduler] Automated contract call jobs DISABLED due to ABI loading failure.");
+
+  // Access contractABI via the blockchainService namespace. This is CRITICAL for the mock to work correctly in tests.
+  if (!blockchainService.contractABI || blockchainService.contractABI.length === 0) {
+    console.warn("[Scheduler] Automated contract call jobs DISABLED due to ABI loading failure or empty ABI.");
     return;
   }
 
-  // Define CRON_SCHEDULE *inside* the function to read env var at runtime
-  const CRON_SCHEDULE = process.env.CRON_SCHEDULE_DEADLINE_CHECKS || '*/30 * * * *'; // Default: every 30 mins
-
-  // Log the schedule being used
+  const CRON_SCHEDULE = process.env.CRON_SCHEDULE_DEADLINE_CHECKS || '*/30 * * * *';
+  if (!cron.validate(CRON_SCHEDULE)) {
+    console.error(`[Scheduler] Invalid CRON_SCHEDULE: "${CRON_SCHEDULE}". Automated jobs will not start.`);
+    return;
+  }
   console.log(`[Scheduler] Initializing cron job with schedule: "${CRON_SCHEDULE}"`);
 
-  // Schedule the job using node-cron
   cron.schedule(CRON_SCHEDULE, checkAndProcessContractDeadlines, {
     scheduled: true,
-    timezone: "America/New_York" // Optional: Set your server's timezone or make it configurable
+    timezone: "America/New_York"
   });
 
-  console.log('[Scheduler] Automated contract deadline check job scheduled.');
+  console.log('[Scheduler] Deadline check job scheduled successfully.');
 }
