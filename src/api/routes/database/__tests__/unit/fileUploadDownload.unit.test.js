@@ -42,8 +42,8 @@ jest.mock('firebase/storage', () => ({
   uploadBytes: mockUploadBytes,
   getDownloadURL: mockGetDownloadURL,
 }));
-jest.mock('../auth/authIndex.js', () => ({ ethEscrowApp: {} }));
-jest.mock('../auth/admin.js', () => ({ adminApp: {} }));
+jest.mock('../../../auth/authIndex.js', () => ({ ethEscrowApp: {} }));
+jest.mock('../../../auth/admin.js', () => ({ adminApp: {} }));
 jest.mock('uuid', () => ({ v4: mockUuidv4 }));
 
 // Mock multer instance and its methods
