@@ -1,386 +1,587 @@
-import { jest } from '@jest/globals';
-import express from 'express';
-import router from '../../fileUploadDownload.js'; // Path to the router
-import { Readable } from 'stream';
+// src/api/routes/database/__tests__/unit/fileUploadDownload.unit.test.js
+import { jest } from '@jest/globals'; // Import the jest object
 
-// --- Mock Firebase SDKs and external modules ---
-const mockVerifyIdToken = jest.fn();
-const mockGetAdminAuth = jest.fn(() => ({ verifyIdToken: mockVerifyIdToken }));
+console.log('[LOG] Test file execution start: fileUploadDownload.unit.test.js');
 
-const mockCollection = jest.fn();
-const mockDoc = jest.fn();
-const mockGet = jest.fn();
-const mockAdd = jest.fn();
-const mockWhere = jest.fn();
-const mockGetFirestore = jest.fn(() => ({
-  collection: mockCollection,
-}));
+const mocks = {};
+console.log('[LOG] Initialized global mocks object');
 
-const mockRef = jest.fn();
-const mockUploadBytes = jest.fn();
-const mockGetDownloadURL = jest.fn();
-const mockGetStorageClient = jest.fn(() => ({
-  ref: mockRef,
-  uploadBytes: mockUploadBytes,
-  getDownloadURL: mockGetDownloadURL,
-}));
-
-const mockFile = jest.fn();
-const mockBucket = jest.fn(() => ({ file: mockFile }));
-const mockGetAdminStorage = jest.fn(() => ({
-  bucket: mockBucket,
-}));
-
-const mockUuidv4 = jest.fn(() => 'mock-uuid-v4');
-
-jest.mock('firebase-admin/auth', () => ({ getAuth: mockGetAdminAuth }));
-jest.mock('firebase-admin/firestore', () => ({ getFirestore: mockGetFirestore }));
-jest.mock('firebase-admin/storage', () => ({ getStorage: mockGetAdminStorage }));
-jest.mock('firebase/storage', () => ({
-  getStorage: mockGetStorageClient,
-  ref: mockRef,
-  uploadBytes: mockUploadBytes,
-  getDownloadURL: mockGetDownloadURL,
-}));
-jest.mock('../../../auth/authIndex.js', () => ({ ethEscrowApp: {} }));
-jest.mock('../../../auth/admin.js', () => ({ adminApp: {} }));
-jest.mock('uuid', () => ({ v4: mockUuidv4 }));
-
-// Mock multer instance and its methods
-const mockUploadSingle = jest.fn();
-const mockMulter = jest.fn(() => ({ single: mockUploadSingle }));
-jest.mock('multer', () => mockMulter);
-
-// Helper to create a mock Express app with the router
-const setupApp = () => {
-  const app = express();
-  app.use(express.json());
-  app.use('/files', router); // Mount router
-  return app;
+const mockClientFirebaseStorageInstance = {
+  type: 'mock-firebase-client-storage-instance',
+  app: { name: '[MOCK_FIREBASE_APP_CLIENT]' },
 };
-
-// Mock Express request and response objects
-const mockResponse = () => {
-  const res = {};
-  res.status = jest.fn().mockReturnValue(res);
-  res.json = jest.fn().mockReturnValue(res);
-  res.send = jest.fn().mockReturnValue(res);
-  res.setHeader = jest.fn().mockReturnValue(res);
-  res.pipe = jest.fn();
-  return res;
+const mockClientStorageReferenceInstance = {
+  toString: () => 'gs://mock-bucket/mock-client-path.jpg',
+  bucket: 'mock-client-bucket',
+  fullPath: 'mock-client-path.jpg',
+  name: 'mock-client-path.jpg',
 };
+console.log('[LOG] Defined static mock data (e.g., mockClientFirebaseStorageInstance)');
 
-describe('Unit Tests for fileUploadDownload.js', () => {
-  let app;
+// This outer async IIFE is to allow top-level await for mocks and dynamic imports
+(async () => {
+  console.log('[LOG] Starting async mock setup using unstable_mockModule');
 
-  beforeEach(() => {
-    jest.clearAllMocks();
-    app = setupApp();
-
-    // Setup default mock implementations
-    mockVerifyIdToken.mockResolvedValue({ uid: 'testUserId' });
-
-    // Firestore mocks
-    mockCollection.mockReturnValue({
-      doc: mockDoc,
-      where: mockWhere,
-      get: mockGet, // For collection().get()
+  jest.unstable_mockModule('url', () => {
+    console.log('[LOG] unstable_mockModule factory for "url" executing');
+    mocks.fileURLToPath = jest.fn((url) => {
+      console.log(`[LOG] mock url.fileURLToPath called with: ${url}`);
+      return url && url.includes && url.includes('fileUploadDownload.js') ? '/mocked/path/to/fileUploadDownload.js' : '/mocked/path/default_file.js';
     });
-    mockDoc.mockReturnValue({
-      get: mockGet,
-      collection: mockCollection, // For doc().collection()
-      add: mockAdd, // For doc().collection().add()
-    });
-    mockWhere.mockReturnValue({ get: mockGet }); // For collection().where().get()
-    mockGet.mockResolvedValue({ exists: true, data: () => ({ participants: ['testUserId'] }), id: 'dealId1' });
-    mockAdd.mockResolvedValue({ id: 'newFileId' });
-
-    // Firebase Storage (Client) mocks
-    mockGetDownloadURL.mockResolvedValue('http://fake-url.com/file.pdf');
-    mockUploadBytes.mockResolvedValue({});
-
-    // Firebase Storage (Admin) mocks
-    const mockReadStream = new Readable();
-    mockReadStream._read = () => {}; // Noop
-    mockReadStream.on = jest.fn((event, handler) => {
-      if (event === 'error') {
-        // Store handler to potentially call later
-        mockReadStream.errorHandler = handler;
-      }
-      return mockReadStream;
-    });
-    mockReadStream.pipe = jest.fn();
-    mockFile.mockReturnValue({ createReadStream: () => mockReadStream });
-    
-    // Multer mock: Simulate file upload middleware
-    // This simulates multer adding `req.file` and `req.body` (if parsed by multer)
-    mockUploadSingle.mockImplementation((fieldName) => (req, res, next) => {
-        // If a file is being attached in the test, it will be on req.file
-        // If fields are sent, they will be on req.body
-        next();
-    });
+    return { fileURLToPath: mocks.fileURLToPath };
   });
 
-  // --- Middleware: authenticateToken ---
-  describe('authenticateToken Middleware', () => {
-    // This middleware is implicitly tested by the routes that use it.
-    // Explicit tests are valuable if the middleware logic is complex or standalone.
-    it('should call next() and set req.userId if token is valid', async () => {
-        mockVerifyIdToken.mockResolvedValueOnce({ uid: 'aSpecificUserId' });
-        // To test middleware directly, we'd need to extract it or call a route.
-        // For now, rely on endpoint tests. Example of an endpoint test ensuring auth:
-        const response = await app.post('/files/upload')
-            .set('Authorization', 'Bearer validtoken')
-            .send({ dealId: 'anyDeal' }); // Minimal payload to pass initial checks
-        // If auth passed, it wouldn't be a 401/403 from the middleware itself.
-        // We expect other errors if payload is incomplete for the route logic.
-        expect(mockVerifyIdToken).toHaveBeenCalledWith('validtoken');
-        // Check req.userId was available in a route requires more complex mocking or inspection
+  jest.unstable_mockModule('path', () => {
+    console.log('[LOG] unstable_mockModule factory for "path" executing');
+    mocks.dirname = jest.fn((filePath) => {
+      console.log(`[LOG] mock path.dirname called with: ${filePath}`);
+      return filePath === '/mocked/path/to/fileUploadDownload.js' ? '/mocked/path/to' : '/mocked/path';
     });
-
-    it('should return 401 if no token is provided', async () => {
-      const response = await app.post('/files/upload').send({dealId: 'deal1'});
-      expect(response.status).toBe(401);
-      expect(response.body.error).toBe('No token provided');
-    });
-
-    it('should return 403 if token is invalid or expired', async () => {
-      mockVerifyIdToken.mockRejectedValueOnce(new Error('Token verification failed'));
-      const response = await app.post('/files/upload')
-        .set('Authorization', 'Bearer invalidtoken')
-        .send({dealId: 'deal1'});
-      expect(response.status).toBe(403);
-      expect(response.body.error).toBe('Invalid or expired token');
-    });
+    return { dirname: mocks.dirname };
   });
 
-  // --- POST /files/upload ---
-  describe('POST /files/upload', () => {
-    const mockFileObject = {
-        originalname: 'test.pdf',
-        mimetype: 'application/pdf',
-        buffer: Buffer.from('fake pdf content'),
-        size: 100,
+  jest.unstable_mockModule('firebase-admin/auth', () => {
+    console.log('[LOG] unstable_mockModule factory for "firebase-admin/auth" executing');
+    mocks.verifyIdToken = jest.fn();
+    mocks.getAdminAuth = jest.fn(() => ({ verifyIdToken: mocks.verifyIdToken }));
+    return { getAuth: mocks.getAdminAuth };
+  });
+
+  jest.unstable_mockModule('firebase-admin/firestore', () => {
+    console.log('[LOG] unstable_mockModule factory for "firebase-admin/firestore" executing');
+    mocks.adminFirestoreCollection = jest.fn();
+    mocks.adminFirestoreDoc = jest.fn();
+    mocks.adminFirestoreGet = jest.fn();
+    mocks.adminFirestoreAdd = jest.fn();
+    mocks.adminFirestoreWhere = jest.fn();
+    mocks.adminFirestoreDoc.mockImplementation(() => ({
+      get: mocks.adminFirestoreGet,
+      collection: mocks.adminFirestoreCollection,
+      add: mocks.adminFirestoreAdd,
+    }));
+    mocks.adminFirestoreCollection.mockImplementation(() => ({
+      doc: mocks.adminFirestoreDoc,
+      where: mocks.adminFirestoreWhere,
+      get: mocks.adminFirestoreGet,
+      add: mocks.adminFirestoreAdd,
+    }));
+    mocks.adminFirestoreWhere.mockImplementation(() => ({ get: mocks.adminFirestoreGet }));
+    mocks.getFirestore = jest.fn(() => ({ collection: mocks.adminFirestoreCollection, doc: mocks.adminFirestoreDoc }));
+    return { getFirestore: mocks.getFirestore };
+  });
+
+  jest.unstable_mockModule('firebase-admin/storage', () => {
+    console.log('[LOG] unstable_mockModule factory for "firebase-admin/storage" executing');
+    mocks.adminStorageFileInstanceCreateReadStream = jest.fn();
+    mocks.adminStorageFileInstance = { createReadStream: mocks.adminStorageFileInstanceCreateReadStream };
+    mocks.adminBucketInstanceFile = jest.fn(() => mocks.adminStorageFileInstance);
+    mocks.adminBucketInstance = { file: mocks.adminBucketInstanceFile };
+    mocks.getAdminStorage = jest.fn(() => ({ bucket: () => mocks.adminBucketInstance }));
+    return { getStorage: mocks.getAdminStorage };
+  });
+
+  jest.unstable_mockModule('firebase/storage', () => {
+    console.log('[LOG] unstable_mockModule factory for "firebase/storage" executing');
+    mocks.getClientStorage = jest.fn(() => mockClientFirebaseStorageInstance);
+    mocks.ref = jest.fn(() => mockClientStorageReferenceInstance);
+    mocks.uploadBytes = jest.fn();
+    mocks.getDownloadURL = jest.fn();
+    return { getStorage: mocks.getClientStorage, ref: mocks.ref, uploadBytes: mocks.uploadBytes, getDownloadURL: mocks.getDownloadURL };
+  });
+
+  jest.unstable_mockModule('uuid', () => {
+    console.log('[LOG] unstable_mockModule factory for "uuid" executing');
+    mocks.v4 = jest.fn();
+    return { v4: mocks.v4 };
+  });
+
+  jest.unstable_mockModule('multer', () => {
+    console.log('[LOG] unstable_mockModule factory for "multer" executing');
+    mocks.multerMiddleware = jest.fn((req, res, next) => {
+      console.log('[LOG] mock multerMiddleware executing');
+      if (req.simulateMulterError) return next(new Error(req.simulateMulterError));
+      if (req.attachMockFile) req.file = { ...req.attachMockFile };
+      next();
+    });
+    mocks.multerSingle = jest.fn((fieldName) => {
+      console.log(`[LOG] mock multer().single('${fieldName}') called`);
+      return mocks.multerMiddleware;
+    });
+    const multerFactory = jest.fn((options) => {
+      console.log('[LOG] mock multer factory called with options:', options);
+      return { single: mocks.multerSingle };
+    });
+    mocks.multerFactory = multerFactory; 
+    return { default: multerFactory }; 
+  });
+
+  jest.unstable_mockModule('../../../auth/authIndex.js', () => {
+    console.log('[LOG] unstable_mockModule factory for "../../../auth/authIndex.js" executing');
+    return { ethEscrowApp: { name: '[MOCK_FIREBASE_APP_CLIENT_FROM_AUTHINDEX]' } };
+  });
+
+  jest.unstable_mockModule('../../../auth/admin.js', () => {
+    console.log('[LOG] unstable_mockModule factory for "../../../auth/admin.js" executing');
+    return { adminApp: { name: '[MOCK_FIREBASE_ADMIN_APP_FROM_ADMINJS]' } };
+  });
+
+  console.log('[LOG] All unstable_mockModule calls processed.');
+
+  // Dynamically import necessary modules for test setup and the module under test
+  // This MUST happen after mocks are established and before describe() is called.
+  const express = (await import('express')).default;
+  const request = (await import('supertest')).default;
+  const { Readable } = await import('stream');
+  const fileUploadDownloadRouter = (await import('../../fileUploadDownload')).default;
+  console.log('[LOG] Dynamically imported express, supertest, Readable, and fileUploadDownloadRouter.');
+
+  // Now that all async setup (mocks and imports) is done, define the tests.
+  describe('File Upload and Download Router Unit Tests', () => {
+    let app;
+
+    // Helper function to create a mock Express app
+    // Defined inside describe or accessible in its scope, after express is imported.
+    const setupApp = () => {
+      console.log('[LOG] setupApp: Creating new Express app instance.');
+      const appInstance = express();
+      appInstance.use(express.json());
+      appInstance.use('/files', fileUploadDownloadRouter);
+      console.log('[LOG] setupApp: Express app configured with json middleware and router at /files.');
+      return appInstance;
     };
 
-    it('should upload a file successfully', async () => {
-      // Simulate multer adding the file to the request
-      mockUploadSingle.mockImplementation((fieldName) => (req, res, next) => {
-        req.file = mockFileObject;
-        req.body = { dealId: 'existingDealId' }; // Multer can also parse fields
-        next();
+    beforeEach(() => {
+      console.log('[LOG] beforeEach: Test starting. Clearing and resetting all mocks.');
+      Object.values(mocks).forEach(mockFn => {
+        if (jest.isMockFunction(mockFn)) mockFn.mockClear();
+      });
+      if (mocks.adminStorageFileInstanceCreateReadStream) mocks.adminStorageFileInstanceCreateReadStream.mockClear();
+      if (mocks.adminBucketInstanceFile) mocks.adminBucketInstanceFile.mockClear();
+
+      console.log('[LOG] beforeEach: Setting default mock implementations.');
+      mocks.verifyIdToken.mockResolvedValue({ uid: 'testUserId' });
+      mocks.adminFirestoreGet.mockResolvedValue({
+        exists: true,
+        data: () => ({ participants: ['testUserId'], name: 'Test Deal' }),
+        id: 'mockDealId',
+        docs: [{ id: 'file1', data: () => ({ filename: 'file1.pdf', storagePath: 'path/to/file1.pdf', contentType: 'application/pdf', size:100, uploadedAt: { toDate: () => new Date() }, uploadedBy: 'user1' }) }]
+      });
+      mocks.adminFirestoreAdd.mockResolvedValue({ id: 'newFirestoreFileId' });
+
+      const mockAdminReadStream = new Readable();
+      mockAdminReadStream._read = () => {}; 
+      mockAdminReadStream.pipe = jest.fn(destination => {
+        console.log('[LOG] mockAdminReadStream.pipe called');
+        mockAdminReadStream.emit('end'); 
+        return destination;
+      });
+      mockAdminReadStream.on = jest.fn((event, handler) => mockAdminReadStream);
+      mocks.adminStorageFileInstanceCreateReadStream.mockReturnValue(mockAdminReadStream);
+
+      mocks.uploadBytes.mockResolvedValue({ metadata: { fullPath: 'deals/mockDealId/mock-uuid-v4-testfile.pdf' } });
+      mocks.getDownloadURL.mockResolvedValue('http://mockdownloadurl.com/testfile.pdf');
+      mocks.v4.mockReturnValue('mock-uuid-v4');
+      mocks.multerMiddleware.mockImplementation((req, res, next) => {
+          console.log('[LOG beforeEach] Default mock multerMiddleware executing');
+          if (req.simulateMulterError) return next(new Error(req.simulateMulterError));
+          if (req.attachMockFile) req.file = { ...req.attachMockFile };
+          else if (!req.file && req.method === 'POST' && req.originalUrl === '/files/upload') { // Be more specific with path for default file
+              req.file = { originalname: 'default.txt', mimetype: 'text/plain', buffer: Buffer.from('default'), size: 7 };
+          }
+          next();
+      });
+      mocks.fileURLToPath.mockImplementation((url) => {
+          if (url && url.includes && url.includes('fileUploadDownload.js')) return '/mocked/path/to/fileUploadDownload.js';
+          return '/mocked/path/default_file.js';
+      });
+      mocks.dirname.mockImplementation((filePath) => {
+          if (filePath === '/mocked/path/to/fileUploadDownload.js') return '/mocked/path/to';
+          return '/mocked/path';
       });
 
-      mockGet.mockResolvedValueOnce({ exists: true, data: () => ({}) }); // Deal exists
-      mockAdd.mockResolvedValueOnce({ id: 'newFileId123' });
-      mockGetDownloadURL.mockResolvedValueOnce('http://new-url.com/test.pdf');
+      app = setupApp(); // setupApp uses dynamically imported 'express' and 'fileUploadDownloadRouter'
+      console.log('[LOG] beforeEach: Mocks reset and app re-initialized.');
+    });
 
-      const response = await app.post('/files/upload')
-        .set('Authorization', 'Bearer validtoken')
-        // .field('dealId', 'existingDealId') // Fields are now set by mockUploadSingle
-        // .attach('file', mockFileObject.buffer, mockFileObject.originalname) // File also by mockUploadSingle
-        .send(); // Send empty body as multer mock handles it
+    // --- Test Suite for POST /upload ---
+    describe('POST /files/upload', () => {
+      const validToken = 'Bearer validtoken';
+      const testDealId = 'testDealId123';
+      const mockFilePayload = {
+        originalname: 'test-upload.pdf',
+        mimetype: 'application/pdf',
+        buffer: Buffer.from('This is a test PDF.'),
+        size: 12345,
+      };
 
-      expect(response.status).toBe(200);
-      expect(response.body).toEqual({
-        message: 'File uploaded successfully',
-        fileId: 'newFileId123',
-        url: 'http://new-url.com/test.pdf',
+      it('should upload a file successfully with valid inputs', async () => {
+        console.log('[LOG TEST] POST /upload: success case');
+        mocks.adminFirestoreGet.mockResolvedValueOnce({ exists: true, data: () => ({ participants: ['testUserId'] }) }); 
+        mocks.adminFirestoreAdd.mockResolvedValueOnce({ id: 'newFileIdForUpload' }); 
+
+        const response = await request(app)
+          .post('/files/upload')
+          .set('Authorization', validToken)
+          .field('dealId', testDealId)
+          .attach('file', mockFilePayload.buffer, { filename: mockFilePayload.originalname, contentType: mockFilePayload.mimetype });
+
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({
+          message: 'File uploaded successfully',
+          fileId: 'newFileIdForUpload',
+          url: 'http://mockdownloadurl.com/testfile.pdf',
+        });
+        expect(mocks.verifyIdToken).toHaveBeenCalledWith('validtoken');
+        expect(mocks.adminFirestoreCollection).toHaveBeenCalledWith('deals');
+        expect(mocks.adminFirestoreDoc).toHaveBeenCalledWith(testDealId);
+        expect(mocks.v4).toHaveBeenCalled();
+        expect(mocks.ref).toHaveBeenCalledWith(
+          mockClientFirebaseStorageInstance,
+          `deals/${testDealId}/mock-uuid-v4-${mockFilePayload.originalname}`
+        );
+        expect(mocks.uploadBytes).toHaveBeenCalledWith(
+          mockClientStorageReferenceInstance,
+          mockFilePayload.buffer, 
+          { contentType: mockFilePayload.mimetype }
+        );
+        expect(mocks.getDownloadURL).toHaveBeenCalledWith(mockClientStorageReferenceInstance);
+        expect(mocks.adminFirestoreAdd).toHaveBeenCalledWith(expect.objectContaining({
+          filename: mockFilePayload.originalname,
+          storagePath: `deals/${testDealId}/mock-uuid-v4-${mockFilePayload.originalname}`,
+          url: 'http://mockdownloadurl.com/testfile.pdf',
+          contentType: mockFilePayload.mimetype,
+          uploadedBy: 'testUserId'
+        }));
+        expect(mocks.multerFactory).toHaveBeenCalled(); 
+        expect(mocks.multerSingle).toHaveBeenCalledWith('file');
+        expect(mocks.multerMiddleware).toHaveBeenCalled();
       });
-      expect(mockRef).toHaveBeenCalledWith(expect.anything(), `deals/existingDealId/mock-uuid-v4-${mockFileObject.originalname}`);
-      expect(mockUploadBytes).toHaveBeenCalledWith(expect.anything(), mockFileObject.buffer, { contentType: mockFileObject.mimetype });
-      expect(mockAdd).toHaveBeenCalledWith(expect.objectContaining({
-        filename: mockFileObject.originalname,
-        storagePath: `deals/existingDealId/mock-uuid-v4-${mockFileObject.originalname}`,
-        url: 'http://new-url.com/test.pdf',
-        uploadedBy: 'testUserId',
-      }));
-    });
 
-    it('should return 400 if file, dealId, or userId is missing', async () => {
-        mockUploadSingle.mockImplementation((fieldName) => (req, res, next) => {
-            // req.file = mockFileObject; // Simulate missing file
-            req.body = { dealId: 'aDeal' };
-            next();
-        });
-         let response = await app.post('/files/upload').set('Authorization', 'Bearer validtoken').send(); // No file
-        expect(response.status).toBe(400);
-        expect(response.body.error).toBe('Missing file, dealId, or userId');
-
-        mockUploadSingle.mockImplementation((fieldName) => (req, res, next) => {
-            req.file = mockFileObject;
-            // req.body = { dealId: 'aDeal' }; // Simulate missing dealId
-            next();
-        });
-        response = await app.post('/files/upload').set('Authorization', 'Bearer validtoken').send(); // No dealId
-        expect(response.status).toBe(400);
-        expect(response.body.error).toBe('Missing file, dealId, or userId');
-    });
-
-    it('should return 404 if deal not found', async () => {
-        mockUploadSingle.mockImplementation((fieldName) => (req, res, next) => {
-            req.file = mockFileObject;
-            req.body = { dealId: 'nonExistentDeal' };
-            next();
-        });
-        mockGet.mockResolvedValueOnce({ exists: false }); // Deal does not exist
-        const response = await app.post('/files/upload').set('Authorization', 'Bearer validtoken').send();
+      it('should return 401 if no token is provided', async () => {
+        console.log('[LOG TEST] POST /upload: no token');
+        const response = await request(app)
+          .post('/files/upload')
+          .field('dealId', testDealId)
+          .attach('file', mockFilePayload.buffer, mockFilePayload.originalname);
+        expect(response.status).toBe(401);
+        expect(response.body.error).toBe('No token provided');
+      });
+  
+      it('should return 403 if token is invalid', async () => {
+        console.log('[LOG TEST] POST /upload: invalid token');
+        mocks.verifyIdToken.mockRejectedValueOnce(new Error('Invalid token'));
+        const response = await request(app)
+          .post('/files/upload')
+          .set('Authorization', 'Bearer invalidtoken')
+          .field('dealId', testDealId)
+          .attach('file', mockFilePayload.buffer, mockFilePayload.originalname);
+        expect(response.status).toBe(403);
+        expect(response.body.error).toBe('Invalid or expired token');
+      });
+  
+      it('should return 400 if dealId is missing', async () => {
+          console.log('[LOG TEST] POST /upload: missing dealId');
+          const response = await request(app)
+            .post('/files/upload')
+            .set('Authorization', validToken)
+            .attach('file', mockFilePayload.buffer, mockFilePayload.originalname);
+          expect(response.status).toBe(400);
+          expect(response.body.error).toBe('Missing file, dealId, or userId');
+      });
+      
+      it('should return 400 if file is missing', async () => {
+          console.log('[LOG TEST] POST /upload: missing file');
+          mocks.multerMiddleware.mockImplementationOnce((req, res, next) => {
+              console.log('[LOG TEST] POST /upload: mock multerMiddleware for missing file test - req.file is undefined');
+              next();
+          });
+          const response = await request(app)
+            .post('/files/upload')
+            .set('Authorization', validToken)
+            .field('dealId', testDealId); 
+          expect(response.status).toBe(400);
+          expect(response.body.error).toBe('Missing file, dealId, or userId');
+      });
+  
+      it('should return 404 if deal is not found', async () => {
+        console.log('[LOG TEST] POST /upload: deal not found');
+        mocks.adminFirestoreGet.mockResolvedValueOnce({ exists: false });
+        const response = await request(app)
+          .post('/files/upload')
+          .set('Authorization', validToken)
+          .field('dealId', 'nonExistentDealId')
+          .attach('file', mockFilePayload.buffer, mockFilePayload.originalname);
         expect(response.status).toBe(404);
         expect(response.body.error).toBe('Deal not found');
-    });
-
-    it('should return 400 for invalid file type', async () => {
-        mockUploadSingle.mockImplementation((fieldName) => (req, res, next) => {
-            req.file = { ...mockFileObject, mimetype: 'text/plain' }; // Invalid type
-            req.body = { dealId: 'aDeal' };
-            next();
-        });
-        mockGet.mockResolvedValueOnce({ exists: true, data: () => ({}) });
-        const response = await app.post('/files/upload').set('Authorization', 'Bearer validtoken').send();
+      });
+  
+      it('should return 400 for invalid file type', async () => {
+        console.log('[LOG TEST] POST /upload: invalid file type');
+        const invalidFile = {
+          originalname: 'test.txt',
+          mimetype: 'text/plain', 
+          buffer: Buffer.from('some text'),
+        };
+         mocks.adminFirestoreGet.mockResolvedValueOnce({ exists: true, data: () => ({ participants: ['testUserId'] }) }); 
+        const response = await request(app)
+          .post('/files/upload')
+          .set('Authorization', validToken)
+          .field('dealId', testDealId)
+          .attach('file', invalidFile.buffer, { filename: invalidFile.originalname, contentType: invalidFile.mimetype });
         expect(response.status).toBe(400);
         expect(response.body.error).toBe('Invalid file type');
-    });
-
-    it('should return 500 on upload error', async () => {
-        mockUploadSingle.mockImplementation((fieldName) => (req, res, next) => {
-            req.file = mockFileObject;
-            req.body = { dealId: 'aDeal' };
-            next();
+      });
+      
+      it('should return 500 if multer processing fails', async () => {
+          console.log('[LOG TEST] POST /upload: multer error');
+          const multerErrorMessage = 'Simulated Multer Processing Error';
+          mocks.multerMiddleware.mockImplementationOnce((req, res, next) => {
+            console.log('[LOG TEST] Simulating multer error in middleware for POST /upload');
+            next(new Error(multerErrorMessage));
+          });
+      
+          const response = await request(app)
+            .post('/files/upload')
+            .set('Authorization', validToken)
+            .field('dealId', testDealId)
+            .attach('file', mockFilePayload.buffer, mockFilePayload.originalname);
+      
+          expect(response.status).toBe(500); 
+          expect(response.body.error).toBe('Internal server error'); 
         });
-        mockGet.mockResolvedValueOnce({ exists: true, data: () => ({}) });
-        mockUploadBytes.mockRejectedValueOnce(new Error('Storage upload failed'));
-        const response = await app.post('/files/upload').set('Authorization', 'Bearer validtoken').send();
+  
+      it('should return 500 if uploadBytes fails', async () => {
+        console.log('[LOG TEST] POST /upload: uploadBytes failure');
+        mocks.adminFirestoreGet.mockResolvedValueOnce({ exists: true, data: () => ({ participants: ['testUserId'] }) });
+        mocks.uploadBytes.mockRejectedValueOnce(new Error('Firebase Storage upload failed'));
+        const response = await request(app)
+          .post('/files/upload')
+          .set('Authorization', validToken)
+          .field('dealId', testDealId)
+          .attach('file', mockFilePayload.buffer, mockFilePayload.originalname);
         expect(response.status).toBe(500);
         expect(response.body.error).toBe('Internal server error');
-    });
-  });
-
-  // --- GET /files/my-deals ---
-  describe('GET /files/my-deals', () => {
-    it('should retrieve files for user\'s deals successfully', async () => {
-      const dealsData = [
-        { id: 'deal1', data: () => ({ participants: ['testUserId'] }) },
-        { id: 'deal2', data: () => ({ participants: ['testUserId', 'otherUser'] }) },
-      ];
-      const filesDataDeal1 = [
-        { id: 'file1', data: () => ({ filename: 'doc1.pdf', contentType: 'application/pdf', size: 100, uploadedAt: { toDate: () => new Date() }, uploadedBy: 'testUserId' }) },
-      ];
-      const filesDataDeal2 = [
-        { id: 'file2', data: () => ({ filename: 'image1.png', contentType: 'image/png', size: 200, uploadedAt: { toDate: () => new Date() }, uploadedBy: 'testUserId' }) },
-      ];
-
-      mockWhere.mockReturnValueOnce({ get: jest.fn().mockResolvedValueOnce({ empty: false, docs: dealsData }) });
-      
-      // Mock files for deal1
-      mockDoc.mockImplementation(docId => {
-        if (docId === 'deal1') return { collection: () => ({ get: jest.fn().mockResolvedValueOnce({ docs: filesDataDeal1 }) }) };
-        if (docId === 'deal2') return { collection: () => ({ get: jest.fn().mockResolvedValueOnce({ docs: filesDataDeal2 }) }) };
-        return { collection: () => ({ get: jest.fn().mockResolvedValueOnce({ docs: [] }) }) }; // Default empty for other calls
       });
-
-      const response = await app.get('/files/my-deals').set('Authorization', 'Bearer validtoken');
-      expect(response.status).toBe(200);
-      expect(response.body).toHaveLength(2);
-      expect(response.body).toEqual(expect.arrayContaining([
-        expect.objectContaining({ dealId: 'deal1', fileId: 'file1', filename: 'doc1.pdf' }),
-        expect.objectContaining({ dealId: 'deal2', fileId: 'file2', filename: 'image1.png' }),
-      ]));
-    });
-
-    it('should return an empty array if user has no deals', async () => {
-      mockWhere.mockReturnValueOnce({ get: jest.fn().mockResolvedValueOnce({ empty: true, docs: [] }) });
-      const response = await app.get('/files/my-deals').set('Authorization', 'Bearer validtoken');
-      expect(response.status).toBe(200);
-      expect(response.body).toEqual([]);
-    });
-
-    it('should return 500 on error fetching deals', async () => {
-      mockWhere.mockReturnValueOnce({ get: jest.fn().mockRejectedValueOnce(new Error('Firestore query error')) });
-      const response = await app.get('/files/my-deals').set('Authorization', 'Bearer validtoken');
-      expect(response.status).toBe(500);
-      expect(response.body.error).toBe('Internal server error');
-    });
-  });
-
-  // --- GET /files/download/:dealId/:fileId ---
-  describe('GET /files/download/:dealId/:fileId', () => {
-    const dealId = 'myDealId';
-    const fileId = 'myFileId';
-    const fileData = {
-        filename: 'report.pdf',
-        storagePath: `deals/${dealId}/report.pdf`,
-        contentType: 'application/pdf',
-        participants: ['testUserId'] // Assuming deal data includes participants
-    };
-
-    it('should download a file successfully', async () => {
-        mockGet.mockResolvedValueOnce({ exists: true, data: () => ({ participants: ['testUserId'] }) }); // Deal doc
-        mockGet.mockResolvedValueOnce({ exists: true, data: () => fileData }); // File doc
-        const mockRes = mockResponse();
-
-        await router.handle(
-            { method: 'GET', url: `/download/${dealId}/${fileId}`, params: { dealId, fileId }, headers: { authorization: 'Bearer validtoken' }, userId: 'testUserId' },
-            mockRes,
-            () => {}
-        );
-
-        expect(mockRes.setHeader).toHaveBeenCalledWith('Content-Type', fileData.contentType);
-        expect(mockRes.setHeader).toHaveBeenCalledWith('Content-Disposition', `attachment; filename="${fileData.filename}"`);
-        expect(mockFile().createReadStream().pipe).toHaveBeenCalledWith(mockRes);
-        // Status code is not explicitly set in success path for stream, relies on pipe
-    });
-
-    it('should return 404 if deal not found', async () => {
-      mockGet.mockResolvedValueOnce({ exists: false }); // Deal not found
-      const response = await app.get(`/files/download/${dealId}/${fileId}`).set('Authorization', 'Bearer validtoken');
-      expect(response.status).toBe(404);
-      expect(response.body.error).toBe('Deal not found');
-    });
-
-    it('should return 403 if user not a participant in the deal', async () => {
-      mockGet.mockResolvedValueOnce({ exists: true, data: () => ({ participants: ['anotherUser'] }) }); // User not participant
-      const response = await app.get(`/files/download/${dealId}/${fileId}`).set('Authorization', 'Bearer validtoken');
-      expect(response.status).toBe(403);
-      expect(response.body.error).toBe('Unauthorized access');
-    });
-
-    it('should return 404 if file metadata not found', async () => {
-      mockGet.mockResolvedValueOnce({ exists: true, data: () => ({ participants: ['testUserId'] }) }); // Deal found
-      mockGet.mockResolvedValueOnce({ exists: false }); // File not found
-      const response = await app.get(`/files/download/${dealId}/${fileId}`).set('Authorization', 'Bearer validtoken');
-      expect(response.status).toBe(404);
-      expect(response.body.error).toBe('File not found');
-    });
-
-    it('should handle stream error during download', async () => {
-        mockGet.mockResolvedValueOnce({ exists: true, data: () => ({ participants: ['testUserId'] }) });
-        mockGet.mockResolvedValueOnce({ exists: true, data: () => fileData });
-        const mockRes = mockResponse();
-        const streamError = new Error('Stream failed');
-        const mockReadStream = mockFile().createReadStream();
-        
-        // Trigger the error handler for the stream
-        mockReadStream.on.mockImplementation((event, handler) => {
-            if (event === 'error') {
-                handler(streamError); // Call the error handler directly
-            }
-            return mockReadStream;
+  
+      it('should return 500 if getDownloadURL fails', async () => {
+          console.log('[LOG TEST] POST /upload: getDownloadURL failure');
+          mocks.adminFirestoreGet.mockResolvedValueOnce({ exists: true, data: () => ({ participants: ['testUserId'] }) });
+          mocks.getDownloadURL.mockRejectedValueOnce(new Error('Firebase getDownloadURL failed'));
+          const response = await request(app)
+            .post('/files/upload')
+            .set('Authorization', validToken)
+            .field('dealId', testDealId)
+            .attach('file', mockFilePayload.buffer, mockFilePayload.originalname);
+          expect(response.status).toBe(500);
+          expect(response.body.error).toBe('Internal server error');
         });
-
-        await router.handle(
-            { method: 'GET', url: `/download/${dealId}/${fileId}`, params: { dealId, fileId }, headers: { authorization: 'Bearer validtoken' }, userId: 'testUserId' },
-            mockRes,
-            () => {}
-        );
-        expect(mockRes.status).toHaveBeenCalledWith(500);
-        expect(mockRes.send).toHaveBeenCalledWith('Error downloading file');
+  
+      it('should return 500 if Firestore add fails', async () => {
+        console.log('[LOG TEST] POST /upload: Firestore add failure');
+        mocks.adminFirestoreGet.mockResolvedValueOnce({ exists: true, data: () => ({ participants: ['testUserId'] }) });
+        mocks.adminFirestoreAdd.mockRejectedValueOnce(new Error('Firestore add failed'));
+        const response = await request(app)
+          .post('/files/upload')
+          .set('Authorization', validToken)
+          .field('dealId', testDealId)
+          .attach('file', mockFilePayload.buffer, mockFilePayload.originalname);
+        expect(response.status).toBe(500);
+        expect(response.body.error).toBe('Internal server error');
+      });
     });
 
-    it('should return 500 on other internal errors', async () => {
-      mockGet.mockRejectedValueOnce(new Error('Firestore generic error')); // Initial DB error
-      const response = await app.get(`/files/download/${dealId}/${fileId}`).set('Authorization', 'Bearer validtoken');
-      expect(response.status).toBe(500);
-      expect(response.body.error).toBe('Internal server error');
+    describe('GET /files/my-deals', () => {
+      const validToken = 'Bearer validtoken';
+  
+      it('should retrieve files for deals the user is part of', async () => {
+        console.log('[LOG TEST] GET /my-deals: success with files');
+        const mockDealsQuerySnapshot = {
+          empty: false,
+          docs: [{ id: 'deal1' }, { id: 'deal2' }],
+        };
+        const mockFilesSnapshotDeal1 = {
+          docs: [
+            { id: 'file1deal1', data: () => ({ filename: 'fileA.pdf', storagePath: 'path/A', contentType: 'application/pdf', size: 1, uploadedAt: { toDate: () => new Date('2023-01-01T10:00:00Z') }, uploadedBy: 'userA' }) },
+          ],
+        };
+        const mockFilesSnapshotDeal2 = {
+          docs: [
+            { id: 'file1deal2', data: () => ({ filename: 'fileB.jpg', storagePath: 'path/B', contentType: 'img/jpg', size: 2, uploadedAt: { toDate: () => new Date('2023-01-02T11:00:00Z') }, uploadedBy: 'userB' }) },
+          ],
+        };
+        mocks.adminFirestoreGet 
+          .mockResolvedValueOnce(mockDealsQuerySnapshot) 
+          .mockResolvedValueOnce(mockFilesSnapshotDeal1)   
+          .mockResolvedValueOnce(mockFilesSnapshotDeal2);  
+  
+        const response = await request(app)
+          .get('/files/my-deals')
+          .set('Authorization', validToken);
+  
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual(expect.arrayContaining([
+          expect.objectContaining({ dealId: 'deal1', fileId: 'file1deal1', filename: 'fileA.pdf', downloadPath: '/files/download/deal1/file1deal1' }),
+          expect.objectContaining({ dealId: 'deal2', fileId: 'file1deal2', filename: 'fileB.jpg', downloadPath: '/files/download/deal2/file1deal2' }),
+        ]));
+        expect(mocks.verifyIdToken).toHaveBeenCalledWith('validtoken');
+        expect(mocks.adminFirestoreCollection).toHaveBeenCalledWith('deals');
+        expect(mocks.adminFirestoreWhere).toHaveBeenCalledWith('participants', 'array-contains', 'testUserId');
+      });
+  
+      it('should return 200 with an empty array if user has no deals', async () => {
+        console.log('[LOG TEST] GET /my-deals: user has no deals');
+        mocks.adminFirestoreGet.mockResolvedValueOnce({ empty: true, docs: [] }); 
+        const response = await request(app)
+          .get('/files/my-deals')
+          .set('Authorization', validToken);
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual([]);
+      });
+  
+      it('should return 200 with an empty array if deals have no files', async () => {
+          console.log('[LOG TEST] GET /my-deals: deals have no files');
+          const mockDealsQuerySnapshot = { empty: false, docs: [{ id: 'deal1' }] };
+          const mockFilesSnapshotNoFiles = { docs: [] };
+          mocks.adminFirestoreGet
+            .mockResolvedValueOnce(mockDealsQuerySnapshot) 
+            .mockResolvedValueOnce(mockFilesSnapshotNoFiles); 
+    
+          const response = await request(app)
+            .get('/files/my-deals')
+            .set('Authorization', validToken);
+          expect(response.status).toBe(200);
+          expect(response.body).toEqual([]);
+        });
+  
+      it('should return 401 if no token is provided', async () => {
+        console.log('[LOG TEST] GET /my-deals: no token');
+        const response = await request(app).get('/files/my-deals');
+        expect(response.status).toBe(401);
+      });
+      
+      it('should return 500 if Firestore query for deals fails', async () => {
+          console.log('[LOG TEST] GET /my-deals: Firestore deals query failure');
+          mocks.adminFirestoreGet.mockRejectedValueOnce(new Error('Firestore query for deals failed'));
+          const response = await request(app)
+            .get('/files/my-deals')
+            .set('Authorization', validToken);
+          expect(response.status).toBe(500);
+          expect(response.body.error).toBe('Internal server error');
+      });
+  
+      it('should return 500 if Firestore query for files fails', async () => {
+          console.log('[LOG TEST] GET /my-deals: Firestore files query failure');
+          const mockDealsQuerySnapshot = { empty: false, docs: [{ id: 'deal1' }] };
+          mocks.adminFirestoreGet
+              .mockResolvedValueOnce(mockDealsQuerySnapshot) 
+              .mockRejectedValueOnce(new Error('Firestore query for files failed')); 
+    
+          const response = await request(app)
+            .get('/files/my-deals')
+            .set('Authorization', validToken);
+          expect(response.status).toBe(500);
+          expect(response.body.error).toBe('Internal server error');
+      });
     });
-  });
-}); 
+  
+    describe('GET /files/download/:dealId/:fileId', () => {
+      const validToken = 'Bearer validtoken';
+      const testDealId = 'dealDownload1';
+      const testFileId = 'fileDownload1';
+      const mockFileData = {
+        filename: 'contract.pdf',
+        storagePath: `deals/${testDealId}/contract.pdf`,
+        contentType: 'application/pdf',
+      };
+  
+      it('should download a file successfully', async () => {
+        console.log('[LOG TEST] GET /download: success case');
+        mocks.adminFirestoreGet 
+          .mockResolvedValueOnce({ exists: true, data: () => ({ participants: ['testUserId'] }) })
+          .mockResolvedValueOnce({ exists: true, data: () => mockFileData });
+  
+        const response = await request(app)
+          .get(`/files/download/${testDealId}/${testFileId}`)
+          .set('Authorization', validToken);
+  
+        expect(response.status).toBe(200);
+        expect(response.headers['content-type']).toBe(mockFileData.contentType);
+        expect(response.headers['content-disposition']).toBe(`attachment; filename="${mockFileData.filename}"`);
+        expect(mocks.verifyIdToken).toHaveBeenCalledWith('validtoken');
+        expect(mocks.adminFirestoreDoc).toHaveBeenCalledWith(testDealId); 
+        expect(mocks.adminFirestoreDoc).toHaveBeenCalledWith(testFileId); 
+        expect(mocks.adminBucketInstanceFile).toHaveBeenCalledWith(mockFileData.storagePath);
+        expect(mocks.adminStorageFileInstanceCreateReadStream).toHaveBeenCalled();
+        const mockReadStreamInstance = mocks.adminStorageFileInstanceCreateReadStream(); 
+        expect(mockReadStreamInstance.pipe).toHaveBeenCalled();
+      });
+  
+      it('should return 404 if deal not found', async () => {
+        console.log('[LOG TEST] GET /download: deal not found');
+        mocks.adminFirestoreGet.mockResolvedValueOnce({ exists: false }); 
+        const response = await request(app)
+          .get(`/files/download/nonExistentDeal/${testFileId}`)
+          .set('Authorization', validToken);
+        expect(response.status).toBe(404);
+        expect(response.body.error).toBe('Deal not found');
+      });
+  
+      it('should return 403 if user is not a participant in the deal', async () => {
+        console.log('[LOG TEST] GET /download: user not participant');
+        mocks.adminFirestoreGet.mockResolvedValueOnce({ exists: true, data: () => ({ participants: ['otherUser'] }) }); 
+        const response = await request(app)
+          .get(`/files/download/${testDealId}/${testFileId}`)
+          .set('Authorization', validToken); 
+        expect(response.status).toBe(403);
+        expect(response.body.error).toBe('Unauthorized access');
+      });
+  
+      it('should return 404 if file not found in Firestore', async () => {
+        console.log('[LOG TEST] GET /download: file not found in Firestore');
+        mocks.adminFirestoreGet
+          .mockResolvedValueOnce({ exists: true, data: () => ({ participants: ['testUserId'] }) }) 
+          .mockResolvedValueOnce({ exists: false }); 
+        const response = await request(app)
+          .get(`/files/download/${testDealId}/nonExistentFile`)
+          .set('Authorization', validToken);
+        expect(response.status).toBe(404);
+        expect(response.body.error).toBe('File not found');
+      });
+      
+      it('should return 500 if createReadStream fails or stream errors', async () => {
+          console.log('[LOG TEST] GET /download: createReadStream failure');
+          mocks.adminFirestoreGet
+            .mockResolvedValueOnce({ exists: true, data: () => ({ participants: ['testUserId'] }) })
+            .mockResolvedValueOnce({ exists: true, data: () => mockFileData });
+          
+          const streamError = new Error('Stream failed badly');
+          const faultyMockReadStream = new Readable();
+          faultyMockReadStream._read = () => {}; 
+          faultyMockReadStream.pipe = jest.fn((resPipeDest) => { 
+              console.log('[LOG TEST] Faulty stream pipe called');
+              faultyMockReadStream.emit('error', streamError); 
+              return resPipeDest; 
+          });
+           faultyMockReadStream.on = jest.fn((event, handler) => {
+              return faultyMockReadStream;
+          });
+          mocks.adminStorageFileInstanceCreateReadStream.mockReturnValue(faultyMockReadStream);
+    
+          const response = await request(app)
+            .get(`/files/download/${testDealId}/${testFileId}`)
+            .set('Authorization', validToken);
+          
+          expect(response.status).toBe(500);
+          expect(response.text).toBe('Error downloading file'); 
+        });
+  
+      it('should return 401 if no token provided for download', async () => {
+          console.log('[LOG TEST] GET /download: no token');
+          const response = await request(app).get(`/files/download/${testDealId}/${testFileId}`);
+          expect(response.status).toBe(401);
+      });
+    });
+  }); // End of describe block
+})(); // End of async IIFE for mock setup
+
+console.log('[LOG] Test file execution end: fileUploadDownload.unit.test.js');

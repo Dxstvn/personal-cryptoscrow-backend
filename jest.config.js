@@ -4,8 +4,10 @@
 const config = {
   rootDir: '.',
   testEnvironment: 'node',
-  globalSetup: './test-setup/globalSetup.cjs',
-  globalTeardown: './test-setup/globalTeardown.cjs',
+  // If you have global setup/teardown files and they are in CommonJS (.cjs), ensure they are compatible
+  // or convert them to ESM if possible, though Jest should handle .cjs fine.
+  // globalSetup: './test-setup/globalSetup.cjs', 
+  // globalTeardown: './test-setup/globalTeardown.cjs',
   clearMocks: true,
   collectCoverage: true,
   collectCoverageFrom: [
@@ -16,24 +18,10 @@ const config = {
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['json', 'text', 'lcov', 'clover'],
-  
-  // Transform all .js, .jsx, .mjs files using babel-jest.
-  // This now includes files in test-setup/ because we removed it from transformIgnorePatterns.
-  transform: {
-    '^.+\\.(js|jsx|mjs)$': 'babel-jest',
-  },
 
-  // Files in node_modules are typically not transformed.
-  // We are no longer ignoring test-setup here.
-  transformIgnorePatterns: [
-    '/node_modules/',
-    '\\.pnp\\.[^\\/]+$',
-  ],
-
-  // 'extensionsToTreatAsEsm' is not needed as Jest infers .js from package.json ("type": "module")
-  // and .mjs is always ESM. Babel will handle the transformation to CommonJS for the test environment.
-
-  moduleFileExtensions: ['js', 'json', 'jsx', 'node', 'mjs'], // Removed 'ts', 'tsx' unless you use TypeScript
+  // No 'extensionsToTreatAsEsm' needed when type: "module" is in package.json for .js files.
+  // No 'transform' needed if Babel is removed and we rely on native Node ESM support via --experimental-vm-modules.
+  // Jest will use its default mechanisms.
 };
 
 export default config;

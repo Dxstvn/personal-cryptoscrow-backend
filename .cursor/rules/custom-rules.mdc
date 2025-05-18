@@ -1,0 +1,10 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+1. When fixing an error, always implement extensive console logging in related files to correctly diagnose the root cause.
+
+2. Before generating any new files, research any external dependencies and packages involved to see if they exist in the first place, possible updates/deprecations, and compatibility.
+
+3. Forecast potential errors in a file before completeting the generation of the file.
