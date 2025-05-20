@@ -12,7 +12,7 @@ const mockFieldValueArrayUnion = jest.fn((...args) => ({ type: 'arrayUnion', arg
 const mockTimestampNow = jest.fn();
 const mockAdminApp = {}; // Mock adminApp
 
-jest.mock('firebase-admin/firestore', () => ({
+jest.unstable_mockModule('firebase-admin/firestore', () => ({
   getFirestore: mockGetFirestore,
   Timestamp: {
     now: mockTimestampNow,
@@ -30,7 +30,7 @@ jest.mock('firebase-admin/firestore', () => ({
   },
 }));
 
-jest.mock('../../api/routes/auth/admin.js', () => ({
+jest.unstable_mockModule('../../../api/routes/auth/admin.js', () => ({
   adminApp: mockAdminApp,
 }));
 
@@ -39,8 +39,15 @@ let getDealsPastFinalApproval, getDealsPastDisputeDeadline, updateDealStatusInDB
 
 describe('Database Service - Unit Tests', () => {
   beforeAll(async () => {
+    // Setup default mock implementation for getFirestore BEFORE importing the service
+    mockGetFirestore.mockReturnValue({
+      collection: mockCollection,
+      // Add doc and runTransaction if db is used directly for those at the top level of databaseService.js
+      // For now, only collection is directly used on the db instance from getFirestore
+    });
+
     // Import service functions here so they use the mocked dependencies
-    const service = await import('../databaseService.js');
+    const service = await import('../../databaseService.js');
     getDealsPastFinalApproval = service.getDealsPastFinalApproval;
     getDealsPastDisputeDeadline = service.getDealsPastDisputeDeadline;
     updateDealStatusInDB = service.updateDealStatusInDB;
@@ -49,13 +56,13 @@ describe('Database Service - Unit Tests', () => {
   beforeEach(() => {
     jest.clearAllMocks();
 
-    // Setup default mock implementations
-    mockGetFirestore.mockReturnValue({
-      collection: mockCollection,
-    });
+    // Reset and reconfigure mocks that might change per test or need fresh instances
+    // mockGetFirestore is already configured in beforeAll for initial db setup.
+    // If its behavior needs to change per test (e.g. throw error on db init), do it here.
+
     mockCollection.mockReturnValue({
       where: mockWhere,
-      doc: mockDoc, // For cases like db.collection('deals').doc(dealId)
+      doc: mockDoc,
     });
     mockWhere.mockReturnValue({
       where: mockWhere, // Chain .where calls
@@ -80,9 +87,10 @@ describe('Database Service - Unit Tests', () => {
 
   describe('getDealsPastFinalApproval', () => {
     it('should retrieve deals past final approval deadline', async () => {
+      const deadlineForTest = new Date('2023-01-10T00:00:00.000Z'); // Fixed date
       const mockDeals = [
-        { id: 'deal1', data: () => ({ name: 'Deal 1', status: 'IN_FINAL_APPROVAL', finalApprovalDeadlineBackend: new Date() }) },
-        { id: 'deal2', data: () => ({ name: 'Deal 2', status: 'IN_FINAL_APPROVAL', finalApprovalDeadlineBackend: new Date() }) },
+        { id: 'deal1', data: () => ({ name: 'Deal 1', status: 'IN_FINAL_APPROVAL', finalApprovalDeadlineBackend: deadlineForTest }) },
+        { id: 'deal2', data: () => ({ name: 'Deal 2', status: 'IN_FINAL_APPROVAL', finalApprovalDeadlineBackend: deadlineForTest }) },
       ];
       mockGet.mockResolvedValue({ empty: false, docs: mockDeals });
 
@@ -93,7 +101,7 @@ describe('Database Service - Unit Tests', () => {
       expect(mockWhere).toHaveBeenCalledWith('finalApprovalDeadlineBackend', '<=', mockTimestampNow());
       expect(mockGet).toHaveBeenCalledTimes(1);
       expect(deals).toHaveLength(2);
-      expect(deals[0]).toEqual({ id: 'deal1', name: 'Deal 1', status: 'IN_FINAL_APPROVAL', finalApprovalDeadlineBackend: new Date() });
+      expect(deals[0]).toEqual({ id: 'deal1', name: 'Deal 1', status: 'IN_FINAL_APPROVAL', finalApprovalDeadlineBackend: deadlineForTest });
     });
 
     it('should return an empty array if no deals match', async () => {
@@ -117,8 +125,9 @@ describe('Database Service - Unit Tests', () => {
 
   describe('getDealsPastDisputeDeadline', () => {
     it('should retrieve deals past dispute deadline', async () => {
+      const deadlineForTest = new Date('2023-01-11T00:00:00.000Z'); // Fixed date
       const mockDeals = [
-        { id: 'deal3', data: () => ({ name: 'Deal 3', status: 'IN_DISPUTE', disputeResolutionDeadlineBackend: new Date() }) },
+        { id: 'deal3', data: () => ({ name: 'Deal 3', status: 'IN_DISPUTE', disputeResolutionDeadlineBackend: deadlineForTest }) },
       ];
       mockGet.mockResolvedValue({ empty: false, docs: mockDeals });
 
@@ -128,7 +137,7 @@ describe('Database Service - Unit Tests', () => {
       expect(mockWhere).toHaveBeenCalledWith('status', '==', 'IN_DISPUTE');
       expect(mockWhere).toHaveBeenCalledWith('disputeResolutionDeadlineBackend', '<=', mockTimestampNow());
       expect(deals).toHaveLength(1);
-      expect(deals[0]).toEqual({ id: 'deal3', name: 'Deal 3', status: 'IN_DISPUTE', disputeResolutionDeadlineBackend: new Date() });
+      expect(deals[0]).toEqual({ id: 'deal3', name: 'Deal 3', status: 'IN_DISPUTE', disputeResolutionDeadlineBackend: deadlineForTest });
     });
 
     it('should return an empty array if no deals match', async () => {

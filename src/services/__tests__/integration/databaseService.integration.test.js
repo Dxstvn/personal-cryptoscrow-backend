@@ -1,13 +1,13 @@
 // src/services/__tests__/databaseService.test.js
 import { jest, describe, it, expect, beforeEach, afterAll, beforeAll } from '@jest/globals';
 import { Timestamp } from 'firebase-admin/firestore';
-import { adminFirestore, PROJECT_ID } from '../../../jest.emulator.setup.js'; // Adjust path as needed
+import { adminFirestore, PROJECT_ID } from '../../../../jest.emulator.setup.js'; // Adjust path as needed
 import {
   getDealsPastFinalApproval,
   getDealsPastDisputeDeadline,
   updateDealStatusInDB,
-} from '../databaseService.js'; // Adjust path as needed
-import { deleteAdminApp } from '../../api/routes/auth/admin.js'; // Adjust path as needed
+} from '../../databaseService.js'; // Adjust path as needed
+import { deleteAdminApp } from '../../../api/routes/auth/admin.js'; // Adjust path as needed
 
 // Helper to clean up Firestore data
 async function cleanUpFirestore() {

@@ -79,7 +79,7 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
         console.warn = jest.fn(originalConsoleWarn);
 
         // Import the main module for most tests
-        const module = await import('../contractDeployer.js'); // Adjust path if contractDeployer is in services
+        const module = await import('../../contractDeployer.js'); // Adjust path if contractDeployer is in services
         deployPropertyEscrowContract = module.deployPropertyEscrowContract;
     });
 
@@ -202,7 +202,7 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
             process.env.RPC_URL = 'http://mock-rpc-for-this-specific-test.invalid'; 
             // process.env.BACKEND_WALLET_PRIVATE_KEY = dummyUnitTestPrivateKey; // Not needed by contractDeployer.js
 
-            const module = await import('../contractDeployer.js'); // Path relative to this test file
+            const module = await import('../../contractDeployer.js'); // Path relative to this test file
             deployFnForArtifactTest = module.deployPropertyEscrowContract;
             
             // Call the backdoor function on this specific instance

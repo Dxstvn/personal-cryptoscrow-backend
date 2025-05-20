@@ -119,12 +119,14 @@ export async function checkAndProcessContractDeadlines() {
  * Initializes and starts the scheduled jobs.
  */
 export function startScheduledJobs() {
-  if (process.env.NODE_ENV === 'test') {
-    // Access contractABI via the blockchainService namespace to ensure it gets the mocked version's current state
-    console.log('[TEST ENV DEBUG] startScheduledJobs called. Value of blockchainService.contractABI:',
-      blockchainService.contractABI ? 'Exists' : 'NULL or Undefined',
-    );
+  // Add specific logging for the value it sees
+  let abiValueForLog;
+  try {
+    abiValueForLog = blockchainService.contractABI; // Access it
+  } catch (e) {
+    abiValueForLog = `Error accessing ABI: ${e.message}`;
   }
+  console.log(`[SUT startScheduledJobs] Entry. process.env.NODE_ENV: ${process.env.NODE_ENV}. blockchainService.contractABI perceived as: ${JSON.stringify(abiValueForLog)} (type: ${typeof abiValueForLog}, length: ${abiValueForLog && typeof abiValueForLog.length !== 'undefined' ? abiValueForLog.length : 'N/A'})`);
 
   if (!process.env.BACKEND_WALLET_PRIVATE_KEY || !process.env.RPC_URL) {
     console.warn("[Scheduler] Automated contract call jobs DISABLED due to missing BACKEND_WALLET_PRIVATE_KEY or RPC_URL.");
@@ -132,7 +134,10 @@ export function startScheduledJobs() {
   }
 
   // Access contractABI via the blockchainService namespace. This is CRITICAL for the mock to work correctly in tests.
-  if (!blockchainService.contractABI || blockchainService.contractABI.length === 0) {
+  const currentABI = blockchainService.contractABI; // Call getter
+  console.log(`[SUT DEBUG startScheduledJobs] Value of currentABI after access inside SUT: ${JSON.stringify(currentABI)}`);
+
+  if (!currentABI || (Array.isArray(currentABI) && currentABI.length === 0)) {
     console.warn("[Scheduler] Automated contract call jobs DISABLED due to ABI loading failure or empty ABI.");
     return;
   }

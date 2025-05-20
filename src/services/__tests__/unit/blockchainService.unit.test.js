@@ -78,7 +78,7 @@ jest.unstable_mockModule('ethers', () => {
 });
 
 let contractABI;
-const validAbiPath = path.resolve(__dirname, '../../contract/artifacts/contracts/PropertyEscrow.sol/PropertyEscrow.json');
+const validAbiPath = path.resolve(__dirname, '../../../contract/artifacts/contracts/PropertyEscrow.sol/PropertyEscrow.json');
 try {
   const PropertyEscrowArtifact = topLevelRequire(validAbiPath);
   contractABI = PropertyEscrowArtifact.abi;
@@ -110,7 +110,7 @@ describe('Blockchain Service - Unit Tests', () => {
     process.env.BACKEND_WALLET_PRIVATE_KEY = dummyUnitTestPrivateKey;
     process.env.NODE_ENV = 'test';
     
-    const serviceModule = await import('../blockchainService.js');
+    const serviceModule = await import('../../blockchainService.js');
     blockchainService = serviceModule;
 
     mockEthers.JsonRpcProvider.mockClear(); 
@@ -211,7 +211,7 @@ describe('Blockchain Service - Unit Tests', () => {
       // const consoleErrorSpyForAbi = jest.spyOn(console, 'error').mockImplementation(() => {});
 
 
-      const serviceModule = await import('../blockchainService.js');
+      const serviceModule = await import('../../blockchainService.js');
       serviceInstanceForAbiTest = serviceModule;
       
       serviceInstanceForAbiTest.__TEST_ONLY_simulateAbiLoadingFailure();
