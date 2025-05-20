@@ -19,6 +19,7 @@ async function authenticateToken(req, res, next) {
   } catch (err) {
     // Log the specific error for debugging if needed
     // console.error("Auth Error:", err);
+    console.error("[LOG AUTH MIDDLEWARE] Auth Error in middleware catch:", err.message);
     return res.status(403).json({ error: 'Invalid or expired token' });
   }
 }

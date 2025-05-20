@@ -2,15 +2,15 @@ import express from 'express';
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { adminApp } from '../auth/admin.js';
-import { deployPropertyEscrowContract } from '../deployContract/contractDeployer.js';
+import { deployPropertyEscrowContract } from '../../../services/contractDeployer.js';
 // Import ethers v6 functions directly
 import { isAddress, getAddress, parseUnits } from 'ethers'; // This is the import we are interested in
 
 const router = express.Router();
 const db = getFirestore(adminApp);
 
-const DEPLOYER_PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY;
-const RPC_URL = process.env.RPC_URL || process.env.SEPOLIA_RPC_URL;
+// const DEPLOYER_PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY; // REMOVE
+// const RPC_URL = process.env.RPC_URL || process.env.SEPOLIA_RPC_URL; // REMOVE
 
 async function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
@@ -19,6 +19,7 @@ async function authenticateToken(req, res, next) {
         return res.status(401).json({ error: 'Authentication token is required.' });
     }
     try {
+        console.log(`[ROUTE DEBUG] Extracted token in authenticateToken: '${token}'`);
         const auth = getAdminAuth(adminApp);
         const decodedToken = await auth.verifyIdToken(token);
         req.userId = decodedToken.uid;
@@ -159,7 +160,12 @@ router.post('/create', authenticateToken, async (req, res) => {
         }
 
         let deployedContractAddress = null;
-        if (!DEPLOYER_PRIVATE_KEY || !RPC_URL) {
+
+        // Dynamically read env vars for deployment
+        const currentDeployerKey = process.env.DEPLOYER_PRIVATE_KEY;
+        const currentRpcUrl = process.env.RPC_URL || process.env.SEPOLIA_RPC_URL;
+
+        if (!currentDeployerKey || !currentRpcUrl) {
             console.warn("[ROUTE WARN] Deployment skipped: DEPLOYER_PRIVATE_KEY or RPC_URL not set in .env. Transaction will be off-chain only.");
             newTransactionData.timeline.push({ event: `Smart contract deployment SKIPPED (off-chain only mode).`, timestamp: Timestamp.now(), system: true });
         } else {
@@ -167,7 +173,8 @@ router.post('/create', authenticateToken, async (req, res) => {
                 console.log(`[ROUTE LOG] Attempting to deploy PropertyEscrow contract. Buyer: ${finalBuyerWallet}, Seller: ${finalSellerWallet}, Amount: ${newTransactionData.escrowAmountWei}`);
                 deployedContractAddress = await deployPropertyEscrowContract(
                     finalSellerWallet, finalBuyerWallet, newTransactionData.escrowAmountWei,
-                    DEPLOYER_PRIVATE_KEY, RPC_URL
+                    currentDeployerKey, // Use dynamically read key
+                    currentRpcUrl       // Use dynamically read URL
                 );
                 newTransactionData.smartContractAddress = deployedContractAddress;
                 newTransactionData.timeline.push({ event: `PropertyEscrow smart contract deployed at ${deployedContractAddress}.`, timestamp: Timestamp.now(), system: true });
@@ -185,7 +192,7 @@ router.post('/create', authenticateToken, async (req, res) => {
             message: 'Transaction initiated successfully.', transactionId: transactionRef.id,
             status: newTransactionData.status, smartContractAddress: newTransactionData.smartContractAddress,
         };
-        if (deployedContractAddress === null && DEPLOYER_PRIVATE_KEY && RPC_URL) {
+        if (deployedContractAddress === null && currentDeployerKey && currentRpcUrl) {
             responsePayload.deploymentWarning = "Smart contract deployment was attempted but failed. The transaction has been created for off-chain tracking.";
         }
         res.status(201).json(responsePayload);

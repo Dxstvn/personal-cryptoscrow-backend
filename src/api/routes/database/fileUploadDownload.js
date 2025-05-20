@@ -173,9 +173,54 @@ router.get('/download/:dealId/:fileId', authenticateToken, async (req, res) => {
     // Stream the file to the client
     const readStream = file.createReadStream();
     readStream.on('error', (err) => {
-      console.error('Error streaming file:', err);
+      console.error('[ROUTE STREAM ERROR HANDLER] Error streaming file:', err);
       if (!res.headersSent) {
-        res.status(500).send('Error downloading file');
+        console.log('[ROUTE STREAM ERROR HANDLER] Headers not sent. Attempting to send 500 response.');
+        
+        // 1. Unpipe
+        if (readStream.unpipe) { 
+            console.log('[ROUTE STREAM ERROR HANDLER] Unpiping stream.');
+            readStream.unpipe(res);
+        }
+        
+        // 2. Destroy the source stream
+        if (readStream && !readStream.destroyed) {
+            console.log('[ROUTE STREAM ERROR HANDLER] Destroying read stream.');
+            readStream.destroy();
+        }
+        
+        // 3. Send JSON response
+        console.log('[ROUTE STREAM ERROR HANDLER] Setting Content-Type to application/json.');
+        res.setHeader('Content-Type', 'application/json'); // Explicitly set Content-Type for JSON response
+        console.log('[ROUTE STREAM ERROR HANDLER] Setting status to 500.');
+        res.status(500);
+        console.log('[ROUTE STREAM ERROR HANDLER] Sending JSON response: { error: \'Error downloading file\' }.');
+        try {
+            res.json({ error: 'Error downloading file' });
+            console.log('[ROUTE STREAM ERROR HANDLER] res.json() called successfully.');
+        } catch (jsonError) {
+            console.error('[ROUTE STREAM ERROR HANDLER] Error calling res.json():', jsonError);
+            // If res.json() itself fails, try to end the response if possible
+            if (!res.writableEnded) {
+                console.log('[ROUTE STREAM ERROR HANDLER] Forcing response end due to res.json() error.');
+                res.end();
+            }
+        }
+        
+        // 4. Explicitly return
+        console.log('[ROUTE STREAM ERROR HANDLER] Explicitly returning from error handler.');
+        return; 
+      } else {
+        console.error('[ROUTE STREAM ERROR HANDLER] Headers already sent. Cannot send 500 JSON response. Destroying response and readStream.');
+        if (readStream && !readStream.destroyed) {
+            console.log('[ROUTE STREAM ERROR HANDLER] Destroying read stream (headers already sent case).');
+            readStream.destroy(); 
+        }
+        // res.destroy(); // If headers sent, res.destroy() is more appropriate - this can be aggressive, ensure stream is also destroyed.
+        if (!res.writableEnded) {
+            console.log('[ROUTE STREAM ERROR HANDLER] Destroying response (headers already sent case).');
+            res.destroy();
+        }
       }
     });
     readStream.pipe(res);

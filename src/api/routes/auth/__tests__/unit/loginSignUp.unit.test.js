@@ -15,7 +15,7 @@ let mockAdminGetAuth; // For firebase-admin/auth
 let mockAdminAuthInstance; // The object returned by admin getAuth
 
 // Mock firebase/auth (Client SDK)
-jest.mock('firebase/auth', () => {
+jest.unstable_mockModule('firebase/auth', () => {
   mockClientAuthInstance = { name: 'MockClientAuthInstance' }; 
   mockCreateUserWithEmailAndPassword = jest.fn();
   mockSignInWithEmailAndPassword = jest.fn();
@@ -29,7 +29,7 @@ jest.mock('firebase/auth', () => {
 });
 
 // Mock firebase-admin/auth (Admin SDK)
-jest.mock('firebase-admin/auth', () => {
+jest.unstable_mockModule('firebase-admin/auth', () => {
   mockAdminAuthInstance = { name: 'MockAdminAuthInstance' }; 
   mockSetCustomUserClaims = jest.fn();
   mockGetUser_admin = jest.fn();
@@ -49,10 +49,10 @@ jest.mock('firebase-admin/auth', () => {
 const ethEscrowAppMock = { name: 'ethEscrowAppMock' }; 
 const adminAppMock = { name: 'adminAppMock' };       
 
-jest.mock('../../authIndex.js', () => ({
+jest.unstable_mockModule('../../authIndex.js', () => ({
   ethEscrowApp: ethEscrowAppMock, 
 }));
-jest.mock('../../admin.js', () => ({
+jest.unstable_mockModule('../../admin.js', () => ({
   adminApp: adminAppMock, 
 }));
 
