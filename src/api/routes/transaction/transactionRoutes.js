@@ -359,7 +359,7 @@ router.put('/:transactionId/sync-status', authenticateToken, async (req, res) =>
     }
     const ALLOWED_SC_STATUSES = [
         'AWAITING_CONDITION_SETUP', 'PENDING_BUYER_REVIEW', 'PENDING_SELLER_REVIEW',
-        'AWAITING_DEPOSIT', 'AWAITING_FULFILLMENT',
+        'AWAITING_DEPOSIT', 'IN_ESCROW', 'AWAITING_FULFILLMENT',
         'READY_FOR_FINAL_APPROVAL', 'IN_FINAL_APPROVAL', 'IN_DISPUTE',
         'COMPLETED', 'CANCELLED'
     ];
