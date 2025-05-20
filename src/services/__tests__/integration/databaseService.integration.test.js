@@ -1,6 +1,7 @@
 // src/services/__tests__/databaseService.test.js
 import { jest, describe, it, expect, beforeEach, afterAll, beforeAll } from '@jest/globals';
 import { Timestamp } from 'firebase-admin/firestore';
+import admin from 'firebase-admin'; // Import admin
 import { adminFirestore, PROJECT_ID } from '../../../../jest.emulator.setup.js'; // Adjust path as needed
 import {
   getDealsPastFinalApproval,
@@ -24,10 +25,27 @@ async function cleanUpFirestore() {
 describe('Database Service Tests', () => {
   // Use a unique collection name for tests if needed, or ensure clean slate
   const dealsCollection = adminFirestore.collection('deals');
+  // let db; // This was not used meaningfully
 
   beforeAll(async () => {
     // Ensure emulators are running and connected
     console.log(`[DB Service Tests] Using Project ID: ${PROJECT_ID} and Firestore emulator.`);
+
+    // Initialize Firebase Admin SDK for tests if not already initialized
+    // This ensures that admin.firestore() in databaseService.js can find the default app
+    const DEFAULT_APP_NAME = '[DEFAULT]';
+    if (!admin.apps.find(app => app && app.name === DEFAULT_APP_NAME)) {
+        console.log(`[DB Service Tests BeforeAll] Initializing default Firebase app for databaseService tests.`);
+        admin.initializeApp({
+            projectId: PROJECT_ID || `db-service-tests-${Date.now()}`, // Use PROJECT_ID from emulator setup
+            // Add other configurations if necessary, e.g., storageBucket, but FIRESTORE_EMULATOR_HOST should be picked up
+        });
+    } else {
+        console.log(`[DB Service Tests BeforeAll] Default Firebase app already initialized.`);
+    }
+
+    // databaseService.js, when NODE_ENV === 'test', should now pick up
+    // the default app initialized by jest.emulator.setup.js or by the code above.
   });
 
   beforeEach(async () => {
@@ -138,7 +156,11 @@ describe('Database Service Tests', () => {
       const eventMessage = 'Deal automatically completed.';
       const txHash = '0x123abc';
 
-      await updateDealStatusInDB(dealId, newStatus, eventMessage, txHash);
+      await updateDealStatusInDB(dealId, {
+        status: newStatus,
+        timelineEventMessage: eventMessage,
+        autoReleaseTxHash: txHash // Assuming this is the relevant hash field based on usage
+      });
 
       const updatedDeal = await dealsCollection.doc(dealId).get();
       expect(updatedDeal.exists).toBe(true);
@@ -154,10 +176,13 @@ describe('Database Service Tests', () => {
 
     it('should not throw if dealId is invalid but log an error (or handle as per implementation)', async () => {
       const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-      await updateDealStatusInDB(null, 'COMPLETED', 'Test event');
+      await updateDealStatusInDB(null, { 
+        status: 'COMPLETED', 
+        timelineEventMessage: 'Test event' 
+      });
       expect(consoleErrorSpy).toHaveBeenCalledWith(
         "[DBService] Invalid parameters for updateDealStatusInDB:",
-        expect.objectContaining({ dealId: null })
+        expect.objectContaining({ dealId: null, updateData: expect.objectContaining({ status: 'COMPLETED' }) })
       );
       consoleErrorSpy.mockRestore();
     });

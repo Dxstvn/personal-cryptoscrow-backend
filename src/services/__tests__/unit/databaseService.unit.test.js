@@ -168,7 +168,11 @@ describe('Database Service - Unit Tests', () => {
       const transactionHash = '0x123txHash';
       mockUpdate.mockResolvedValue(); // Simulate successful update
 
-      await updateDealStatusInDB(dealId, newStatus, eventMessage, transactionHash);
+      await updateDealStatusInDB(dealId, {
+        status: newStatus,
+        timelineEventMessage: eventMessage,
+        autoReleaseTxHash: transactionHash // Use a specific hash field like autoReleaseTxHash or autoCancelTxHash
+      });
 
       expect(mockCollection).toHaveBeenCalledWith('deals');
       expect(mockDoc).toHaveBeenCalledWith(dealId);
@@ -181,13 +185,17 @@ describe('Database Service - Unit Tests', () => {
           systemTriggered: true,
           transactionHash: transactionHash,
         }),
+        autoReleaseTxHash: transactionHash
       });
     });
 
     it('should update deal status and add timeline event without transactionHash', async () => {
       mockUpdate.mockResolvedValue();
 
-      await updateDealStatusInDB(dealId, newStatus, eventMessage); // No transactionHash
+      await updateDealStatusInDB(dealId, { 
+        status: newStatus, 
+        timelineEventMessage: eventMessage 
+      }); // No transactionHash in the object
 
       expect(mockUpdate).toHaveBeenCalledWith({
         status: newStatus,
@@ -198,32 +206,37 @@ describe('Database Service - Unit Tests', () => {
           systemTriggered: true,
           // No transactionHash property here
         }),
+        // No hash fields in the main update object if not provided
       });
        // Check that the object passed to arrayUnion does not contain transactionHash
       const timelineEventArg = mockFieldValueArrayUnion.mock.calls[0][0];
       expect(timelineEventArg).not.toHaveProperty('transactionHash');
+      // Also check that the main update data does not have irrelevant hash fields
+      const updateDataArg = mockUpdate.mock.calls[0][0];
+      expect(updateDataArg).not.toHaveProperty('autoReleaseTxHash');
+      expect(updateDataArg).not.toHaveProperty('autoCancelTxHash');
     });
 
     it('should log an error and not call update if dealId is missing', async () => {
       const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-      await updateDealStatusInDB(null, newStatus, eventMessage);
-      expect(consoleErrorSpy).toHaveBeenCalledWith("[DBService] Invalid parameters for updateDealStatusInDB:", { dealId: null, newStatus, eventMessage });
+      await updateDealStatusInDB(null, { status: newStatus, timelineEventMessage: eventMessage });
+      expect(consoleErrorSpy).toHaveBeenCalledWith("[DBService] Invalid parameters for updateDealStatusInDB:", { dealId: null, updateData: { status: newStatus, timelineEventMessage: eventMessage } });
       expect(mockUpdate).not.toHaveBeenCalled();
       consoleErrorSpy.mockRestore();
     });
 
     it('should log an error and not call update if newStatus is missing', async () => {
         const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-        await updateDealStatusInDB(dealId, null, eventMessage);
-        expect(consoleErrorSpy).toHaveBeenCalledWith("[DBService] Invalid parameters for updateDealStatusInDB:", { dealId, newStatus: null, eventMessage });
+        await updateDealStatusInDB(dealId, { timelineEventMessage: eventMessage }); // status is missing
+        expect(consoleErrorSpy).toHaveBeenCalledWith("[DBService] Invalid parameters for updateDealStatusInDB:", { dealId, updateData: { timelineEventMessage: eventMessage } });
         expect(mockUpdate).not.toHaveBeenCalled();
         consoleErrorSpy.mockRestore();
       });
 
     it('should log an error and not call update if eventMessage is missing', async () => {
         const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-        await updateDealStatusInDB(dealId, newStatus, null);
-        expect(consoleErrorSpy).toHaveBeenCalledWith("[DBService] Invalid parameters for updateDealStatusInDB:", { dealId, newStatus, eventMessage: null });
+        await updateDealStatusInDB(dealId, { status: newStatus }); // eventMessage is missing
+        expect(consoleErrorSpy).toHaveBeenCalledWith("[DBService] Invalid parameters for updateDealStatusInDB:", { dealId, updateData: { status: newStatus } });
         expect(mockUpdate).not.toHaveBeenCalled();
         consoleErrorSpy.mockRestore();
     });
@@ -233,7 +246,7 @@ describe('Database Service - Unit Tests', () => {
       const firestoreError = new Error('Firestore update failed');
       mockUpdate.mockRejectedValue(firestoreError);
 
-      await updateDealStatusInDB(dealId, newStatus, eventMessage);
+      await updateDealStatusInDB(dealId, { status: newStatus, timelineEventMessage: eventMessage });
 
       expect(consoleErrorSpy).toHaveBeenCalledWith(`[DBService] Error updating status for deal ${dealId} to ${newStatus}:`, firestoreError);
       consoleErrorSpy.mockRestore();

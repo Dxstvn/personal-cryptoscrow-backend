@@ -12,12 +12,15 @@ let wallet;
 export let contractABI; // This will be null if ABI loading fails OR if __TEST_ONLY_simulateAbiLoadingFailure is called
 
 // Function to initialize provider and wallet
-function initializeService() {
+async function initializeService() {
   if (provider && wallet) {
     return true;
   }
   const currentRpcUrl = process.env.RPC_URL;
   const currentPrivateKey = process.env.BACKEND_WALLET_PRIVATE_KEY;
+
+  let tempProviderForInit; // Temporary provider instance for this initialization attempt
+
   if (!currentRpcUrl || !currentPrivateKey) {
     console.warn("[BlockchainService] Critical configuration missing: RPC_URL or BACKEND_WALLET_PRIVATE_KEY.");
     provider = null;
@@ -25,19 +28,38 @@ function initializeService() {
     return false;
   }
   try {
-    provider = new JsonRpcProvider(currentRpcUrl); 
-    wallet = new Wallet(currentPrivateKey, provider);
-    console.log(`[BlockchainService] Automation service initialized. Using wallet: ${wallet.address}`);
-    provider.getBlockNumber()
+    tempProviderForInit = new JsonRpcProvider(currentRpcUrl);
+    // Assign to module-level provider only after successful initialization
+    // wallet will also be assigned only after full success.
+
+    const newWallet = new Wallet(currentPrivateKey, tempProviderForInit); // Create new wallet instance with tempProvider
+    console.log(`[BlockchainService] Automation service initialized. Wallet address: ${newWallet.address}`);
+    
+    // Await the network connectivity check
+    await tempProviderForInit.getBlockNumber()
       .then(blockNumber => {
         console.log(`[BlockchainService] Network connectivity check successful. Block: ${blockNumber}`);
+        // If successful, assign the temporary provider and new wallet to the module-level variables
+        provider = tempProviderForInit;
+        wallet = newWallet;
       })
       .catch(err => {
-        console.error(`[BlockchainService] Network connectivity check failed for ${currentRpcUrl}. Error: ${err.message}`);
+        console.error(`[BlockchainService] Network connectivity check failed for ${currentRpcUrl}. Error: ${err.message}. Raw error:`, err);
+        if (tempProviderForInit && typeof tempProviderForInit.destroy === 'function') {
+          console.log('[BlockchainService] Destroying temporary provider due to network connectivity failure.');
+          tempProviderForInit.destroy();
+        }
+        provider = null; // Ensure module-level provider is null
+        wallet = null;   // Ensure module-level wallet is null
+        throw err; // Re-throw to be caught by the outer catch block
       });
-    return true;
+    return true; // Only returns true if getBlockNumber was successful and provider/wallet were set
   } catch (error) {
     console.error(`[BlockchainService] Error initializing provider or wallet: ${error.message}. Raw error:`, error);
+    if (tempProviderForInit && typeof tempProviderForInit.destroy === 'function') {
+      console.log('[BlockchainService] Destroying temporary provider due to outer catch.');
+      tempProviderForInit.destroy();
+    }
     provider = null; 
     wallet = null;   
     return false;
@@ -99,7 +121,7 @@ export async function triggerReleaseAfterApproval(contractAddress, dealId) {
     };
   }
 
-  if (!initializeService()) { 
+  if (!(await initializeService())) { 
     return { 
       success: false, 
       error: new Error(`[Automation] Initialization failed for release. Contract: ${contractAddress}, Deal: ${dealId}. Check RPC/Key.`) 
@@ -127,7 +149,7 @@ export async function triggerReleaseAfterApproval(contractAddress, dealId) {
     const receipt = await tx.wait(1); 
     return { success: true, receipt };
   } catch (error) {
-    console.error(`[Automation] ERROR calling releaseFundsAfterApprovalPeriod for ${contractAddress} (Deal ID: ${dealId}):`, error.message, error.stack);
+    console.error(`[Automation] CAUGHT ERROR in triggerReleaseAfterApproval for ${contractAddress} (Deal ID: ${dealId}). Error type: ${error.constructor.name}. Error message: ${error.message}. Full error object:`, JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     return { success: false, error };
   }
 }
@@ -140,7 +162,7 @@ export async function triggerCancelAfterDisputeDeadline(contractAddress, dealId)
     };
   }
 
-  if (!initializeService()) {
+  if (!(await initializeService())) {
     return { 
       success: false, 
       error: new Error(`[Automation] Initialization failed for cancellation. Contract: ${contractAddress}, Deal: ${dealId}. Check RPC/Key.`) 
@@ -168,7 +190,7 @@ export async function triggerCancelAfterDisputeDeadline(contractAddress, dealId)
     const receipt = await tx.wait(1);
     return { success: true, receipt };
   } catch (error) {
-    console.error(`[Automation] ERROR calling cancelEscrowAndRefundBuyer for ${contractAddress} (Deal ID: ${dealId}):`, error.message, error.stack);
+    console.error(`[Automation] CAUGHT ERROR in triggerCancelAfterDisputeDeadline for ${contractAddress} (Deal ID: ${dealId}). Error type: ${error.constructor.name}. Error message: ${error.message}. Full error object:`, JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
     return { success: false, error };
   }
 }

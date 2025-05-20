@@ -6,8 +6,8 @@ const config = {
   testEnvironment: 'node',
   // If you have global setup/teardown files and they are in CommonJS (.cjs), ensure they are compatible
   // or convert them to ESM if possible, though Jest should handle .cjs fine.
-  // globalSetup: './test-setup/globalSetup.cjs', 
-  // globalTeardown: './test-setup/globalTeardown.cjs',
+  globalSetup: './test-setup/globalSetup.cjs', 
+  globalTeardown: './test-setup/globalTeardown.cjs',
   clearMocks: true,
   collectCoverage: true,
   collectCoverageFrom: [

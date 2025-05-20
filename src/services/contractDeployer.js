@@ -62,9 +62,10 @@ async function deployPropertyEscrowContract(sellerAddress, buyerAddress, escrowA
     // ... (rest of the console logs)
 
     let deployerWallet;
+    let provider; // Declare provider here to access in finally block
 
     try {
-        const provider = new JsonRpcProvider(rpcUrl);
+        provider = new JsonRpcProvider(rpcUrl);
         deployerWallet = new Wallet(privateKey, provider);
         console.log(`Deploying using account: ${deployerWallet.address}`);
 
@@ -121,6 +122,15 @@ async function deployPropertyEscrowContract(sellerAddress, buyerAddress, escrowA
         // Note: The check for "invalid BigNumber value" is removed here as the new try/catch for BigInt handles parsing errors more directly.
         
         throw new Error(errorMessage);
+    } finally {
+        if (provider && typeof provider.destroy === 'function') {
+            console.log('[ContractDeployer] Destroying internal provider.');
+            try {
+                await provider.destroy(); // Ethers v6 destroy is synchronous, but await won't hurt
+            } catch (e) {
+                console.error('[ContractDeployer] Error destroying internal provider:', e.message);
+            }
+        }
     }
 }
 

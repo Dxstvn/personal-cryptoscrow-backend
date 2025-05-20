@@ -1,15 +1,19 @@
+process.env.FIRESTORE_EMULATOR_HOST = 'localhost:5004'; // MUST BE AT THE VERY TOP
+console.log(`[Test File Top] FIRESTORE_EMULATOR_HOST set to: ${process.env.FIRESTORE_EMULATOR_HOST}`);
+
 import { jest } from '@jest/globals';
 import admin from 'firebase-admin';
 import { Timestamp } from 'firebase-admin/firestore';
 
 // Initialize Firebase Admin SDK for tests if not already initialized
-if (!admin.apps.length) {
-  process.env.FIRESTORE_EMULATOR_HOST = 'localhost:5004'; // Make sure this is set
-  admin.initializeApp({
-    projectId: 'test-project-scheduledjobs', // Use a dummy project ID for emulator
-  });
-}
-const db = admin.firestore();
+// if (!admin.apps.length) { // Moved to beforeAll
+//   process.env.FIRESTORE_EMULATOR_HOST = 'localhost:5004'; // Make sure this is set
+//   admin.initializeApp({ // Moved to beforeAll
+//     projectId: 'test-project-scheduledjobs', // Use a dummy project ID for emulator
+//   });
+// }
+// const db = admin.firestore(); // Moved to beforeAll
+let db; // Declare db here, initialize in beforeAll
 
 // Mock node-cron
 const mockCronSchedule = jest.fn();
@@ -23,22 +27,43 @@ jest.unstable_mockModule('node-cron', () => ({
   }
 }));
 
+// Mock blockchainService
+const mockTriggerReleaseAfterApproval = jest.fn();
+const mockTriggerCancelAfterDisputeDeadline = jest.fn();
+// Use an object to hold the mock ABI, allowing its `current` property to be reassigned
+// and the getter will always access the latest assignment.
+const mockContractABIHolder = { current: [{ type: "function", name: "defaultMockFunction" }] }; 
+
+jest.unstable_mockModule('../../blockchainService.js', () => ({
+  triggerReleaseAfterApproval: mockTriggerReleaseAfterApproval,
+  triggerCancelAfterDisputeDeadline: mockTriggerCancelAfterDisputeDeadline,
+  get contractABI() {
+    // ADDED DIAGNOSTIC LOG
+    console.log(`[TEST DEBUGGERY] Outer mock's contractABI getter invoked. mockContractABIHolder.current is: ${JSON.stringify(mockContractABIHolder.current)}. NODE_ENV for this mock context: ${process.env.NODE_ENV}`);
+    return mockContractABIHolder.current;
+  },
+  __TEST_ONLY_simulateAbiLoadingFailure: jest.fn(),
+  __TEST_ONLY_getInternalAbiState: jest.fn(),
+  initializeService: jest.fn().mockResolvedValue(true),
+}));
+
 // Import the actual blockchainService to spy on its methods
-import * as actualBlockchainService from '../../../blockchainService.js';
+// import * as actualBlockchainService from '../../blockchainService.js'; // No longer needed for spying
 // Spy on the methods we expect scheduledJobs to call
-const triggerReleaseSpy = jest.spyOn(actualBlockchainService, 'triggerReleaseAfterApproval');
-const triggerCancelSpy = jest.spyOn(actualBlockchainService, 'triggerCancelAfterDisputeDeadline');
+// const triggerReleaseSpy = jest.spyOn(actualBlockchainService, 'triggerReleaseAfterApproval'); // Replaced by mock
+// const triggerCancelSpy = jest.spyOn(actualBlockchainService, 'triggerCancelAfterDisputeDeadline'); // Replaced by mock
 
 
 // Import the module to test AFTER mocks and spies are set up
 // IMPORTANT: databaseService will be the REAL one, interacting with the emulator
-const { checkAndProcessContractDeadlines, startScheduledJobs, __TEST_ONLY_resetJobRunningFlag } = await import('../../../scheduledJobs.js');
-const { updateDealStatusInDB, getDealById } = await import('../../../databaseService.js'); // For test setup and verification
+const { checkAndProcessContractDeadlines, startScheduledJobs, __TEST_ONLY_resetJobRunningFlag } = await import('../../scheduledJobs.js');
+import * as dbService from '../../databaseService.js'; // Import as namespace
 
 const DEALS_COLLECTION = 'deals';
 
 // Helper function to clean up Firestore emulator before each test
 const clearFirestore = async () => {
+  if (!db) return; // Guard if db not initialized
   const collections = await db.listCollections();
   for (const collection of collections) {
     const snapshot = await collection.get();
@@ -50,22 +75,67 @@ const clearFirestore = async () => {
 
 // Helper function to create a deal in Firestore
 const createDealInFirestore = async (dealId, dealData) => {
+  console.log(`[Test Helper createDealInFirestore] Creating deal ${dealId} with data:`, JSON.stringify(dealData, null, 2));
   await db.collection(DEALS_COLLECTION).doc(dealId).set(dealData);
-  return { id: dealId, ...dealData };
+  const createdDoc = await db.collection(DEALS_COLLECTION).doc(dealId).get();
+  if (!createdDoc.exists) {
+    console.error(`[Test Helper createDealInFirestore] FAILED to retrieve deal ${dealId} immediately after creation.`);
+    throw new Error(`Failed to create or retrieve deal ${dealId}`);
+  }
+  console.log(`[Test Helper createDealInFirestore] Successfully created and verified deal ${dealId} in Firestore.`);
+  return { id: dealId, ...dealData }; // Return input data as it was intended to be set
 };
 
 describe('ScheduledJobs Integration Tests (with Firestore Emulator)', () => {
   let originalEnv;
 
   beforeAll(async () => {
-    // Ensure Firestore is clear before all tests in this suite
+    // process.env.FIRESTORE_EMULATOR_HOST = 'localhost:5004'; // Moved to top of file
+    const DEFAULT_APP_NAME = '[DEFAULT]'; // Firebase SDK's name for the default app
+
+    let defaultApp = admin.apps.find(app => app && app.name === DEFAULT_APP_NAME);
+
+    if (!defaultApp) {
+        console.log(`[Test BeforeAll] Default Firebase app (\"${DEFAULT_APP_NAME}\") not found. Initializing one.`);
+        // Initialize the default app. It should pick up FIRESTORE_EMULATOR_HOST.
+        admin.initializeApp({
+            projectId: `scheduledjobs-suite-${Date.now()}`,
+        });
+    } else {
+        console.log(`[Test BeforeAll] Default Firebase app (\"${DEFAULT_APP_NAME}\") already initialized. Project ID: ${defaultApp.options.projectId}`);
+        // Ensure the existing default app is actually using the emulator, crucial if it was initialized by other code.
+        // Note: This is a best-effort check; FIRESTORE_EMULATOR_HOST should ideally be set before ANY app init.
+        if (process.env.FIRESTORE_EMULATOR_HOST && (!defaultApp.options.serviceAccountId?.includes('emulator') && defaultApp.options.projectId !== process.env.GCLOUD_PROJECT)) {
+            // A more robust check might involve trying to write/read a dummy value to verify emulator connection if possible
+            // For now, we log a warning if it seems the default app isn't clearly for the emulator.
+            console.warn('[Test BeforeAll] Warning: Existing default app might not be configured for the Firestore emulator. Ensure FIRESTORE_EMULATOR_HOST is set globally before any test runs if issues persist.');
+        }
+    }
+    
+    // Now get the firestore instance from the (ideally correctly configured) default app
+    try {
+        db = admin.firestore();
+    } catch (e) {
+        console.error("[Test BeforeAll] CRITICAL: Failed to get Firestore instance after ensuring default app exists.", e);
+        throw e; // Fail fast if db cannot be obtained
+    }
+
+    if (!db) {
+        throw new Error("[Test BeforeAll] CRITICAL: Firestore 'db' instance was not initialized.");
+    }
+
+    console.log('[Test BeforeAll] Firestore instance obtained. Proceeding to clear emulator.');
     await clearFirestore();
+    // console.log('[Test Setup] Firestore emulator cleared for scheduledJobs suite.'); // Redundant with above
   });
 
   beforeEach(async () => {
     jest.clearAllMocks(); // Clears spies and cron mocks
+    process.env.NODE_ENV = 'test'; // Explicitly set NODE_ENV for the test context
     await __TEST_ONLY_resetJobRunningFlag();
     await clearFirestore(); // Clear before each test for isolation
+
+    console.log('[Test beforeEach] Using statically imported databaseService. Firestore cleared for isolation.');
 
     originalEnv = { ...process.env };
     process.env.BACKEND_WALLET_PRIVATE_KEY = 'test_pk_for_scheduled_jobs';
@@ -73,8 +143,12 @@ describe('ScheduledJobs Integration Tests (with Firestore Emulator)', () => {
     process.env.CRON_SCHEDULE_DEADLINE_CHECKS = '* * * * *';
     
     // Reset spy mock implementations to default success if needed for blockchain service
-    triggerReleaseSpy.mockResolvedValue({ success: true, receipt: { transactionHash: '0xsimulatedreleasehash' } });
-    triggerCancelSpy.mockResolvedValue({ success: true, receipt: { transactionHash: '0xsimulatedcancelhash' } });
+    mockTriggerReleaseAfterApproval.mockResolvedValue({ success: true, receipt: { transactionHash: '0xsimulatedreleasehash' } });
+    mockTriggerCancelAfterDisputeDeadline.mockResolvedValue({ success: true, receipt: { transactionHash: '0xsimulatedcancelhash' } });
+
+    // Ensure a valid ABI is set before each test in this suite by resetting the holder's current value
+    mockContractABIHolder.current = [{ type: "function", name: "defaultMockFunction" }];
+    mockCronValidate.mockReturnValue(true); // Ensure cron.validate returns true by default
   });
 
   afterEach(async () => {
@@ -86,16 +160,16 @@ describe('ScheduledJobs Integration Tests (with Firestore Emulator)', () => {
     it('should do nothing if no deals meet criteria', async () => {
       await checkAndProcessContractDeadlines();
       // databaseService.getDealsPast... would be called, but spies are on blockchainService
-      expect(triggerReleaseSpy).not.toHaveBeenCalled();
-      expect(triggerCancelSpy).not.toHaveBeenCalled();
+      expect(mockTriggerReleaseAfterApproval).not.toHaveBeenCalled();
+      expect(mockTriggerCancelAfterDisputeDeadline).not.toHaveBeenCalled();
     });
 
     it('should process a deal past final approval', async () => {
       const dealId = 'dealPastApproval';
       const smartContractAddress = '0xContractForApproval';
       await createDealInFirestore(dealId, {
-        status: 'PaymentConfirmed', // Assuming this is before release
-        finalApprovalTimestamp: Timestamp.fromMillis(Date.now() - 100000), // In the past
+        status: 'IN_FINAL_APPROVAL', // Correct status
+        finalApprovalDeadlineBackend: Timestamp.fromMillis(Date.now() - 100000), // Correct field name
         disputeDeadlineTimestamp: Timestamp.fromMillis(Date.now() + 86400000), // In the future
         smartContractAddress: smartContractAddress,
         sellerId: 'seller1',
@@ -105,8 +179,8 @@ describe('ScheduledJobs Integration Tests (with Firestore Emulator)', () => {
 
       await checkAndProcessContractDeadlines();
 
-      expect(triggerReleaseSpy).toHaveBeenCalledWith(smartContractAddress, dealId);
-      const updatedDeal = await getDealById(dealId);
+      expect(mockTriggerReleaseAfterApproval).toHaveBeenCalledWith(smartContractAddress, dealId);
+      const updatedDeal = await dbService.getDealById(dealId);
       expect(updatedDeal.status).toBe('FundsReleased');
       expect(updatedDeal.autoReleaseTxHash).toBe('0xsimulatedreleasehash');
       expect(updatedDeal.lastAutomaticProcessAttempt).toBeInstanceOf(Timestamp);
@@ -116,16 +190,16 @@ describe('ScheduledJobs Integration Tests (with Firestore Emulator)', () => {
       const dealId = 'dealFailRelease';
       const smartContractAddress = '0xContractFailRelease';
       await createDealInFirestore(dealId, {
-        status: 'PaymentConfirmed',
-        finalApprovalTimestamp: Timestamp.fromMillis(Date.now() - 100000),
+        status: 'IN_FINAL_APPROVAL', // Correct status
+        finalApprovalDeadlineBackend: Timestamp.fromMillis(Date.now() - 100000), // Correct field name
         smartContractAddress: smartContractAddress,
       });
-      triggerReleaseSpy.mockResolvedValue({ success: false, error: 'Blockchain boom!' });
+      mockTriggerReleaseAfterApproval.mockResolvedValue({ success: false, error: 'Blockchain boom!' });
 
       await checkAndProcessContractDeadlines();
 
-      expect(triggerReleaseSpy).toHaveBeenCalledWith(smartContractAddress, dealId);
-      const updatedDeal = await getDealById(dealId);
+      expect(mockTriggerReleaseAfterApproval).toHaveBeenCalledWith(smartContractAddress, dealId);
+      const updatedDeal = await dbService.getDealById(dealId);
       expect(updatedDeal.status).toBe('AutoReleaseFailed');
       expect(updatedDeal.processingError).toContain('Blockchain boom!');
       expect(updatedDeal.lastAutomaticProcessAttempt).toBeInstanceOf(Timestamp);
@@ -135,16 +209,16 @@ describe('ScheduledJobs Integration Tests (with Firestore Emulator)', () => {
       const dealId = 'dealPastDispute';
       const smartContractAddress = '0xContractForDispute';
       await createDealInFirestore(dealId, {
-        status: 'PaymentConfirmed', // Or a status that allows cancellation after dispute
+        status: 'IN_DISPUTE', // Correct status
         finalApprovalTimestamp: Timestamp.fromMillis(Date.now() + 86400000 * 2), // Far future
-        disputeDeadlineTimestamp: Timestamp.fromMillis(Date.now() - 100000), // In the past
+        disputeResolutionDeadlineBackend: Timestamp.fromMillis(Date.now() - 100000), // Correct field name
         smartContractAddress: smartContractAddress,
       });
 
       await checkAndProcessContractDeadlines();
 
-      expect(triggerCancelSpy).toHaveBeenCalledWith(smartContractAddress, dealId);
-      const updatedDeal = await getDealById(dealId);
+      expect(mockTriggerCancelAfterDisputeDeadline).toHaveBeenCalledWith(smartContractAddress, dealId);
+      const updatedDeal = await dbService.getDealById(dealId);
       expect(updatedDeal.status).toBe('CancelledAfterDisputeDeadline');
       expect(updatedDeal.autoCancelTxHash).toBe('0xsimulatedcancelhash');
     });
@@ -153,16 +227,16 @@ describe('ScheduledJobs Integration Tests (with Firestore Emulator)', () => {
         const dealId = 'dealFailCancel';
         const smartContractAddress = '0xContractFailCancel';
         await createDealInFirestore(dealId, {
-            status: 'PaymentConfirmed',
-            disputeDeadlineTimestamp: Timestamp.fromMillis(Date.now() - 100000),
+            status: 'IN_DISPUTE', // Correct status
+            disputeResolutionDeadlineBackend: Timestamp.fromMillis(Date.now() - 100000), // Correct field name
             smartContractAddress: smartContractAddress,
         });
-        triggerCancelSpy.mockResolvedValue({ success: false, error: 'Blockchain cancel boom!' });
+        mockTriggerCancelAfterDisputeDeadline.mockResolvedValue({ success: false, error: 'Blockchain cancel boom!' });
 
         await checkAndProcessContractDeadlines();
 
-        expect(triggerCancelSpy).toHaveBeenCalledWith(smartContractAddress, dealId);
-        const updatedDeal = await getDealById(dealId);
+        expect(mockTriggerCancelAfterDisputeDeadline).toHaveBeenCalledWith(smartContractAddress, dealId);
+        const updatedDeal = await dbService.getDealById(dealId);
         expect(updatedDeal.status).toBe('AutoCancellationFailed');
         expect(updatedDeal.processingError).toContain('Blockchain cancel boom!');
     });
@@ -171,30 +245,34 @@ describe('ScheduledJobs Integration Tests (with Firestore Emulator)', () => {
     it('should skip processing if a deal lacks a smartContractAddress', async () => {
       const dealId = 'dealNoContract';
       await createDealInFirestore(dealId, {
-        status: 'PaymentConfirmed',
-        finalApprovalTimestamp: Timestamp.fromMillis(Date.now() - 100000),
+        status: 'IN_FINAL_APPROVAL', // Use a status that would otherwise be processed
+        finalApprovalDeadlineBackend: Timestamp.fromMillis(Date.now() - 100000),
         // No smartContractAddress
       });
 
       await checkAndProcessContractDeadlines();
 
-      expect(triggerReleaseSpy).not.toHaveBeenCalled();
-      expect(triggerCancelSpy).not.toHaveBeenCalled();
-      const deal = await getDealById(dealId);
-      // Status should remain unchanged, or have a specific error if that's the logic
-      expect(deal.status).toBe('PaymentConfirmed'); 
+      expect(mockTriggerReleaseAfterApproval).not.toHaveBeenCalled();
+      expect(mockTriggerCancelAfterDisputeDeadline).not.toHaveBeenCalled();
+      const deal = await dbService.getDealById(dealId);
+      // Status should remain unchanged
+      expect(deal.status).toBe('IN_FINAL_APPROVAL'); 
     });
     
     it('should not run if job is already running flag is set', async () => {
       // Call once to set the internal flag
-      await createDealInFirestore('tempDeal', { status: 'PaymentConfirmed', finalApprovalTimestamp: Timestamp.fromMillis(Date.now() - 1000), smartContractAddress: '0xtemp' });
+      await createDealInFirestore('tempDeal', { 
+        status: 'IN_FINAL_APPROVAL', // Correct status
+        finalApprovalDeadlineBackend: Timestamp.fromMillis(Date.now() - 1000), // Correct field name
+        smartContractAddress: '0xtemp' 
+      });
       await checkAndProcessContractDeadlines();
-      expect(triggerReleaseSpy).toHaveBeenCalledTimes(1);
-      triggerReleaseSpy.mockClear(); // Clear for next assertion
+      expect(mockTriggerReleaseAfterApproval).toHaveBeenCalledTimes(1);
+      mockTriggerReleaseAfterApproval.mockClear(); // Clear for next assertion
 
       // Attempt to call again, should be skipped
       await checkAndProcessContractDeadlines();
-      expect(triggerReleaseSpy).not.toHaveBeenCalled();
+      expect(mockTriggerReleaseAfterApproval).not.toHaveBeenCalled();
       
       await __TEST_ONLY_resetJobRunningFlag(); // Clean up for other tests
     });
@@ -204,15 +282,22 @@ describe('ScheduledJobs Integration Tests (with Firestore Emulator)', () => {
     let consoleWarnSpy, consoleErrorSpy, consoleLogSpy;
 
     beforeEach(() => {
-        consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-        consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-        consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {}); // To quiet successful logs
+        // Spy on console methods without mocking their implementation to see logs
+        consoleWarnSpy = jest.spyOn(console, 'warn');
+        consoleErrorSpy = jest.spyOn(console, 'error');
+        consoleLogSpy = jest.spyOn(console, 'log');
+        // Ensure a valid ABI is set before each test in this suite by resetting the holder's current value
+        mockContractABIHolder.current = [{ type: "function", name: "defaultMockFunctionForStartScheduledJobs" }];
+        // ADDED DIAGNOSTIC LOG
+        console.log(`[Test beforeEach for startScheduledJobs] mockContractABIHolder.current set to: ${JSON.stringify(mockContractABIHolder.current)}`);
+        mockCronValidate.mockReturnValue(true); // Ensure cron.validate returns true by default
     });
 
     afterEach(() => {
-        consoleWarnSpy.mockRestore();
-        consoleErrorSpy.mockRestore();
-        consoleLogSpy.mockRestore();
+        // Restore spies safely
+        if (consoleWarnSpy) consoleWarnSpy.mockRestore();
+        if (consoleErrorSpy) consoleErrorSpy.mockRestore();
+        if (consoleLogSpy) consoleLogSpy.mockRestore();
     });
     
     it('should warn and not schedule if BACKEND_WALLET_PRIVATE_KEY is missing', () => {
@@ -229,35 +314,127 @@ describe('ScheduledJobs Integration Tests (with Firestore Emulator)', () => {
       expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining("Automated contract call jobs DISABLED due to missing BACKEND_WALLET_PRIVATE_KEY or RPC_URL."));
     });
 
-    // This test depends on how blockchainService.contractABI is loaded and its actual value.
-    // If ABI loading is robust, this test might need to simulate a scenario where ABI is truly empty/null.
-    // For now, assuming blockchainService correctly loads its ABI if files are present.
-    // To test ABI failure, one might need to mock fs or path within blockchainService, which is too deep for this integration.
     it('should warn and not schedule if contractABI is effectively not available (e.g. loading failed in blockchainService)', async () => {
-        // This requires a way to make actualBlockchainService.contractABI null or empty.
-        // One way is to temporarily mock the getter if it were a class, or the module export.
-        // Given it's a direct export, we might need to mock the blockchainService module partially for this specific sub-test,
-        // or ensure the conditions for ABI loading failure in the actual blockchainService.
-        // For simplicity, if blockchainService always loads an ABI or throws, this test is hard to make pass without deeper mocking.
-        // Let's assume for now that if blockchainService.js itself can't load the ABI, it would make contractABI null/empty.
-        
-        const originalABI = actualBlockchainService.contractABI;
-        Object.defineProperty(actualBlockchainService, 'contractABI', { value: null, configurable: true });
+      // Restore any describe-level spy to ensure global.console is clean before we start.
+      if (consoleWarnSpy && typeof consoleWarnSpy.mockRestore === 'function') {
+        consoleWarnSpy.mockRestore();
+      }
+      if (consoleLogSpy && typeof consoleLogSpy.mockRestore === 'function') {
+        consoleLogSpy.mockRestore();
+      }
+      if (consoleErrorSpy && typeof consoleErrorSpy.mockRestore === 'function') {
+        consoleErrorSpy.mockRestore();
+      }
+      
+      const trulyOriginalGlobalConsole = global.console; // Stash the console state at the start of this 'it' block.
 
-        startScheduledJobs();
-        expect(mockCronSchedule).not.toHaveBeenCalled();
-        expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining("Automated contract call jobs DISABLED due to ABI loading failure or empty ABI."));
-        
-        Object.defineProperty(actualBlockchainService, 'contractABI', { value: [], configurable: true }); // Empty array
-        startScheduledJobs();
-        expect(mockCronSchedule).not.toHaveBeenCalled(); // Still not called for the second case
-        expect(consoleWarnSpy).toHaveBeenCalledTimes(2);
+      // Part 1: Test with null ABI
+      await jest.isolateModules(async () => {
+        const consoleStateAtIsolationStart = global.console; // Capture for restoring at end of this block
+        try {
+          jest.resetModules(); // 1. Reset modules first.
 
-        Object.defineProperty(actualBlockchainService, 'contractABI', { value: originalABI, configurable: true }); // Restore
+          const mockWarnFnPart1 = jest.fn();
+          const mockLogFnPart1 = jest.fn(); // To catch/verify SUT logs
+          const mockErrorFnPart1 = jest.fn(); // To catch/verify SUT errors
+
+          // 2. Create a fully mocked console for the SUT for this part.
+          // Spread trulyOriginalGlobalConsole to retain other console methods like .table(), .time(), etc.
+          const mockedSUTConsolePart1 = { 
+            ...trulyOriginalGlobalConsole,
+            warn: mockWarnFnPart1,
+            log: mockLogFnPart1,
+            error: mockErrorFnPart1,
+          };
+          jest.replaceProperty(global, 'console', mockedSUTConsolePart1); // 3. Replace global.console.
+          
+          let abiForThisSpecificRun = null; 
+
+          // 4. Mock dependencies. Internal global.console calls will use mockedSUTConsolePart1.
+          jest.unstable_mockModule('../../blockchainService.js', () => ({
+            triggerReleaseAfterApproval: mockTriggerReleaseAfterApproval,
+            triggerCancelAfterDisputeDeadline: mockTriggerCancelAfterDisputeDeadline,
+            get contractABI() {
+              global.console.log(`[TEST DEBUGGERY - ISOLATED MOCK PART 1] contractABI getter invoked. Returning: ${JSON.stringify(abiForThisSpecificRun)}`);
+              return abiForThisSpecificRun;
+            },
+            __TEST_ONLY_simulateAbiLoadingFailure: jest.fn(),
+            __TEST_ONLY_getInternalAbiState: jest.fn(),
+            initializeService: jest.fn().mockResolvedValue(true), 
+          }));
+
+          // 5. Import SUT. It should now see mockedSUTConsolePart1 as its console.
+          const { startScheduledJobs: isolatedStartScheduledJobsNull } = await import('../../scheduledJobs.js');
+          
+          abiForThisSpecificRun = null; 
+          isolatedStartScheduledJobsNull(); 
+
+          expect(mockCronSchedule).not.toHaveBeenCalled(); 
+          expect(mockWarnFnPart1).toHaveBeenCalledWith(expect.stringContaining("Automated contract call jobs DISABLED due to ABI loading failure or empty ABI."));
+          // Optionally, check mockLogFnPart1 for expected SUT logging here too.
+          // e.g. expect(mockLogFnPart1).toHaveBeenCalledWith(expect.stringContaining("UNIQUE_LOG_POINT_ALPHA"));
+        } finally {
+          jest.replaceProperty(global, 'console', consoleStateAtIsolationStart); // Restore console for this isolation block
+        }
+      });
+      
+      mockCronSchedule.mockClear(); 
+
+      // Part 2: Test with empty array ABI
+      await jest.isolateModules(async () => {
+        const consoleStateAtIsolationStart = global.console; // Capture for restoring at end of this block
+        try {
+          jest.resetModules(); 
+
+          const mockWarnFnPart2 = jest.fn();
+          const mockLogFnPart2 = jest.fn();
+          const mockErrorFnPart2 = jest.fn();
+          
+          const mockedSUTConsolePart2 = { 
+            ...trulyOriginalGlobalConsole,
+            warn: mockWarnFnPart2,
+            log: mockLogFnPart2,
+            error: mockErrorFnPart2,
+          };
+          jest.replaceProperty(global, 'console', mockedSUTConsolePart2); 
+          
+          let abiForThisSpecificRun = []; 
+
+          jest.unstable_mockModule('../../blockchainService.js', () => ({
+            triggerReleaseAfterApproval: mockTriggerReleaseAfterApproval,
+            triggerCancelAfterDisputeDeadline: mockTriggerCancelAfterDisputeDeadline,
+            get contractABI() {
+              global.console.log(`[TEST DEBUGGERY - ISOLATED MOCK PART 2] contractABI getter invoked. Returning: ${JSON.stringify(abiForThisSpecificRun)}`);
+              return abiForThisSpecificRun;
+            },
+            __TEST_ONLY_simulateAbiLoadingFailure: jest.fn(),
+            __TEST_ONLY_getInternalAbiState: jest.fn(),
+            initializeService: jest.fn().mockResolvedValue(true),
+          }));
+          
+          const { startScheduledJobs: isolatedStartScheduledJobsEmpty } = await import('../../scheduledJobs.js');
+
+          abiForThisSpecificRun = []; 
+          isolatedStartScheduledJobsEmpty(); 
+
+          expect(mockCronSchedule).not.toHaveBeenCalled(); 
+          expect(mockWarnFnPart2).toHaveBeenCalledWith(expect.stringContaining("Automated contract call jobs DISABLED due to ABI loading failure or empty ABI."));
+          // e.g. expect(mockLogFnPart2).toHaveBeenCalledWith(expect.stringContaining("UNIQUE_LOG_POINT_ALPHA"));
+        } finally {
+          jest.replaceProperty(global, 'console', consoleStateAtIsolationStart); // Restore console for this isolation block
+        }
+      });
+
+      // After both parts, restore global.console to what it was at the start of this 'it' block.
+      // This ensures that the describe-level afterEach and subsequent tests see the expected console state.
+      jest.replaceProperty(global, 'console', trulyOriginalGlobalConsole);
+      // The describe-level beforeEach will re-apply its spies (consoleWarnSpy, etc.) for the next test.
     });
     
     it('should log an error and not schedule if CRON_SCHEDULE is invalid', () => {
       mockCronValidate.mockReturnValue(false); // Simulate invalid cron string
+      // Ensure ABI is valid for this specific test so it reaches cron validation
+      // mockContractABI = [{ type: "function", name: "testFunctionToReachCronValidation" }]; // This is good, ensures ABI is set for THIS test's context if default wasn't enough or was changed
       startScheduledJobs();
       expect(mockCronSchedule).not.toHaveBeenCalled();
       expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Invalid CRON_SCHEDULE"));
@@ -266,6 +443,7 @@ describe('ScheduledJobs Integration Tests (with Firestore Emulator)', () => {
     it('should schedule job with correct cron expression from env var if all conditions met', () => {
       const testCronExpression = '5 * * * *';
       process.env.CRON_SCHEDULE_DEADLINE_CHECKS = testCronExpression;
+      // mockContractABI = [{ type: "function", name: "testFunctionValidABI" }]; // Ensured by module-level default or can be set here for clarity
       startScheduledJobs();
       expect(mockCronValidate).toHaveBeenCalledWith(testCronExpression);
       expect(mockCronSchedule).toHaveBeenCalledWith(testCronExpression, checkAndProcessContractDeadlines, {
@@ -277,6 +455,7 @@ describe('ScheduledJobs Integration Tests (with Firestore Emulator)', () => {
     it('should use default cron schedule if CRON_SCHEDULE_DEADLINE_CHECKS env var is not set and conditions met', () => {
       delete process.env.CRON_SCHEDULE_DEADLINE_CHECKS;
       const defaultCronExpression = '*/30 * * * *'; // Default from scheduledJobs.js
+      // mockContractABI = [{ type: "function", name: "testFunctionValidABI" }]; // Ensured by module-level default or can be set here for clarity
       startScheduledJobs();
       expect(mockCronValidate).toHaveBeenCalledWith(defaultCronExpression);
       expect(mockCronSchedule).toHaveBeenCalledWith(defaultCronExpression, checkAndProcessContractDeadlines, {

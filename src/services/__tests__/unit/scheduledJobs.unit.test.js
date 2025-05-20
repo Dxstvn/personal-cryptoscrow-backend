@@ -334,7 +334,8 @@ describe('Scheduled Jobs (scheduledJobs.js)', () => {
       expect(mockUpdateDealStatusInDB).toHaveBeenCalledWith(mockDealRelease.id, {
         status: 'FundsReleased',
         autoReleaseTxHash: '0xreleasehash',
-        lastAutomaticProcessAttempt: fixedTimestampNow 
+        lastAutomaticProcessAttempt: fixedTimestampNow,
+        timelineEventMessage: expect.stringContaining('Successfully auto-released funds')
       });
     });
 
@@ -350,7 +351,8 @@ describe('Scheduled Jobs (scheduledJobs.js)', () => {
       expect(mockUpdateDealStatusInDB).toHaveBeenCalledWith(mockDealCancel.id, {
         status: 'CancelledAfterDisputeDeadline',
         autoCancelTxHash: '0xcancelhash',
-        lastAutomaticProcessAttempt: fixedTimestampNow 
+        lastAutomaticProcessAttempt: fixedTimestampNow,
+        timelineEventMessage: expect.stringContaining('Successfully auto-cancelled deal')
       });
     });
 
@@ -365,7 +367,8 @@ describe('Scheduled Jobs (scheduledJobs.js)', () => {
       expect(mockUpdateDealStatusInDB).toHaveBeenCalledWith(mockDealRelease.id, {
         status: 'AutoReleaseFailed',
         lastAutomaticProcessAttempt: fixedTimestampNow, 
-        processingError: `Blockchain call failed: ${releaseError.message}`
+        processingError: `Blockchain call failed: ${releaseError.message}`,
+        timelineEventMessage: expect.stringContaining('FAILED to process auto-release')
       });
       expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining(`[Scheduler] FAILED to process auto-release for deal ${mockDealRelease.id}`), releaseError.message);
     });
@@ -381,7 +384,8 @@ describe('Scheduled Jobs (scheduledJobs.js)', () => {
       expect(mockUpdateDealStatusInDB).toHaveBeenCalledWith(mockDealCancel.id, {
         status: 'AutoCancellationFailed',
         lastAutomaticProcessAttempt: fixedTimestampNow, 
-        processingError: `Blockchain call failed: ${cancelError.message}`
+        processingError: `Blockchain call failed: ${cancelError.message}`,
+        timelineEventMessage: expect.stringContaining('FAILED to process auto-cancellation')
       });
       expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining(`[Scheduler] FAILED to process auto-cancellation for deal ${mockDealCancel.id}`), cancelError.message);
     });

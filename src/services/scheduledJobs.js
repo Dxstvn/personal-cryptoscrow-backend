@@ -46,7 +46,7 @@ export async function checkAndProcessContractDeadlines() {
     // These will now correctly call the mocked functions from databaseService.js
     const dealsPastFinalApproval = await getDealsPastFinalApproval();
     if (process.env.NODE_ENV === 'test') {
-        console.log(`[TEST ENV DEBUG] Fetched ${dealsPastFinalApproval.length} deals past final approval.`);
+        console.log(`[TEST ENV DEBUG] Raw dealsPastFinalApproval from databaseService:`, JSON.stringify(dealsPastFinalApproval, null, 2));
     }
     for (const deal of dealsPastFinalApproval) {
       if (!deal.smartContractAddress) {
@@ -61,21 +61,23 @@ export async function checkAndProcessContractDeadlines() {
         await updateDealStatusInDB(deal.id, {
           status: 'FundsReleased',
           autoReleaseTxHash: releaseResult.receipt?.transactionHash,
-          lastAutomaticProcessAttempt: Timestamp.now()
+          lastAutomaticProcessAttempt: Timestamp.now(),
+          timelineEventMessage: `Successfully auto-released funds. Tx: ${releaseResult.receipt?.transactionHash}`
         });
       } else {
         console.error(`[Scheduler] FAILED to process auto-release for deal ${deal.id}. Error:`, releaseResult.error);
         await updateDealStatusInDB(deal.id, {
           status: 'AutoReleaseFailed',
           processingError: `Blockchain call failed: ${releaseResult.error}`,
-          lastAutomaticProcessAttempt: Timestamp.now()
+          lastAutomaticProcessAttempt: Timestamp.now(),
+          timelineEventMessage: `FAILED to process auto-release. Error: ${releaseResult.error}`
         });
       }
     }
 
     const dealsPastDisputeDeadline = await getDealsPastDisputeDeadline();
     if (process.env.NODE_ENV === 'test') {
-        console.log(`[TEST ENV DEBUG] Fetched ${dealsPastDisputeDeadline.length} deals past dispute deadline.`);
+        console.log(`[TEST ENV DEBUG] Raw dealsPastDisputeDeadline from databaseService:`, JSON.stringify(dealsPastDisputeDeadline, null, 2));
     }
     for (const deal of dealsPastDisputeDeadline) {
       if (!deal.smartContractAddress) {
@@ -90,14 +92,16 @@ export async function checkAndProcessContractDeadlines() {
         await updateDealStatusInDB(deal.id, {
           status: 'CancelledAfterDisputeDeadline',
           autoCancelTxHash: cancelResult.receipt?.transactionHash,
-          lastAutomaticProcessAttempt: Timestamp.now()
+          lastAutomaticProcessAttempt: Timestamp.now(),
+          timelineEventMessage: `Successfully auto-cancelled deal. Tx: ${cancelResult.receipt?.transactionHash}`
         });
       } else {
         console.error(`[Scheduler] FAILED to process auto-cancellation for deal ${deal.id}. Error:`, cancelResult.error);
         await updateDealStatusInDB(deal.id, {
           status: 'AutoCancellationFailed',
           processingError: `Blockchain call failed: ${cancelResult.error}`,
-          lastAutomaticProcessAttempt: Timestamp.now()
+          lastAutomaticProcessAttempt: Timestamp.now(),
+          timelineEventMessage: `FAILED to process auto-cancellation. Error: ${cancelResult.error}`
         });
       }
     }
@@ -139,8 +143,10 @@ export function startScheduledJobs() {
 
   if (!currentABI || (Array.isArray(currentABI) && currentABI.length === 0)) {
     console.warn("[Scheduler] Automated contract call jobs DISABLED due to ABI loading failure or empty ABI.");
+    console.log("[SUT DEBUG startScheduledJobs] ABI is null or empty. Attempting to return. UNIQUE_LOG_POINT_ALPHA");
     return;
   }
+  console.log("[SUT DEBUG startScheduledJobs] Proceeding past ABI check, ABI appears valid. UNIQUE_LOG_POINT_BETA");
 
   const CRON_SCHEDULE = process.env.CRON_SCHEDULE_DEADLINE_CHECKS || '*/30 * * * *';
   if (!cron.validate(CRON_SCHEDULE)) {
@@ -148,7 +154,7 @@ export function startScheduledJobs() {
     return;
   }
   console.log(`[Scheduler] Initializing cron job with schedule: "${CRON_SCHEDULE}"`);
-
+  console.log("[SUT DEBUG startScheduledJobs] ABOUT TO CALL CRON.SCHEDULE. UNIQUE_LOG_POINT_GAMMA");
   cron.schedule(CRON_SCHEDULE, checkAndProcessContractDeadlines, {
     scheduled: true,
     timezone: "America/New_York"
