@@ -82,6 +82,39 @@ router.post("/signInEmailPass", async (req, res) => {
   }
 });
 
+// Simplified login route for E2E tests
+router.post("/login", async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    console.log("/login: Email or password missing.");
+    return res.status(400).json({ error: "Email and password are required" });
+  }
+
+  try {
+    const authInstance = getAuth(ethEscrowApp);
+    const userCredential = await signInWithEmailAndPassword(authInstance, email, password);
+    const user = userCredential.user;
+    const idToken = await user.getIdToken();
+    
+    console.log(`/login: User ${user.uid} signed in successfully.`);
+    res.status(200).json({ 
+      message: "User signed in successfully", 
+      token: idToken,
+      user: { uid: user.uid, email: user.email } 
+    });
+  } catch (error) {
+    console.error('/login: Sign-in error:', error);
+    if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+      res.status(401).json({ error: 'Invalid credentials' });
+    } else if (error.code === 'auth/user-not-found') {
+      res.status(401).json({ error: 'User not found' });
+    } else {
+      res.status(400).json({ error: error.message || 'An unexpected error occurred during sign-in.' });
+    }
+  }
+});
+
 // Google Sign-In Route
 router.post("/signInGoogle", async (req, res) => {
   const { idToken } = req.body;
@@ -166,6 +199,45 @@ router.post("/signInGoogle", async (req, res) => {
         return res.status(404).json({ error: 'Authenticated user profile not found.' });
       }
       return res.status(500).json({ error: error.message || 'An internal error occurred during authentication.' });
+    }
+  }
+});
+
+// Simplified signup route for E2E tests
+router.post("/signup", async (req, res) => {
+  const { email, password, walletAddress } = req.body;
+  // Looser check for test environments for this simplified route
+  const currentIsTestEnv = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test'; 
+
+  if (!email || !password) {
+    console.log("/signup: Email or password missing.");
+    return res.status(400).json({ error: "Email and password are required" });
+  }
+
+  try {
+    const authInstance = getAuth(ethEscrowApp);
+    const userCredential = await createUserWithEmailAndPassword(authInstance, email, password);
+    const user = userCredential.user;
+    
+    // For E2E, we might not always set admin claims, or it might be handled differently.
+    // Keeping this simple for now.
+    if (currentIsTestEnv) {
+      console.log(`/signup: E2E/Test user created: ${user.uid}`);
+    }
+    
+    // Respond with a structure that basicFlow.e2e.test.js expects
+    res.status(201).json({ 
+      message: "User created successfully", 
+      user: { uid: user.uid, email: user.email, walletAddress: walletAddress }, // Include walletAddress if needed by client
+      // uid: user.uid // The test expects user.uid within a user object
+    });
+  } catch (error) {
+    console.error('/signup: Sign-up error:', error);
+    if (error.code === 'auth/email-already-in-use') {
+      // Using 409 Conflict as it's more standard for this case than 401
+      res.status(409).json({ error: 'Email already in use' }); 
+    } else {
+      res.status(400).json({ error: error.message || 'An unexpected error occurred during sign-up.' });
     }
   }
 });

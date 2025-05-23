@@ -20,7 +20,7 @@ async function ensureHealthDocument() {
   }
 }
 
-router.get("/health", async (req, res) => {
+router.get("/", async (req, res) => {
   try {
     // Ensure the health document exists
     await ensureHealthDocument();

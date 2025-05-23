@@ -1,10 +1,11 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, connectAuthEmulator } from "firebase/auth"; // Import connectAuthEmulator
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
+import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
 import 'dotenv/config';
 
 // Use test configuration if we're in a test environment
-const isTest = process.env.NODE_ENV === 'test';
+const isTest = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test';
 
 // When using the Firebase Auth Emulator, API key validation is bypassed
 // So we can use any value for the apiKey in test mode
@@ -32,6 +33,8 @@ export const ethEscrowApp = initializeApp(firebaseConfig, "ethEscrowApp");
 if (isTest) {
   const auth = getAuth(ethEscrowApp);
   const storage = getStorage(ethEscrowApp);
+  const firestore = getFirestore(ethEscrowApp);
   connectAuthEmulator(auth, "http://localhost:9099", { disableWarnings: true });
   connectStorageEmulator(storage, "localhost", 9199);
+  connectFirestoreEmulator(firestore, 'localhost', 5004);
 }

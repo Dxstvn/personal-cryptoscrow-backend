@@ -25,7 +25,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/317</span>
+                <span class='fraction'>0/318</span>
             </div>
         
             
@@ -46,7 +46,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/296</span>
+                <span class='fraction'>0/297</span>
             </div>
         
             
@@ -607,7 +607,14 @@
 <a name='L542'></a><a href='#L542'>542</a>
 <a name='L543'></a><a href='#L543'>543</a>
 <a name='L544'></a><a href='#L544'>544</a>
-<a name='L545'></a><a href='#L545'>545</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L545'></a><a href='#L545'>545</a>
+<a name='L546'></a><a href='#L546'>546</a>
+<a name='L547'></a><a href='#L547'>547</a>
+<a name='L548'></a><a href='#L548'>548</a>
+<a name='L549'></a><a href='#L549'>549</a>
+<a name='L550'></a><a href='#L550'>550</a>
+<a name='L551'></a><a href='#L551'>551</a>
+<a name='L552'></a><a href='#L552'>552</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -618,15 +625,16 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -768,13 +776,19 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -1155,15 +1169,15 @@
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { adminApp } from '../auth/admin.js';
-import { deployPropertyEscrowContract } from '../deployContract/contractDeployer.js';
+import { deployPropertyEscrowContract } from '../../../services/contractDeployer.js';
 // Import ethers v6 functions directly
 import { isAddress, getAddress, parseUnits } from 'ethers'; // This is the import we are interested in
 &nbsp;
 const router = <span class="cstat-no" title="statement not covered" >express.Router();</span>
 const db = <span class="cstat-no" title="statement not covered" >getFirestore(adminApp);</span>
 &nbsp;
-const DEPLOYER_PRIVATE_KEY = <span class="cstat-no" title="statement not covered" >process.env.DEPLOYER_PRIVATE_KEY;</span>
-const RPC_URL = <span class="cstat-no" title="statement not covered" >process.env.RPC_URL || process.env.SEPOLIA_RPC_URL;</span>
+// const DEPLOYER_PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY; // REMOVE
+// const RPC_URL = process.env.RPC_URL || process.env.SEPOLIA_RPC_URL; // REMOVE
 &nbsp;
 async function <span class="fstat-no" title="function not covered" >authenticateToken(</span>req, res, next) {
     const authHeader = <span class="cstat-no" title="statement not covered" >req.headers['authorization'];</span>
@@ -1172,6 +1186,7 @@ async function <span class="fstat-no" title="function not covered" >authenticate
 <span class="cstat-no" title="statement not covered" >        return res.status(401).json({ error: 'Authentication token is required.' });</span>
     }
 <span class="cstat-no" title="statement not covered" >    try {</span>
+<span class="cstat-no" title="statement not covered" >        console.log(`[ROUTE DEBUG] Extracted token in authenticateToken: '${token}'`);</span>
         const auth = <span class="cstat-no" title="statement not covered" >getAdminAuth(adminApp);</span>
         const decodedToken = <span class="cstat-no" title="statement not covered" >await auth.verifyIdToken(token);</span>
 <span class="cstat-no" title="statement not covered" >        req.userId = decodedToken.uid;</span>
@@ -1312,7 +1327,12 @@ function <span class="fstat-no" title="function not covered" >areAllBackendCondi
         }
 &nbsp;
         let deployedContractAddress = <span class="cstat-no" title="statement not covered" >null;</span>
-<span class="cstat-no" title="statement not covered" >        if (!DEPLOYER_PRIVATE_KEY || !RPC_URL) {</span>
+&nbsp;
+        // Dynamically read env vars for deployment
+        const currentDeployerKey = <span class="cstat-no" title="statement not covered" >process.env.DEPLOYER_PRIVATE_KEY;</span>
+        const currentRpcUrl = <span class="cstat-no" title="statement not covered" >process.env.RPC_URL || process.env.SEPOLIA_RPC_URL;</span>
+&nbsp;
+<span class="cstat-no" title="statement not covered" >        if (!currentDeployerKey || !currentRpcUrl) {</span>
 <span class="cstat-no" title="statement not covered" >            console.warn("[ROUTE WARN] Deployment skipped: DEPLOYER_PRIVATE_KEY or RPC_URL not set in .env. Transaction will be off-chain only.");</span>
 <span class="cstat-no" title="statement not covered" >            newTransactionData.timeline.push({ event: `Smart contract deployment SKIPPED (off-chain only mode).`, timestamp: Timestamp.now(), system: true });</span>
         } else {
@@ -1320,7 +1340,8 @@ function <span class="fstat-no" title="function not covered" >areAllBackendCondi
 <span class="cstat-no" title="statement not covered" >                console.log(`[ROUTE LOG] Attempting to deploy PropertyEscrow contract. Buyer: ${finalBuyerWallet}, Seller: ${finalSellerWallet}, Amount: ${newTransactionData.escrowAmountWei}`);</span>
 <span class="cstat-no" title="statement not covered" >                deployedContractAddress = await deployPropertyEscrowContract(</span>
                     finalSellerWallet, finalBuyerWallet, newTransactionData.escrowAmountWei,
-                    DEPLOYER_PRIVATE_KEY, RPC_URL
+                    currentDeployerKey, // Use dynamically read key
+                    currentRpcUrl       // Use dynamically read URL
                 );
 <span class="cstat-no" title="statement not covered" >                newTransactionData.smartContractAddress = deployedContractAddress;</span>
 <span class="cstat-no" title="statement not covered" >                newTransactionData.timeline.push({ event: `PropertyEscrow smart contract deployed at ${deployedContractAddress}.`, timestamp: Timestamp.now(), system: true });</span>
@@ -1338,7 +1359,7 @@ function <span class="fstat-no" title="function not covered" >areAllBackendCondi
             message: 'Transaction initiated successfully.', transactionId: transactionRef.id,
             status: newTransactionData.status, smartContractAddress: newTransactionData.smartContractAddress,
         };
-<span class="cstat-no" title="statement not covered" >        if (deployedContractAddress === null &amp;&amp; DEPLOYER_PRIVATE_KEY &amp;&amp; RPC_URL) {</span>
+<span class="cstat-no" title="statement not covered" >        if (deployedContractAddress === null &amp;&amp; currentDeployerKey &amp;&amp; currentRpcUrl) {</span>
 <span class="cstat-no" title="statement not covered" >            responsePayload.deploymentWarning = "Smart contract deployment was attempted but failed. The transaction has been created for off-chain tracking.";</span>
         }
 <span class="cstat-no" title="statement not covered" >        res.status(201).json(responsePayload);</span>
@@ -1505,7 +1526,7 @@ function <span class="fstat-no" title="function not covered" >areAllBackendCondi
     }
     const ALLOWED_SC_STATUSES = <span class="cstat-no" title="statement not covered" >[</span>
         'AWAITING_CONDITION_SETUP', 'PENDING_BUYER_REVIEW', 'PENDING_SELLER_REVIEW',
-        'AWAITING_DEPOSIT', 'AWAITING_FULFILLMENT',
+        'AWAITING_DEPOSIT', 'IN_ESCROW', 'AWAITING_FULFILLMENT',
         'READY_FOR_FINAL_APPROVAL', 'IN_FINAL_APPROVAL', 'IN_DISPUTE',
         'COMPLETED', 'CANCELLED'
     ];
@@ -1702,7 +1723,7 @@ export default router;
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-05-16T18:35:20.570Z
+                at 2025-05-23T03:08:11.180Z
             </div>
         <script src="../../../../prettify.js"></script>
         <script>

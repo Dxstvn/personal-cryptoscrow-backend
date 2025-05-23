@@ -23,16 +23,16 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/8</span>
+                <span class='fraction'>8/8</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">66.66% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>0/4</span>
+                <span class='fraction'>4/6</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">0% </span>
+                <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/8</span>
+                <span class='fraction'>8/8</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line low'></div>
+    <div class='status-line high'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -105,15 +105,11 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -127,32 +123,36 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { initializeApp } from "firebase/app";
 import { getAuth, connectAuthEmulator } from "firebase/auth"; // Import connectAuthEmulator
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
 import 'dotenv/config';
 &nbsp;
 // Use test configuration if we're in a test environment
-const isTest = <span class="cstat-no" title="statement not covered" >process.env.NODE_ENV === 'test';</span>
+const isTest = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test';
 &nbsp;
 // When using the Firebase Auth Emulator, API key validation is bypassed
 // So we can use any value for the apiKey in test mode
-const firebaseConfig = <span class="cstat-no" title="statement not covered" >isTest ? {</span>
+const firebaseConfig = isTest ? {
   apiKey: "demo-api-key", // Any value works with emulator
   authDomain: "localhost",
   projectId: "demo-test", // Must match the project ID used by the admin SDK
   storageBucket: "demo-test.appspot.com",
   messagingSenderId: "123456789",
   appId: "1:123456789:web:abcdef"
-} : {
+} : <span class="branch-1 cbranch-no" title="branch not covered" >{</span>
   apiKey: process.env.FIREBASE_API_KEY,
   authDomain: process.env.FIREBASE_AUTH_DOMAIN,
   projectId: process.env.FIREBASE_PROJECT_ID,
@@ -163,14 +163,14 @@ const firebaseConfig = <span class="cstat-no" title="statement not covered" >isT
 };
 &nbsp;
 // Initialize Firebase app
-export const ethEscrowApp = <span class="cstat-no" title="statement not covered" >initializeApp(firebaseConfig, "ethEscrowApp");</span>
+export const ethEscrowApp = initializeApp(firebaseConfig, "ethEscrowApp");
 &nbsp;
 // Connect to Auth emulator in test environment
-<span class="cstat-no" title="statement not covered" >if (isTest) {</span>
-  const auth = <span class="cstat-no" title="statement not covered" >getAuth(ethEscrowApp);</span>
-  const storage = <span class="cstat-no" title="statement not covered" >getStorage(ethEscrowApp);</span>
-<span class="cstat-no" title="statement not covered" >  connectAuthEmulator(auth, "http://localhost:9099", { disableWarnings: true });</span>
-<span class="cstat-no" title="statement not covered" >  connectStorageEmulator(storage, "localhost", 9199);</span>
+<span class="missing-if-branch" title="else path not taken" >E</span>if (isTest) {
+  const auth = getAuth(ethEscrowApp);
+  const storage = getStorage(ethEscrowApp);
+  connectAuthEmulator(auth, "http://localhost:9099", { disableWarnings: true });
+  connectStorageEmulator(storage, "localhost", 9199);
 }</pre></td></tr></table></pre>
 
                 <div class='push'></div><!-- for sticky footer -->
@@ -178,7 +178,7 @@ export const ethEscrowApp = <span class="cstat-no" title="statement not covered"
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-05-16T18:35:20.570Z
+                at 2025-05-23T03:08:11.180Z
             </div>
         <script src="../../../../prettify.js"></script>
         <script>

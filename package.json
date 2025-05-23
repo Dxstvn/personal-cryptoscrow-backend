@@ -27,7 +27,17 @@
     "test:scheduledJobs:unit": "NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules FIREBASE_AUTH_EMULATOR_host=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 node node_modules/jest/bin/jest.js src/services/__tests__/unit/scheduledJobs.unit.test.js --detectOpenHandles --coverage --collectCoverageFrom=src/services/scheduledJobs.js",
     "test:scheduledJobs:integration": "NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 node node_modules/jest/bin/jest.js src/services/__tests__/integration/scheduledJobs.integration.test.js --detectOpenHandles --coverage --collectCoverageFrom=src/services/scheduledJobs.js",
     "test:contractDeployer:unit": "NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules node node_modules/jest/bin/jest.js src/services/__tests__/unit/contractDeployer.unit.test.js --detectOpenHandles --coverage --collectCoverageFrom=src/services/contractDeployer.js",
-    "test:contractDeployer:integration": "NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules node node_modules/jest/bin/jest.js src/services/__tests__/integration/contractDeployer.integration.test.js --runInBand --detectOpenHandles --coverage --collectCoverageFrom=src/services/contractDeployer.js"
+    "test:contractDeployer:integration": "NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules node node_modules/jest/bin/jest.js src/services/__tests__/integration/contractDeployer.integration.test.js --runInBand --detectOpenHandles --coverage --collectCoverageFrom=src/services/contractDeployer.js",
+    "kill-ports": "kill-port 8545 || echo 'Port 8545 not in use' && kill-port 5004 || echo 'Port 5004 not in use' && kill-port 9099 || echo 'Port 9099 not in use' && kill-port 9199 || echo 'Port 9199 not in use' && kill-port 3001 || echo 'Port 3001 not in use'",
+    "start-hardhat-e2e": "cd src/contract && npx hardhat node --port 8545",
+    "start-emulators-e2e": "firebase emulators:start --only firestore,auth,storage --project demo-test --config firebase.json",
+    "test:e2e": "NODE_ENV=e2e_test NODE_OPTIONS=--experimental-vm-modules FIRESTORE_EMULATOR_HOST=localhost:5004 FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 RPC_URL=http://localhost:8545 node node_modules/jest/bin/jest.js --config jest.e2e.config.js --runInBand --detectOpenHandles",
+    "_run-jest-basic-e2e-delayed": "sleep 20 && NODE_ENV=e2e_test NODE_OPTIONS=--experimental-vm-modules FIRESTORE_EMULATOR_HOST=localhost:5004 FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 RPC_URL=http://localhost:8545 node node_modules/jest/bin/jest.js --config jest.e2e.config.js src/__tests__/e2e/basicFlow.e2e.test.js --runInBand --detectOpenHandles",
+    "test:e2e:basic": "npm run kill-ports && concurrently -k --names \"HARDHAT,EMULATOR,TESTS\" --success first \"npm:start-hardhat-e2e\" \"npm:start-emulators-e2e\" \"npm:_run-jest-basic-e2e-delayed\" && npm run kill-ports",
+    "_run-jest-negative-e2e-delayed": "sleep 20 && NODE_ENV=e2e_test NODE_OPTIONS=--experimental-vm-modules FIRESTORE_EMULATOR_HOST=localhost:5004 FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 RPC_URL=http://localhost:8545 node node_modules/jest/bin/jest.js --config jest.e2e.config.js src/__tests__/e2e/negativeFlow.e2e.test.js --runInBand --detectOpenHandles",
+    "test:e2e:negative": "npm run kill-ports && concurrently -k --names \"HARDHAT,EMULATOR,TESTS\" --success first \"npm:start-hardhat-e2e\" \"npm:start-emulators-e2e\" \"npm:_run-jest-negative-e2e-delayed\" && npm run kill-ports",
+    "test:e2e:user": "NODE_ENV=e2e_test NODE_OPTIONS=--experimental-vm-modules FIRESTORE_EMULATOR_HOST=localhost:5004 FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 RPC_URL=http://localhost:8545 node node_modules/jest/bin/jest.js --config jest.e2e.config.js src/__tests__/e2e/userFlow.e2e.test.js --runInBand --detectOpenHandles",
+    "test:e2e:security": "NODE_ENV=e2e_test NODE_OPTIONS=--experimental-vm-modules FIRESTORE_EMULATOR_HOST=localhost:5004 FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 RPC_URL=http://localhost:8545 node node_modules/jest/bin/jest.js --config jest.e2e.config.js src/__tests__/e2e/security.e2e.test.js --runInBand --detectOpenHandles"
   },
   "repository": {
     "type": "git",
@@ -45,6 +55,7 @@
     "@firebase/firestore": "4.7.11",
     "babel-jest": "^29.7.0",
     "babel-plugin-transform-import-meta": "^2.3.2",
+    "concurrently": "^9.1.2",
     "express": "^4.19.2",
     "firebase": "^11.6.1",
     "firebase-admin": "^13.3.0",
