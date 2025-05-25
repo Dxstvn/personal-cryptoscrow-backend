@@ -1,16 +1,18 @@
 // src/api/routes/auth/loginSignUp.js
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
 import { getAuth as getAdminAuth } from "firebase-admin/auth";
+import { getFirestore } from "firebase-admin/firestore";
 import { ethEscrowApp } from "./authIndex.js"; // This will be the mocked version in tests
 import { adminApp } from "./admin.js";     // This will be the mocked version in tests
 import express from "express";
 import 'dotenv/config';
 
 const router = express.Router();
+const db = getFirestore(adminApp);
 
 // Email/Password Sign-Up Route
 router.post("/signUpEmailPass", async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, walletAddress } = req.body;
   // Check NODE_ENV at execution time
   const currentIsTest = process.env.NODE_ENV === 'test';
 
@@ -24,6 +26,26 @@ router.post("/signUpEmailPass", async (req, res) => {
     const userCredential = await createUserWithEmailAndPassword(authInstance, email, password);
     const user = userCredential.user;
     
+    // Create user profile in Firestore
+    const userProfileData = {
+      email: email.toLowerCase(),
+      first_name: '', // Can be updated later
+      last_name: '', // Can be updated later
+      phone_number: '', // Can be updated later
+      wallets: walletAddress ? [walletAddress] : [], // Include wallet if provided
+      createdAt: new Date(),
+      uid: user.uid
+    };
+    
+    try {
+      await db.collection('users').doc(user.uid).set(userProfileData);
+      console.log(`/signUpEmailPass: User profile created in Firestore for UID: ${user.uid}`);
+    } catch (firestoreError) {
+      console.error('/signUpEmailPass: Failed to create Firestore profile:', firestoreError);
+      // Note: User is already created in Auth, so we might want to handle this differently
+      // For now, we'll log the error but still return success
+    }
+    
     if (!currentIsTest) {
       const adminAuthInstance = getAdminAuth(adminApp); // adminApp is the Firebase Admin App instance
       await adminAuthInstance.setCustomUserClaims(user.uid, { admin: true });
@@ -31,13 +53,19 @@ router.post("/signUpEmailPass", async (req, res) => {
     }
     
     console.log('/signUpEmailPass: User created successfully:', user.uid);
-    res.status(201).json({ message: "User created", uid: user.uid });
+    // Adjusted response to match E2E test expectations from the old /signup route
+    res.status(201).json({ 
+      message: "User created successfully", // Changed message
+      user: { uid: user.uid, email: user.email } // Added user object
+    });
   } catch (error) {
     console.error('/signUpEmailPass: Sign-up error:', error);
     if (error.code === 'auth/email-already-in-use') {
-      res.status(401).json({ error: 'Email already in use' });
+      // Using 409 Conflict as it's more standard for this case than 401 (was 401, then 409 in /signup)
+      res.status(409).json({ error: 'Email already in use' });
     } else {
-      res.status(401).json({ error: error.message || 'An unexpected error occurred during sign-up.' });
+      // Was 401, then 400 in /signup
+      res.status(400).json({ error: error.message || 'An unexpected error occurred during sign-up.' });
     }
   }
 });
@@ -56,6 +84,7 @@ router.post("/signInEmailPass", async (req, res) => {
     const authInstance = getAuth(ethEscrowApp);
     const userCredential = await signInWithEmailAndPassword(authInstance, email, password);
     const user = userCredential.user;
+    const idToken = await user.getIdToken();
     
     if (!currentIsTest) {
       const adminAuthInstance = getAdminAuth(adminApp);
@@ -69,42 +98,13 @@ router.post("/signInEmailPass", async (req, res) => {
       console.log(`/signInEmailPass: Test user ${user.uid} signed in.`);
     }
     
-    res.status(200).json({ message: "User signed in", uid: user.email });
-  } catch (error) {
-    console.error('/signInEmailPass: Sign-in error:', error);
-    if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-      res.status(401).json({ error: 'Invalid password' });
-    } else if (error.code === 'auth/user-not-found') {
-      res.status(401).json({ error: 'User not found' });
-    } else {
-      res.status(401).json({ error: error.message || 'An unexpected error occurred during sign-in.' });
-    }
-  }
-});
-
-// Simplified login route for E2E tests
-router.post("/login", async (req, res) => {
-  const { email, password } = req.body;
-
-  if (!email || !password) {
-    console.log("/login: Email or password missing.");
-    return res.status(400).json({ error: "Email and password are required" });
-  }
-
-  try {
-    const authInstance = getAuth(ethEscrowApp);
-    const userCredential = await signInWithEmailAndPassword(authInstance, email, password);
-    const user = userCredential.user;
-    const idToken = await user.getIdToken();
-    
-    console.log(`/login: User ${user.uid} signed in successfully.`);
     res.status(200).json({ 
       message: "User signed in successfully", 
       token: idToken,
       user: { uid: user.uid, email: user.email } 
     });
   } catch (error) {
-    console.error('/login: Sign-in error:', error);
+    console.error('/signInEmailPass: Sign-in error:', error);
     if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
       res.status(401).json({ error: 'Invalid credentials' });
     } else if (error.code === 'auth/user-not-found') {
@@ -199,45 +199,6 @@ router.post("/signInGoogle", async (req, res) => {
         return res.status(404).json({ error: 'Authenticated user profile not found.' });
       }
       return res.status(500).json({ error: error.message || 'An internal error occurred during authentication.' });
-    }
-  }
-});
-
-// Simplified signup route for E2E tests
-router.post("/signup", async (req, res) => {
-  const { email, password, walletAddress } = req.body;
-  // Looser check for test environments for this simplified route
-  const currentIsTestEnv = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test'; 
-
-  if (!email || !password) {
-    console.log("/signup: Email or password missing.");
-    return res.status(400).json({ error: "Email and password are required" });
-  }
-
-  try {
-    const authInstance = getAuth(ethEscrowApp);
-    const userCredential = await createUserWithEmailAndPassword(authInstance, email, password);
-    const user = userCredential.user;
-    
-    // For E2E, we might not always set admin claims, or it might be handled differently.
-    // Keeping this simple for now.
-    if (currentIsTestEnv) {
-      console.log(`/signup: E2E/Test user created: ${user.uid}`);
-    }
-    
-    // Respond with a structure that basicFlow.e2e.test.js expects
-    res.status(201).json({ 
-      message: "User created successfully", 
-      user: { uid: user.uid, email: user.email, walletAddress: walletAddress }, // Include walletAddress if needed by client
-      // uid: user.uid // The test expects user.uid within a user object
-    });
-  } catch (error) {
-    console.error('/signup: Sign-up error:', error);
-    if (error.code === 'auth/email-already-in-use') {
-      // Using 409 Conflict as it's more standard for this case than 401
-      res.status(409).json({ error: 'Email already in use' }); 
-    } else {
-      res.status(400).json({ error: error.message || 'An unexpected error occurred during sign-up.' });
     }
   }
 });

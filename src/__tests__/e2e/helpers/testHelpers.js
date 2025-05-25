@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { ethers } from 'ethers';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { getFirestore, doc, setDoc, deleteDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, deleteDoc, collection, getDocs, query, where, terminate } from 'firebase/firestore';
 import { ethEscrowApp } from '../../../api/routes/auth/authIndex.js';
 import { spawn } from 'child_process';
 import path from 'path';
@@ -31,6 +31,15 @@ export const startTestServer = async () => {
 export const stopTestServer = async () => {
   // No need to kill process since we're using the app directly
   app = null;
+  
+  // Terminate Firestore to prevent open handles
+  try {
+    await terminate(db);
+    console.log('✅ Firestore connections terminated');
+  } catch (error) {
+    console.warn('Failed to terminate Firestore:', error);
+  }
+  
   console.log('✅ Test server stopped');
 };
 
@@ -144,24 +153,27 @@ export class ApiClient {
 }
 
 // Blockchain helpers
-export const getProvider = (retries = 5, delayMs = 1000) => {
+export const getProvider = async (retries = 5, delayMs = 1000) => {
+  for (let i = 0; i < retries; i++) {
   try {
     const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-    // Perform a simple check to see if the provider is connected
-    // provider.getBlockNumber(); // This would throw an error if not connected, good for a quick check
+      // Wait for the provider to be ready
+      await provider.getNetwork();
     console.log('✅ Successfully connected to RPC_URL:', process.env.RPC_URL);
     return provider;
   } catch (error) {
-    if (retries > 0) {
-      console.warn(`Failed to connect to RPC. Retries left: ${retries}. Retrying in ${delayMs}ms...`);
-      return new Promise((resolve) => setTimeout(() => resolve(getProvider(retries - 1, delayMs)), delayMs));
-    }
+      if (i < retries - 1) {
+        console.warn(`Failed to connect to RPC (attempt ${i + 1}/${retries}). Retrying in ${delayMs}ms...`);
+        await delay(delayMs);
+      } else {
     console.error('❌ Failed to connect to RPC after multiple retries:', process.env.RPC_URL, error);
     throw error;
+      }
+    }
   }
 };
 
-export const getWallet = (privateKey) => {
+export const getWallet = async (privateKey) => {
   console.log('Attempting to create wallet with PK:', privateKey ? `${privateKey.substring(0, 10)}...` : 'undefined');
   
   if (!privateKey) {
@@ -177,7 +189,7 @@ export const getWallet = (privateKey) => {
   }
   
   try {
-    const provider = getProvider();
+    const provider = await getProvider();
     // ethers.Wallet expects private key without 0x prefix
     const wallet = new ethers.Wallet(cleanPrivateKey, provider);
     console.log(`✅ Created wallet with address: ${wallet.address}`);
@@ -190,7 +202,7 @@ export const getWallet = (privateKey) => {
 
 export const fundTestAccount = async (address, amount = '10') => {
   // For Hardhat network, we can use the first default account to fund others
-  const fundingWallet = getWallet('0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80');
+  const fundingWallet = await getWallet('0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80');
   
   const tx = await fundingWallet.sendTransaction({
     to: address,
@@ -211,15 +223,18 @@ export const generateContactData = (overrides = {}) => {
   };
 };
 
-export const generateTransactionData = (contactId, overrides = {}) => {
+export const generateTransactionData = async (contactId, overrides = {}) => {
+  const buyerWallet = process.env.TEST_USER_A_PK ? await getWallet(process.env.TEST_USER_A_PK) : null;
+  const sellerWallet = process.env.TEST_USER_B_PK ? await getWallet(process.env.TEST_USER_B_PK) : null;
+  
   return {
     contactId,
     type: 'goodsAndServices',
     amount: '0.1',
     currency: 'ETH',
     description: 'Test transaction',
-    buyerAddress: process.env.TEST_USER_A_PK ? getWallet(process.env.TEST_USER_A_PK).address : '',
-    sellerAddress: process.env.TEST_USER_B_PK ? getWallet(process.env.TEST_USER_B_PK).address : '',
+    buyerAddress: buyerWallet ? buyerWallet.address : '',
+    sellerAddress: sellerWallet ? sellerWallet.address : '',
     ...overrides
   };
 };

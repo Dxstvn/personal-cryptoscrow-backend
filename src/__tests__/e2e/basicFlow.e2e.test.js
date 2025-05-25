@@ -63,7 +63,7 @@ describe('E2E Basic Flow Tests - Actual API', () => {
         password: process.env.TEST_USER_A_PASSWORD,
         walletAddress: userAWallet.address // Assuming your signup takes this
       };
-      let response = await apiClient.post('/auth/signup', userASignupData);
+      let response = await apiClient.post('/auth/signUpEmailPass', userASignupData);
       
       console.log('Signup response:', {
         status: response.status,
@@ -82,7 +82,7 @@ describe('E2E Basic Flow Tests - Actual API', () => {
         password: process.env.TEST_USER_B_PASSWORD,
         walletAddress: userBWallet.address
       };
-      response = await apiClient.post('/auth/signup', userBSignupData);
+      response = await apiClient.post('/auth/signUpEmailPass', userBSignupData);
       expect(response.status).toBe(201);
 
       // User A Login
@@ -90,7 +90,7 @@ describe('E2E Basic Flow Tests - Actual API', () => {
         email: process.env.TEST_USER_A_EMAIL,
         password: process.env.TEST_USER_A_PASSWORD,
       };
-      response = await apiClient.post('/auth/login', userALoginData);
+      response = await apiClient.post('/auth/signInEmailPass', userALoginData);
       expect(response.status).toBe(200);
       expect(response.body.token).toBeTruthy();
       userA = { email: userALoginData.email, idToken: response.body.token, uid: response.body.user.uid }; // Assuming login returns uid
@@ -102,7 +102,7 @@ describe('E2E Basic Flow Tests - Actual API', () => {
         email: process.env.TEST_USER_B_EMAIL,
         password: process.env.TEST_USER_B_PASSWORD,
       };
-      response = await apiClient.post('/auth/login', userBLoginData);
+      response = await apiClient.post('/auth/signInEmailPass', userBLoginData);
       expect(response.status).toBe(200);
       expect(response.body.token).toBeTruthy();
       userB = { email: userBLoginData.email, idToken: response.body.token, uid: response.body.user.uid };
@@ -168,71 +168,22 @@ describe('E2E Basic Flow Tests - Actual API', () => {
   });
   
   describe('Transaction Creation and Management', () => {
-    let contactIdForTransaction;
     let transactionId;
     
-    beforeAll(async () => {
-      // CRITICAL: This part needs to be re-thought. 
-      // To create a transaction, User A needs an *accepted* contact.
-      // The current contact flow is invitation-based.
-      // For now, these tests will likely fail or need to be skipped
-      // until we have a user accept an invitation.
-
-      // Placeholder: Attempt to add User B as a contact for User A through the invite and accept flow.
-      // This is a simplified and potentially fragile setup for now.
-      apiClient.setAuthToken(userA.idToken);
-      const inviteResponse = await apiClient.post('/contact/invite', { contactEmail: userB.email });
-      if (inviteResponse.status === 201 && inviteResponse.body.invitationId) {
-        const newInvitationId = inviteResponse.body.invitationId;
-        console.log(`[TransactionSetup] Invitation sent from A to B, ID: ${newInvitationId}`);
-
-        // User B accepts the invitation
-        apiClient.setAuthToken(userB.idToken); // Switch to User B
-        const acceptResponse = await apiClient.post('/contact/response', {
-          invitationId: newInvitationId,
-          action: 'accept'
-        });
-        if (acceptResponse.status === 200) {
-          console.log(`[TransactionSetup] User B accepted invitation from User A.`);
-          // Now User B should be in User A's contacts. We need User B's UID as the contactId.
-          // User B's UID is stored in userB.uid
-          contactIdForTransaction = userB.uid; 
-          console.log(`[TransactionSetup] Contact ID for transaction (User B's UID): ${contactIdForTransaction}`);
-        } else {
-          console.error('[TransactionSetup] Failed to accept invitation:', acceptResponse.body);
-          contactIdForTransaction = null; // Ensure it's null if setup fails
-        }
-      } else {
-        console.error('[TransactionSetup] Failed to send invitation:', inviteResponse.body);
-        contactIdForTransaction = null; // Ensure it's null if setup fails
-      }
-      apiClient.setAuthToken(userA.idToken); // Switch back to User A for subsequent tests
-
-      // Old direct add - this will fail now
-      // const contactResponse = await apiClient.post('/contact/add', generateContactData({
-      //   name: 'Transaction Contact',
-      //   walletAddress: userBWallet.address
-      // }));
-      // contactId = contactResponse.body.contact.id; 
-    });
-    
     test('User can create a transaction', async () => {
-      if (!contactIdForTransaction) {
-        console.warn("Skipping transaction creation test: Contact setup failed.");
-        return; // Skip if contact setup failed
-      }
       apiClient.setAuthToken(userA.idToken);
       const transactionData = {
-        contactId: contactIdForTransaction, // Use the accepted contact's UID
-        transactionType: 'simple_transfer',
-        transactionName: 'Test Transaction',
-        transactionDescription: 'E2E test transaction',
-        transactionAmount: '0.01',
-        currency: 'ETH',
-        conditions: [
+        initiatedBy: 'BUYER', // Required field
+        propertyAddress: '123 Test Street', // Required field
+        amount: 0.01, // Number, not string
+        otherPartyEmail: userB.email, // Use email, not contactId
+        buyerWalletAddress: userAWallet.address,
+        sellerWalletAddress: userBWallet.address,
+        initialConditions: [
           {
-            description: 'Goods delivered',
-            deadline: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours from now
+            id: 'c1',
+            type: 'CUSTOM',
+            description: 'Goods delivered'
           }
         ]
       };
@@ -247,10 +198,9 @@ describe('E2E Basic Flow Tests - Actual API', () => {
       });
       
       expect(response.status).toBe(201);
-      expect(response.body.transaction).toBeTruthy();
-      expect(response.body.transaction.transactionId).toBeTruthy();
+      expect(response.body.transactionId).toBeTruthy(); // The response has transactionId directly, not nested
       
-      transactionId = response.body.transaction.transactionId;
+      transactionId = response.body.transactionId;
       console.log(`✅ Transaction created with ID: ${transactionId}`);
     });
     
@@ -258,7 +208,7 @@ describe('E2E Basic Flow Tests - Actual API', () => {
       const response = await apiClient.get(`/transaction/${transactionId}`);
       
       expect(response.status).toBe(200);
-      expect(response.body.transaction.transactionId).toBe(transactionId);
+      expect(response.body.id).toBe(transactionId);
       
       console.log('✅ Transaction details retrieved');
     });
@@ -267,17 +217,17 @@ describe('E2E Basic Flow Tests - Actual API', () => {
       const response = await apiClient.get('/transaction/');
       
       expect(response.status).toBe(200);
-      expect(Array.isArray(response.body.transactions)).toBe(true);
+      expect(Array.isArray(response.body)).toBe(true);
       
-      const foundTransaction = response.body.transactions.find(t => t.transactionId === transactionId);
+      const foundTransaction = response.body.find(t => t.id === transactionId);
       expect(foundTransaction).toBeTruthy();
       
-      console.log(`✅ Retrieved ${response.body.transactions.length} transactions`);
+      console.log(`✅ Retrieved ${response.body.length} transactions`);
     });
     
     test('User can update transaction status', async () => {
       const response = await apiClient.put(`/transaction/${transactionId}/sync-status`, {
-        status: 'pending_payment'
+        newSCStatus: 'PENDING_BUYER_REVIEW'
       });
       
       console.log('Update status response:', {
@@ -293,63 +243,29 @@ describe('E2E Basic Flow Tests - Actual API', () => {
   describe('Smart Contract Interactions', () => {
     let transactionIdForSC;
     let contractAddress;
-    let contactIdForSCTransaction;
     
     beforeAll(async () => {
       apiClient.setAuthToken(userA.idToken);
 
-      // Similar to Transaction Management, setup an accepted contact for smart contract tests
-      const inviteResponseSC = await apiClient.post('/contact/invite', { contactEmail: userB.email });
-      if (inviteResponseSC.status === 201 && inviteResponseSC.body.invitationId) {
-        const scInvitationId = inviteResponseSC.body.invitationId;
-        console.log(`[SCTransactionSetup] Invitation sent from A to B for SC, ID: ${scInvitationId}`);
-
-        apiClient.setAuthToken(userB.idToken); // User B
-        const acceptResponseSC = await apiClient.post('/contact/response', {
-          invitationId: scInvitationId,
-          action: 'accept'
-        });
-        if (acceptResponseSC.status === 200) {
-          console.log(`[SCTransactionSetup] User B accepted SC invitation from User A.`);
-          contactIdForSCTransaction = userB.uid; // User B's UID
-          console.log(`[SCTransactionSetup] Contact ID for SC transaction (User B's UID): ${contactIdForSCTransaction}`);
-        } else {
-          console.error('[SCTransactionSetup] Failed to accept SC invitation:', acceptResponseSC.body);
-          contactIdForSCTransaction = null;
-        }
-      } else {
-        console.error('[SCTransactionSetup] Failed to send SC invitation:', inviteResponseSC.body);
-        contactIdForSCTransaction = null;
-      }
-      apiClient.setAuthToken(userA.idToken); // Switch back to User A
-
-      if (!contactIdForSCTransaction) {
-        console.warn("Skipping Smart Contract setup: SC Contact setup failed.");
-        // Set transactionIdForSC to something that won't cause later tests to fail due to it being undefined
-        // Though the tests themselves should ideally be skipped.
-        transactionIdForSC = "dummy-tx-id-due-to-contact-failure"; 
-        return;
-      }
-      
       const transactionData = {
-        contactId: contactIdForSCTransaction, // Use accepted contact's UID
-        transactionType: 'escrow',
-        transactionName: 'Smart Contract Transaction',
-        transactionDescription: 'E2E test with smart contract',
-        transactionAmount: '0.05',
-        currency: 'ETH',
-        useSmartContract: true,
-        conditions: [
+        initiatedBy: 'BUYER', // Required field
+        propertyAddress: '456 Smart Contract Ave', // Required field
+        amount: 0.05, // Number, not string
+        otherPartyEmail: userB.email, // Use email, not contactId
+        buyerWalletAddress: userAWallet.address,
+        sellerWalletAddress: userBWallet.address,
+        initialConditions: [
           {
-            description: 'Delivery complete',
-            deadline: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
+            id: 'sc1',
+            type: 'CUSTOM',
+            description: 'Delivery complete'
           }
         ]
       };
       
       const txResponse = await apiClient.post('/transaction/create', transactionData);
-      transactionIdForSC = txResponse.body.transaction.transactionId;
-      contractAddress = txResponse.body.transaction.contractAddress;
+      transactionIdForSC = txResponse.body.transactionId; // Use transactionId directly
+      contractAddress = txResponse.body.smartContractAddress; // Use smartContractAddress
       
       console.log(`✅ Smart contract transaction created: ${transactionIdForSC}`);
       
@@ -358,12 +274,10 @@ describe('E2E Basic Flow Tests - Actual API', () => {
     });
     
     test('Can start final approval process', async () => {
-      if (!contactIdForSCTransaction || transactionIdForSC === "dummy-tx-id-due-to-contact-failure") {
-        console.warn("Skipping SC start final approval test: SC Contact or transaction setup failed.");
-        return;
-      }
       apiClient.setAuthToken(userA.idToken);
-      const response = await apiClient.post(`/transaction/${transactionIdForSC}/sc/start-final-approval`, {});
+      const response = await apiClient.post(`/transaction/${transactionIdForSC}/sc/start-final-approval`, {
+        finalApprovalDeadlineISO: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours from now
+      });
       
       console.log('Start final approval response:', {
         status: response.status,
@@ -380,13 +294,9 @@ describe('E2E Basic Flow Tests - Actual API', () => {
     });
     
     test('Can raise a dispute', async () => {
-      if (!contactIdForSCTransaction || transactionIdForSC === "dummy-tx-id-due-to-contact-failure") {
-        console.warn("Skipping SC raise dispute test: SC Contact or transaction setup failed.");
-        return;
-      }
       apiClient.setAuthToken(userA.idToken);
       const response = await apiClient.post(`/transaction/${transactionIdForSC}/sc/raise-dispute`, {
-        reason: 'Test dispute for E2E testing'
+        disputeResolutionDeadlineISO: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString() // 48 hours from now
       });
       
       console.log('Raise dispute response:', {
