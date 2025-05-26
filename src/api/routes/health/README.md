@@ -20,26 +20,18 @@ While the frontend doesn't call it, a healthy backend (as indicated by this endp
 ### Endpoint Details:
 
 -   **`GET /`** (e.g., `/api/health`)
-    -   **Description**: Returns a JSON response indicating the overall health status of the backend. It may include checks for critical dependencies.
-    -   **Backend Logic**: When this endpoint is hit, the backend performs a series of checks. In the current implementation, it attempts to verify connectivity to Firestore. Other checks could include database connection pool status, external service reachability, etc.
-    -   **Success Response (200 OK)**: Indicates the backend is running and essential services (like Firestore) are accessible.
+    -   **Description**: Returns a JSON response indicating the overall health status of the backend. It performs a basic check for Firestore connectivity.
+    -   **Backend Logic**: When this endpoint is hit, the backend ensures a health status document exists in Firestore and attempts to read it to verify connectivity.
+    -   **Success Response (200 OK)**: Indicates the backend is running and Firestore is accessible.
         ```json
         {
-          "status": "healthy",
-          "message": "Backend services are operational.",
-          "timestamp": "2023-10-27T10:30:00.000Z", // Current server timestamp
-          "firestoreConnected": true // Indicates Firestore check passed
-          // Additional checks like "blockchainNodeConnected": true could be added
+          "status": "OK"
         }
         ```
-    -   **Error/Unhealthy Response (e.g., 503 Service Unavailable)**: If a critical check fails (e.g., cannot connect to Firestore), the status might change, or a non-200 HTTP status code might be returned.
+    -   **Error Response (500 Internal Server Error)**: If the health check fails (e.g., cannot connect to Firestore).
         ```json
         {
-          "status": "unhealthy",
-          "message": "Backend services experiencing issues.",
-          "timestamp": "2023-10-27T10:35:00.000Z",
-          "firestoreConnected": false,
-          "errorDetails": "Failed to connect to Firestore after 3 attempts."
+          "error": "Internal Server Error"
         }
         ```
 

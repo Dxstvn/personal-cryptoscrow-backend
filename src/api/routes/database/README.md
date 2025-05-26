@@ -24,51 +24,47 @@ This module provides API endpoints specifically for managing files associated wi
     -   **Form Data Fields**:
         -   `dealId` (string, required): The Firestore ID of the deal to which this file belongs.
         -   `file` (file object, required): The actual file being uploaded by the user.
-        -   `fileType` (string, optional but recommended): A user-defined or application-defined category for the file (e.g., "AGREEMENT", "INSPECTION_REPORT", "PROOF_OF_FUNDS"). This helps in organizing and displaying files.
     -   **Backend Logic**: 
         1.  Validates `dealId` and user permissions for the deal.
-        2.  Receives the file stream.
-        3.  Uploads the file binary to a structured path in Firebase Storage (e.g., `deals/<dealId>/<timestamp>_<originalFileName>`).
-        4.  Creates a metadata document in Firestore (e.g., in a `files` collection or a subcollection under the deal) storing: `fileName`, `storagePath`, `contentType`, `size`, `uploadedBy` (user UID), `uploadedAt` (timestamp), `dealId`, `fileType`.
-    -   **Success Response (201 Created)**:
+        2.  Validates file type (only allows PDF, JPEG, PNG).
+        3.  Uploads the file binary to a structured path in Firebase Storage (e.g., `deals/<dealId>/<uuid>-<originalFileName>`).
+        4.  Creates a metadata document in Firestore (in a subcollection under the deal) storing: `filename`, `storagePath`, `url`, `contentType`, `size`, `uploadedBy` (user UID), `uploadedAt` (timestamp).
+    -   **Success Response (200 OK)**:
         ```json
         {
-          "message": "File uploaded successfully.",
+          "message": "File uploaded successfully",
           "fileId": "generatedFileMetadataIdInFirestore",
-          "fileName": "originalUploadedFileName.pdf",
-          "fileURL": "https://firebasestorage.googleapis.com/.../deals%2FdealId%2F...%2ForiginalFileName.pdf?alt=media&token=...", // A publicly accessible or signed download URL
-          "filePath": "deals/dealId/timestamp_originalFileName.pdf", // Path in Firebase Storage
-          "fileType": "AGREEMENT",
-          "uploadedAt": "2023-10-26T12:00:00.000Z"
+          "url": "https://firebasestorage.googleapis.com/..." // Public download URL
         }
         ```
-    -   **Error Responses**: `400 Bad Request` (missing `dealId` or `file`), `401/403` (unauthorized), `413 Payload Too Large` (if file exceeds size limits), `500 Internal Server Error` (storage/database issues).
+    -   **Error Responses**: `400 Bad Request` (missing `dealId` or `file`, invalid file type), `404 Not Found` (deal not found), `401/403` (unauthorized), `500 Internal Server Error` (storage/database issues).
     -   **Frontend Actions**: 
         -   Use an `<input type="file">` element for file selection.
-        -   Construct a `FormData` object, appending `dealId`, `file`, and `fileType`.
+        -   Construct a `FormData` object, appending `dealId` and `file`.
         -   Make a POST request with `Content-Type: multipart/form-data`.
         -   Implement upload progress indicators if possible.
-        -   On success, update the UI to show the newly uploaded file in the context of the relevant deal. The `fileURL` can be used directly for downloads/previews if it's a long-lived public or signed URL.
+        -   On success, update the UI to show the newly uploaded file in the context of the relevant deal.
 
--   **`GET /my-deals`** (e.g., `/api/files/my-deals` - or better: `GET /deals/:dealId/files`)
-    -   **Description**: Retrieves metadata for all files associated with deals the current authenticated user is a participant in. (A more granular `GET /deals/:dealId/files` to get files for a *specific* deal is often more practical for UIs focused on a single deal).
-    -   **Backend Logic**: Queries Firestore for file metadata documents where the `dealId` corresponds to deals the user is part of, or for the specified `dealId`.
-    -   **Success Response (200 OK)**: An array of file metadata objects, similar to the individual file object in the upload response.
+-   **`GET /my-deals`** (e.g., `/api/files/my-deals`)
+    -   **Description**: Retrieves metadata for all files associated with deals the current authenticated user is a participant in.
+    -   **Backend Logic**: Queries deals where the user is a participant, then fetches all file metadata from each deal's files subcollection.
+    -   **Success Response (200 OK)**: An array of file metadata objects.
         ```json
         [
           {
-            "fileId": "fileMetadataId1",
             "dealId": "associatedDealId1",
-            "fileName": "contract.pdf",
-            "fileType": "AGREEMENT",
+            "fileId": "fileMetadataId1",
+            "filename": "contract.pdf",
+            "contentType": "application/pdf",
+            "size": 1048576, // File size in bytes
+            "uploadedAt": "2023-10-25T10:00:00.000Z", // ISO 8601 timestamp
             "uploadedBy": "uploaderFirebaseUid",
-            "uploadedAt": "2023-10-25T10:00:00.000Z",
-            "fileURL": "https://firebasestorage.googleapis.com/..."
+            "downloadPath": "/files/download/dealId/fileId" // Path to download endpoint
           }
           // ... more files
         ]
         ```
-    -   **Frontend Actions**: Display a list of these files, typically within the context of a specific deal. Each file entry should show its name, type, upload date, and provide a download mechanism using its `fileId` or `fileURL`.
+    -   **Frontend Actions**: Display a list of these files, typically grouped by deal. Each file entry should show its name, type, upload date, and provide a download mechanism using the `downloadPath`.
 
 -   **`GET /download/:dealId/:fileId`** (e.g., `/api/files/download/:dealId/:fileId`)
     -   **Description**: Allows an authenticated and authorized user to download a specific file by its ID.
@@ -77,10 +73,10 @@ This module provides API endpoints specifically for managing files associated wi
         1.  Verifies user has access to the specified `dealId`.
         2.  Retrieves file metadata from Firestore using `fileId` (verifying it belongs to `dealId`).
         3.  Gets the `storagePath` from the metadata.
-        4.  Either generates a short-lived signed Firebase Storage download URL and redirects the user to it, OR directly streams the file from Firebase Storage to the client with appropriate `Content-Disposition` and `Content-Type` headers.
-    -   **Success Response**: The file binary itself (e.g., `Content-Type: application/pdf`). The browser will typically handle this as a download.
-    -   **Error Responses**: `401/403` (unauthorized), `404 Not Found` (deal or file not found).
-    -   **Frontend Actions**: Provide a download link or button for each file listed. This can be a simple `<a>` tag pointing to this API endpoint, or a JavaScript function that initiates the download (e.g., by setting `window.location.href` or using a library to handle file downloads).
+        4.  Directly streams the file from Firebase Storage to the client with appropriate `Content-Disposition` and `Content-Type` headers.
+    -   **Success Response**: The file binary itself (e.g., `Content-Type: application/pdf`, `Content-Disposition: attachment; filename="..."`). The browser will typically handle this as a download.
+    -   **Error Responses**: `401/403` (unauthorized), `404 Not Found` (deal or file not found), `500 Internal Server Error` (storage error).
+    -   **Frontend Actions**: Provide a download link or button for each file listed. This can be a simple `<a>` tag pointing to this API endpoint, or a JavaScript function that initiates the download.
 
 ## Frontend UI/UX Considerations
 

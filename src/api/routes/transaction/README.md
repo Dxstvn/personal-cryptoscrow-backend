@@ -17,76 +17,125 @@ This directory is central to the CryptoEscrow application, containing API routes
 
 -   **`POST /create`** (e.g., `/api/deals/create`)
     -   **Description**: Initiates a new escrow deal. This is a complex operation involving creating a detailed deal document in Firestore and, if applicable, triggering the deployment of a new `PropertyEscrow` smart contract instance.
-    -   **Request Body Example** (See main project README for a more detailed example):
+    -   **Request Body Example**:
         ```json
         {
           "initiatedBy": "BUYER", // Who is filling this form: "BUYER" or "SELLER"
           "propertyAddress": "123 Main St, Anytown, USA",
-          "amount": "1.5", // In ETH, backend handles Wei conversion for contract
-          "currency": "ETH",
+          "amount": 1.5, // In ETH as number, backend handles Wei conversion for contract
           "otherPartyEmail": "seller@example.com",
           "buyerWalletAddress": "0xBuyerWalletAddress...",
           "sellerWalletAddress": "0xSellerWalletAddress...",
           "initialConditions": [
-            { "id": "cond-title-v1", "type": "TITLE_DEED", "description": "Title deed clear and verified.", "fulfilled": false },
-            { "id": "cond-insp-v1", "type": "INSPECTION", "description": "Property inspection satisfactory.", "fulfilled": false }
-          ],
-          "deployToNetwork": "sepolia" // Optional: Network for smart contract
+            { "id": "cond-title-v1", "type": "TITLE_DEED", "description": "Title deed clear and verified." },
+            { "id": "cond-insp-v1", "type": "INSPECTION", "description": "Property inspection satisfactory." }
+          ]
         }
         ```
-    -   **Backend Logic**: Validates inputs, resolves party UIDs (inviting the other party if they are new), creates a comprehensive `deal` document in Firestore with an initial status (e.g., `AWAITING_CONDITION_SETUP` or `AWAITING_DEPOSIT`), and calls `contractDeployer.js` to deploy the smart contract. The new `smartContractAddress` is then saved to the deal document.
+    -   **Backend Logic**: Validates inputs, resolves party UIDs, creates a comprehensive `deal` document in Firestore with an initial status (e.g., `PENDING_BUYER_REVIEW` or `PENDING_SELLER_REVIEW`), and calls `contractDeployer.js` to deploy the smart contract. The new `smartContractAddress` is then saved to the deal document.
     -   **Success Response (201 Created)**:
         ```json
         {
-          "message": "Deal created successfully. Contract deployment initiated.",
+          "message": "Transaction initiated successfully.",
           "transactionId": "firestoreDealIdGeneratedByBackend", // CRUCIAL for frontend listeners
-          "smartContractAddress": "0xDeployedContractAddressOrNull", // Null if deployment is async or failed
-          "status": "AWAITING_DEPOSIT", // Initial status
-          // May also include the full initial deal object as created in Firestore
+          "smartContractAddress": "0xDeployedContractAddressOrNull", // Null if deployment failed or skipped
+          "status": "PENDING_BUYER_REVIEW", // Or "PENDING_SELLER_REVIEW" depending on initiator
+          "deploymentWarning": "Smart contract deployment was attempted but failed..." // Only if deployment failed
         }
         ```
-    -   **Error Responses**: `400 Bad Request` (validation errors), `500 Internal Server Error` (contract deployment failure, database error).
+    -   **Error Responses**: `400 Bad Request` (validation errors), `404 Not Found` (other party email not found), `500 Internal Server Error` (contract deployment failure, database error).
     -   **Frontend Actions**: 
         -   Provide a multi-step, user-friendly form for deal creation. Validate inputs client-side.
         -   On successful submission, **immediately store the `transactionId`** and use it to set up a Firestore real-time listener for that specific deal document. This listener is how the frontend will receive all future updates to this deal.
-        -   Display initial deal status and guide the user on next steps (e.g., "Waiting for buyer to deposit funds").
+        -   Display initial deal status and guide the user on next steps.
 
 -   **`GET /:transactionId`** (e.g., `/api/deals/firestoreDealId123`)
     -   **Description**: Retrieves the full, current details of a specific escrow deal from Firestore.
     -   **URL Parameter**: `:transactionId` is the Firestore document ID of the deal.
-    -   **Success Response (200 OK)**: A complete JSON object representing the deal document (see main README for example structure, including parties, status, conditions, timeline, contract address, deadlines).
-    -   **Frontend Actions**: While this endpoint can be used for an initial fetch, **primary reliance should be on the Firestore real-time listener** established after deal creation or when viewing a deal. This ensures the UI is always showing the most current data without needing to poll this endpoint.
+    -   **Success Response (200 OK)**: A complete JSON object representing the deal document with all fields converted to appropriate formats (timestamps to ISO strings, etc.).
+    -   **Frontend Actions**: While this endpoint can be used for an initial fetch, **primary reliance should be on the Firestore real-time listener** established after deal creation or when viewing a deal.
 
 -   **`GET /`** (e.g., `/api/deals`)
-    -   **Description**: Lists all deals where the authenticated user is a participant (either buyer or seller). Supports pagination.
+    -   **Description**: Lists all deals where the authenticated user is a participant (either buyer or seller). Supports pagination and sorting.
     -   **Query Parameters (Optional)**:
-        -   `?lastVisibleId=<firestore_doc_id_of_last_deal>` (for fetching the next page)
         -   `?limit=<number>` (e.g., 10, for number of deals per page)
+        -   `?startAfter=<firestore_timestamp_or_doc_id>` (for pagination)
+        -   `?orderBy=<field_name>` (default: 'createdAt')
+        -   `?orderDirection=<asc|desc>` (default: 'desc')
     -   **Success Response (200 OK)**:
         ```json
-        {
-          "deals": [
-            // Array of deal summary objects (key fields like id, propertyAddress, amount, status, user's role)
-          ],
-          "nextPageToken": "<firestore_doc_id_of_last_deal_in_this_page_or_null>"
-        }
+        [
+          {
+            "id": "dealId1",
+            "propertyAddress": "123 Main St...",
+            "amount": 1.5,
+            "status": "IN_FINAL_APPROVAL",
+            "buyerId": "buyerFirebaseUid",
+            "sellerId": "sellerFirebaseUid",
+            "createdAt": "2023-10-25T10:00:00.000Z"
+            // ... other deal fields
+          }
+          // ... more deals
+        ]
         ```
-    -   **Frontend Actions**: Display deals in a dashboard or list. Implement "Load More" or pagination using `nextPageToken`. Consider using Firestore query listeners for real-time updates to this list (e.g., new deals appearing, status changes on existing ones).
+    -   **Frontend Actions**: Display deals in a dashboard or list. Implement pagination using query parameters. Consider using Firestore query listeners for real-time updates to this list.
 
 -   **`PUT /:transactionId/conditions/:conditionId/buyer-review`**
-    -   **Description**: Allows the buyer in a deal to update the fulfillment status of one of their designated off-chain conditions.
+    -   **Description**: Allows the buyer in a deal to update the status of one of their designated off-chain conditions.
     -   **URL Parameters**: `:transactionId`, `:conditionId` (the unique ID of the condition within the deal's `conditions` array).
-    -   **Request Body**: `{ "fulfilled": true }` (or `false` to un-fulfill).
-    -   **Backend Logic**: Updates the `fulfilled` status (and potentially `fulfilledBy`, `fulfilledAt` fields) of the specific condition within the deal document in Firestore. May trigger checks to see if all conditions are now met, potentially leading to an automatic status transition of the deal (e.g., to `READY_FOR_FINAL_APPROVAL`).
-    -   **Success Response (200 OK)**: `{ "message": "Condition status updated successfully." }` (The frontend will see the change via its Firestore listener).
-    -   **Frontend Actions**: Provide interactive elements (e.g., checkboxes) for the buyer to manage their conditions. The UI should reflect the updated state based on the Firestore listener. Inform the user of any resulting deal status changes.
+    -   **Request Body**: 
+        ```json
+        {
+          "newBackendStatus": "FULFILLED_BY_BUYER", // Required: "FULFILLED_BY_BUYER", "PENDING_BUYER_ACTION", or "ACTION_WITHDRAWN_BY_BUYER"
+          "reviewComment": "Optional comment about the condition" // Optional
+        }
+        ```
+    -   **Backend Logic**: Updates the condition's status and timestamps within the deal document in Firestore. May trigger checks to see if all conditions are now met, potentially leading to an automatic status transition of the deal.
+    -   **Success Response (200 OK)**: `{ "message": "Backend condition status updated to: FULFILLED_BY_BUYER." }` (The frontend will see the change via its Firestore listener).
+    -   **Frontend Actions**: Provide interactive elements (e.g., checkboxes, buttons) for the buyer to manage their conditions. The UI should reflect the updated state based on the Firestore listener.
 
 -   **`PUT /:transactionId/sync-status`**
-    -   **Description**: Manually triggers the backend to query the smart contract for its current state and update the corresponding deal status in Firestore if it has diverged. This is a recovery or refresh mechanism.
+    -   **Description**: Updates the backend deal status to sync with smart contract state, with optional deadline management.
     -   **URL Parameter**: `:transactionId`.
-    -   **Backend Logic**: Calls `blockchainService.js` to fetch the current state from the deployed smart contract associated with the deal, then updates the `status` field in the Firestore deal document.
-    -   **Success Response (200 OK)**: `{ "message": "Deal status synchronization initiated/completed.", "updatedStatus": "ACTUAL_STATUS_FROM_CHAIN", "previousStatus": "STATUS_IN_FIRESTORE_BEFORE_SYNC" }`.
-    -   **Frontend Actions**: Offer a "Refresh Status" button on the deal details page. The UI will update via its Firestore listener when the sync completes and Firestore is updated.
+    -   **Request Body**:
+        ```json
+        {
+          "newSCStatus": "IN_FINAL_APPROVAL", // Required: valid smart contract status
+          "eventMessage": "Custom timeline message", // Optional
+          "finalApprovalDeadlineISO": "2023-10-27T10:00:00.000Z", // Optional: for IN_FINAL_APPROVAL status
+          "disputeResolutionDeadlineISO": "2023-10-29T10:00:00.000Z" // Optional: for IN_DISPUTE status
+        }
+        ```
+    -   **Success Response (200 OK)**: `{ "message": "Transaction backend status synced/updated to IN_FINAL_APPROVAL." }`.
+    -   **Frontend Actions**: Use this endpoint when the frontend detects that on-chain state has changed and needs to update the backend. The UI will update via its Firestore listener when the sync completes.
+
+-   **`POST /:transactionId/sc/start-final-approval`**
+    -   **Description**: Syncs the backend when the final approval period has been started on-chain.
+    -   **URL Parameter**: `:transactionId`.
+    -   **Request Body**:
+        ```json
+        {
+          "finalApprovalDeadlineISO": "2023-10-27T10:00:00.000Z" // Required: deadline in ISO format
+        }
+        ```
+    -   **Backend Logic**: Updates deal status to `IN_FINAL_APPROVAL`, sets the deadline, and adds a timeline event.
+    -   **Success Response (200 OK)**: `{ "message": "Backend synced: Final approval period started." }`.
+    -   **Frontend Actions**: Call this endpoint after the user successfully triggers the final approval period on-chain.
+
+-   **`POST /:transactionId/sc/raise-dispute`**
+    -   **Description**: Syncs the backend when a dispute has been raised on-chain by the buyer.
+    -   **URL Parameter**: `:transactionId`.
+    -   **Request Body**:
+        ```json
+        {
+          "disputeResolutionDeadlineISO": "2023-10-29T10:00:00.000Z", // Required: deadline in ISO format
+          "conditionId": "cond-title" // Optional: ID of condition related to dispute
+        }
+        ```
+    -   **Backend Logic**: Updates deal status to `IN_DISPUTE`, sets the resolution deadline, and optionally marks the related condition as `ACTION_WITHDRAWN_BY_BUYER`.
+    -   **Success Response (200 OK)**: `{ "message": "Backend synced: Dispute raised." }`.
+    -   **Error Responses**: `400 Bad Request` (invalid deal state for dispute), `403 Forbidden` (only buyer can raise disputes).
+    -   **Frontend Actions**: Call this endpoint after the buyer successfully raises a dispute on-chain.
 
 ## Firestore Data Model (`deals` collection)
 

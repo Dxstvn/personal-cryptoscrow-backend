@@ -16,65 +16,68 @@ This module provides the API endpoints for managing user contacts and the invita
 
 -   **`POST /invite`**
     -   **Description**: Allows the authenticated user to send a contact invitation to another individual using their email address.
-    -   **Request Body**: `{ "recipientEmail": "friend@example.com" }`
-    -   **Backend Logic**: Creates an "invitation" document in Firestore, typically including sender UID, recipient email, status (`pending`), and a timestamp. May also trigger an email notification to the recipient if email services (e.g., Nodemailer) are integrated.
-    -   **Success Response (200 OK)**: `{ "message": "Invitation sent successfully.", "invitationId": "generatedInvitationId" }` (The `invitationId` can be useful for tracking).
-    -   **Error Responses**: `400 Bad Request` (e.g., invalid email format, missing email), `404 Not Found` (e.g., if recipient email must correspond to an existing user, though typically invites can go to non-users too), `409 Conflict` (e.g., invitation already pending or users are already contacts).
+    -   **Request Body**: `{ "contactEmail": "friend@example.com" }`
+    -   **Backend Logic**: Creates an "invitation" document in Firestore, including sender UID, recipient email, sender and receiver profile data (names, phone, wallets), status (`pending`), and a timestamp.
+    -   **Success Response (201 Created)**: `{ "message": "Invitation sent successfully", "invitationId": "generatedInvitationId" }`.
+    -   **Error Responses**: `400 Bad Request` (e.g., invalid email format, missing email, self-invitation, already contacts), `404 Not Found` (recipient email not found in system), `500 Internal Server Error`.
     -   **Frontend Actions**: Provide a form for the user to enter the recipient's email. Display success or error messages. Optionally, update a list of "sent invitations" in the UI.
 
 -   **`GET /pending`**
     -   **Description**: Retrieves a list of all *pending* contact invitations that have been sent *to* the currently authenticated user.
-    -   **Success Response (200 OK)**: An array of invitation objects.
+    -   **Success Response (200 OK)**: 
         ```json
-        [
-          {
-            "invitationId": "invitationDocId1",
-            "senderId": "senderFirebaseUid",
-            "senderEmail": "sender@example.com",
-            "senderDisplayName": "John Sender", // If available
-            "sentAt": "2023-10-26T10:00:00.000Z" // ISO 8601 Timestamp
-          }
-          // ... more pending invitations
-        ]
+        {
+          "invitations": [
+            {
+              "id": "invitationDocId1",
+              "senderId": "senderFirebaseUid",
+              "senderEmail": "sender@example.com",
+              "senderFirstName": "John"
+            }
+            // ... more pending invitations
+          ]
+        }
         ```
-    -   **Frontend Actions**: Display these invitations in a dedicated section of the UI (e.g., "Pending Invitations"). For each invitation, provide options to "Accept" or "Decline".
+    -   **Frontend Actions**: Display these invitations in a dedicated section of the UI (e.g., "Pending Invitations"). For each invitation, provide options to "Accept" or "Deny".
 
 -   **`POST /response`**
-    -   **Description**: Allows the authenticated user to respond (accept or decline) to a specific contact invitation they have received.
-    -   **Request Body**: `{ "invitationId": "invitationDocId1", "action": "accept" }` (or `"action": "decline"`)
+    -   **Description**: Allows the authenticated user to respond (accept or deny) to a specific contact invitation they have received.
+    -   **Request Body**: `{ "invitationId": "invitationDocId1", "action": "accept" }` (or `"action": "deny"`)
     -   **Backend Logic**: Updates the status of the specified invitation document in Firestore. If `"accept"`:
         -   Changes invitation status to `accepted`.
-        -   Creates a mutual contact relationship in Firestore between the sender and recipient (e.g., in a `contacts` subcollection for each user or a top-level `contactPairs` collection).
-        -   May trigger a notification to the original sender.
-    -   If `"decline"`, changes invitation status to `declined`.
-    -   **Success Response (200 OK)**: `{ "message": "Invitation <accepted/declined> successfully." }`.
-    -   **Error Responses**: `400 Bad Request` (missing fields, invalid action), `404 Not Found` (invitation ID not found or not addressed to current user).
+        -   Creates a mutual contact relationship in Firestore (each user gets the other in their contacts subcollection with full profile data including wallets).
+    -   If `"deny"`, changes invitation status to `denied`.
+    -   **Success Response (200 OK)**: `{ "message": "Invitation <accepted/declined>" }`.
+    -   **Error Responses**: `400 Bad Request` (missing fields, invalid action, invitation already processed), `403 Forbidden` (not authorized to respond), `404 Not Found` (invitation not found).
     -   **Frontend Actions**: After a successful response, remove the invitation from the "Pending Invitations" list. If accepted, update the user's main contact list (or trigger a refresh of that list).
 
 -   **`GET /contacts`**
     -   **Description**: Retrieves the authenticated user's list of established (accepted) contacts.
-    -   **Success Response (200 OK)**: An array of contact objects.
+    -   **Success Response (200 OK)**: 
         ```json
-        [
-          {
-            "contactRelationshipId": "contactPairDocId1", // ID of the document representing the contact link
-            "userId": "friendFirebaseUid1", // The UID of the contact person
-            "email": "friend1@example.com",
-            "displayName": "Friend One", // Display name of the contact
-            "addedAt": "2023-10-25T10:00:00.000Z" // When the contact was established
-          }
-          // ... more contacts
-        ]
+        {
+          "contacts": [
+            {
+              "id": "contactUid1", // Firebase UID of the contact
+              "email": "friend1@example.com",
+              "first_name": "Friend",
+              "last_name": "One", 
+              "phone_number": "+1234567890",
+              "wallets": ["0x1234567890123456789012345678901234567890"]
+            }
+            // ... more contacts
+          ]
+        }
         ```
     -   **Frontend Actions**: Display this list in a "My Contacts" section. This data can be used to populate recipient fields when initiating actions like creating a new deal.
 
 -   **`DELETE /contacts/:contactId`**
     -   **Description**: Allows the authenticated user to remove an established contact from their list.
-    -   **URL Parameter**: `:contactId` is the ID of the contact relationship to be removed (e.g., `contactRelationshipId` from the `GET /contacts` response).
-    -   **Backend Logic**: Deletes the contact relationship document(s) in Firestore.
-    -   **Success Response (200 OK)**: `{ "message": "Contact removed successfully." }`.
-    -   **Error Responses**: `404 Not Found` (contact ID not found or not associated with current user).
-    -   **Frontend Actions**: Remove the contact from the displayed list. Confirm the deletion with the user.
+    -   **URL Parameter**: `:contactId` is the Firebase UID of the contact to be removed.
+    -   **Backend Logic**: Deletes the contact relationship from both users' contact subcollections using a batch operation.
+    -   **Success Response (200 OK)**: `{ "message": "Contact removed successfully" }`.
+    -   **Error Responses**: `400 Bad Request` (invalid contact ID, self-removal), `500 Internal Server Error`.
+    -   **Frontend Actions**: Remove the contact from the displayed list. Consider confirming the deletion with the user.
 
 ## Data Models (Illustrative Firestore Structure)
 

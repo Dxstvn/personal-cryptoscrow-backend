@@ -12,12 +12,12 @@ This directory is responsible for handling user authentication within the Crypto
 ## Key Files & Functionality
 
 -   **`loginSignUp.js`**: This is the core file defining the authentication API endpoints.
-    -   **`POST /auth/signUpEmailPass`**: Allows new users to register with an email and password.
-        -   **Frontend Action**: Collect email, password, and (optionally) display name. Call this endpoint to create the user in Firebase. Handle success (e.g., inform about email verification if enabled) or errors (e.g., email already exists).
-    -   **`POST /auth/signInEmailPass`**: Allows existing users to sign in.
-        -   **Frontend Action**: Collect email and password. While the frontend might use Firebase Client SDK's `signInWithEmailAndPassword` primarily, this endpoint can serve as a backend validation step or if the backend issues its own session tokens (though current setup seems Firebase-centric).
-    -   **`POST /auth/signInGoogle`**: Facilitates user sign-in or sign-up using a Google ID token obtained by the frontend after a successful Google Sign-In flow.
-        -   **Frontend Action**: After Google Sign-In on the client, send the obtained Google ID token to this endpoint. The backend verifies the token, creates a Firebase user if new, and can perform additional checks (like email whitelisting, as seen in the code).
+    -   **`POST /auth/signUpEmailPass`**: Allows new users to register with an email, password, and optional wallet address.
+        -   **Frontend Action**: Collect email, password, and (optionally) wallet address. Call this endpoint to create the user in Firebase and Firestore. Handle success (user created) or errors (e.g., email already exists).
+    -   **`POST /auth/signInEmailPass`**: Allows existing users to sign in and returns an ID token for subsequent API calls.
+        -   **Frontend Action**: Collect email and password. Call this endpoint and store the returned token for authenticated requests. The frontend should also ensure the Firebase Client SDK reflects the authentication state.
+    -   **`POST /auth/signInGoogle`**: Facilitates user sign-in or sign-up using a Google ID token obtained by the frontend after a successful Google Sign-In flow. **Note**: Has email whitelisting in production mode.
+        -   **Frontend Action**: After Google Sign-In on the client, send the obtained Google ID token to this endpoint. The backend verifies the token, creates a Firebase user if new, and performs authorization checks (like email whitelisting in production).
 
 -   **`admin.js`**: Initializes the Firebase Admin SDK (`adminApp`).
     -   **Significance**: The Admin SDK is crucial for backend operations that require administrative privileges over Firebase services. For authentication, this includes:
