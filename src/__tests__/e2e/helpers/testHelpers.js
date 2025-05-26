@@ -13,6 +13,7 @@ const __dirname = path.dirname(__filename);
 // Server management
 let serverProcess = null;
 let app = null;
+let provider = null;
 
 export const startTestServer = async () => {
   try {
@@ -20,8 +21,21 @@ export const startTestServer = async () => {
     const { default: testApp } = await import('../../../api/routes/auth/quicktest.js');
     app = testApp;
     
-    console.log('✅ Test server app loaded successfully');
-    return `http://localhost:${process.env.PORT || 3000}`;
+    // Wait for server to be ready
+    let retries = 5;
+    while (retries > 0) {
+      try {
+        const response = await request(app).get('/health');
+        if (response.status === 200) {
+          console.log('✅ Test server app loaded and ready');
+          return `http://localhost:${process.env.PORT || 3000}`;
+        }
+      } catch (error) {
+        retries--;
+        if (retries === 0) throw error;
+        await delay(1000);
+      }
+    }
   } catch (error) {
     console.error('Failed to load test server app:', error);
     throw error;
@@ -29,18 +43,28 @@ export const startTestServer = async () => {
 };
 
 export const stopTestServer = async () => {
-  // No need to kill process since we're using the app directly
-  app = null;
-  
-  // Terminate Firestore to prevent open handles
   try {
-    await terminate(db);
-    console.log('✅ Firestore connections terminated');
+    // Terminate Firestore to prevent open handles
+    if (db) {
+      await terminate(db);
+      console.log('✅ Firestore connections terminated');
+    }
+    
+    // Terminate provider if exists
+    if (provider) {
+      await provider.destroy();
+      provider = null;
+      console.log('✅ Provider connections terminated');
+    }
+    
+    // Clear app reference
+    app = null;
+    
+    console.log('✅ Test server stopped');
   } catch (error) {
-    console.warn('Failed to terminate Firestore:', error);
+    console.warn('Error during server shutdown:', error);
+    throw error;
   }
-  
-  console.log('✅ Test server stopped');
 };
 
 // Firebase helpers
@@ -154,24 +178,31 @@ export class ApiClient {
 
 // Blockchain helpers
 export const getProvider = async (retries = 5, delayMs = 1000) => {
+  if (provider) {
+    return provider;
+  }
+  
   for (let i = 0; i < retries; i++) {
-  try {
-    const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
+    try {
+      provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
       // Wait for the provider to be ready
       await provider.getNetwork();
-    console.log('✅ Successfully connected to RPC_URL:', process.env.RPC_URL);
-    return provider;
-  } catch (error) {
+      console.log('✅ Successfully connected to RPC_URL:', process.env.RPC_URL);
+      return provider;
+    } catch (error) {
       if (i < retries - 1) {
         console.warn(`Failed to connect to RPC (attempt ${i + 1}/${retries}). Retrying in ${delayMs}ms...`);
         await delay(delayMs);
       } else {
-    console.error('❌ Failed to connect to RPC after multiple retries:', process.env.RPC_URL, error);
-    throw error;
+        console.error('❌ Failed to connect to RPC after multiple retries:', process.env.RPC_URL, error);
+        throw error;
       }
     }
   }
 };
+
+let fundingWalletInstance = null;
+let fundingWalletNonce = null;
 
 export const getWallet = async (privateKey) => {
   console.log('Attempting to create wallet with PK:', privateKey ? `${privateKey.substring(0, 10)}...` : 'undefined');
@@ -201,15 +232,21 @@ export const getWallet = async (privateKey) => {
 };
 
 export const fundTestAccount = async (address, amount = '10') => {
-  // For Hardhat network, we can use the first default account to fund others
-  const fundingWallet = await getWallet('0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80');
+  const provider = await getProvider();
+  if (!fundingWalletInstance) {
+    // For Hardhat network, we can use the first default account to fund others
+    fundingWalletInstance = new ethers.Wallet('ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', provider);
+    fundingWalletNonce = await fundingWalletInstance.getNonce();
+  }
   
-  const tx = await fundingWallet.sendTransaction({
+  const tx = await fundingWalletInstance.sendTransaction({
     to: address,
-    value: ethers.parseEther(amount)
+    value: ethers.parseEther(amount),
+    nonce: fundingWalletNonce
   });
   
   await tx.wait();
+  fundingWalletNonce++; // Increment nonce for the next transaction
   console.log(`✅ Funded ${address} with ${amount} ETH`);
 };
 

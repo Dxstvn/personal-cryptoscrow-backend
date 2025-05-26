@@ -8,7 +8,8 @@ import {
   getWallet,
   fundTestAccount,
   cleanupTestData,
-  delay
+  delay,
+  getProvider
 } from './helpers/testHelpers.js';
 
 describe('E2E Basic Flow Tests - Actual API', () => {
@@ -30,98 +31,131 @@ describe('E2E Basic Flow Tests - Actual API', () => {
     console.log('TEST_USER_A_EMAIL:', process.env.TEST_USER_A_EMAIL);
     console.log('TEST_USER_B_EMAIL:', process.env.TEST_USER_B_EMAIL);
     
-    // Start test server
-    serverUrl = await startTestServer();
-    apiClient = new ApiClient(serverUrl);
-    
-    // Initialize wallets
-    userAWallet = getWallet(process.env.TEST_USER_A_PK);
-    userBWallet = getWallet(process.env.TEST_USER_B_PK);
-    
-    // Fund test wallets
-    await fundTestAccount(userAWallet.address, '1');
-    await fundTestAccount(userBWallet.address, '1');
-    
-    console.log('✅ Basic test environment ready');
-  });
+    try {
+      // Start test server
+      serverUrl = await startTestServer();
+      apiClient = new ApiClient(serverUrl);
+      
+      // Wait for provider to be ready
+      const provider = await getProvider();
+      await provider.getNetwork();
+      
+      // Initialize wallets with proper error handling
+      try {
+        userAWallet = await getWallet(process.env.TEST_USER_A_PK);
+        userBWallet = await getWallet(process.env.TEST_USER_B_PK);
+        
+        // Fund test wallets
+        await fundTestAccount(userAWallet.address, '1');
+        await fundTestAccount(userBWallet.address, '1');
+      } catch (error) {
+        console.error('Failed to initialize wallets:', error);
+        throw error;
+      }
+      
+      console.log('✅ Basic test environment ready');
+    } catch (error) {
+      console.error('Failed to setup test environment:', error);
+      throw error;
+    }
+  }, 30000); // Increase timeout to 30 seconds
   
   afterAll(async () => {
-    // Cleanup test data
-    await cleanupTestData(createdUserIds);
-    
-    // Stop test server
-    await stopTestServer();
-    
-    console.log('✅ Basic E2E tests complete');
+    try {
+      // Cleanup test data
+      await cleanupTestData(createdUserIds);
+      
+      // Stop test server
+      await stopTestServer();
+      
+      console.log('✅ Basic E2E tests complete');
+    } catch (error) {
+      console.error('Failed to cleanup:', error);
+      throw error;
+    }
   });
   
   describe('User Authentication and Basic Operations', () => {
     test('Users can sign up and login via API', async () => {
-      // User A Signup
-      const userASignupData = {
-        email: process.env.TEST_USER_A_EMAIL,
-        password: process.env.TEST_USER_A_PASSWORD,
-        walletAddress: userAWallet.address // Assuming your signup takes this
-      };
-      let response = await apiClient.post('/auth/signUpEmailPass', userASignupData);
-      
-      console.log('Signup response:', {
-        status: response.status,
-        body: response.body,
-        text: response.text
-      });
-      
-      expect(response.status).toBe(201); // Or whatever your signup success code is
-      expect(response.body.message).toContain('successful'); // Or similar
-      // It's good to get the UID from the response if possible, to add to createdUserIds
-      // For now, we'll rely on login to get the user object later for cleanup if needed.
+      try {
+        // User A Signup
+        const userASignupData = {
+          email: process.env.TEST_USER_A_EMAIL,
+          password: process.env.TEST_USER_A_PASSWORD,
+          walletAddress: userAWallet.address
+        };
+        let response = await apiClient.post('/auth/signUpEmailPass', userASignupData);
+        
+        console.log('Signup response:', {
+          status: response.status,
+          body: response.body
+        });
+        
+        expect(response.status).toBe(201);
+        expect(response.body.message).toContain('successful');
 
-      // User B Signup
-      const userBSignupData = {
-        email: process.env.TEST_USER_B_EMAIL,
-        password: process.env.TEST_USER_B_PASSWORD,
-        walletAddress: userBWallet.address
-      };
-      response = await apiClient.post('/auth/signUpEmailPass', userBSignupData);
-      expect(response.status).toBe(201);
+        // User B Signup
+        const userBSignupData = {
+          email: process.env.TEST_USER_B_EMAIL,
+          password: process.env.TEST_USER_B_PASSWORD,
+          walletAddress: userBWallet.address
+        };
+        response = await apiClient.post('/auth/signUpEmailPass', userBSignupData);
+        expect(response.status).toBe(201);
 
-      // User A Login
-      const userALoginData = {
-        email: process.env.TEST_USER_A_EMAIL,
-        password: process.env.TEST_USER_A_PASSWORD,
-      };
-      response = await apiClient.post('/auth/signInEmailPass', userALoginData);
-      expect(response.status).toBe(200);
-      expect(response.body.token).toBeTruthy();
-      userA = { email: userALoginData.email, idToken: response.body.token, uid: response.body.user.uid }; // Assuming login returns uid
-      createdUserIds.push(userA.uid); // Add UID for cleanup
-      apiClient.setAuthToken(userA.idToken); // Set token for subsequent requests for User A
+        // User A Login
+        const userALoginData = {
+          email: process.env.TEST_USER_A_EMAIL,
+          password: process.env.TEST_USER_A_PASSWORD,
+        };
+        response = await apiClient.post('/auth/signInEmailPass', userALoginData);
+        expect(response.status).toBe(200);
+        expect(response.body.token).toBeTruthy();
+        userA = { 
+          email: userALoginData.email, 
+          idToken: response.body.token, 
+          uid: response.body.user.uid 
+        };
+        createdUserIds.push(userA.uid);
+        apiClient.setAuthToken(userA.idToken);
 
-      // User B Login
-      const userBLoginData = {
-        email: process.env.TEST_USER_B_EMAIL,
-        password: process.env.TEST_USER_B_PASSWORD,
-      };
-      response = await apiClient.post('/auth/signInEmailPass', userBLoginData);
-      expect(response.status).toBe(200);
-      expect(response.body.token).toBeTruthy();
-      userB = { email: userBLoginData.email, idToken: response.body.token, uid: response.body.user.uid };
-      createdUserIds.push(userB.uid);
+        // User B Login
+        const userBLoginData = {
+          email: process.env.TEST_USER_B_EMAIL,
+          password: process.env.TEST_USER_B_PASSWORD,
+        };
+        response = await apiClient.post('/auth/signInEmailPass', userBLoginData);
+        expect(response.status).toBe(200);
+        expect(response.body.token).toBeTruthy();
+        userB = { 
+          email: userBLoginData.email, 
+          idToken: response.body.token, 
+          uid: response.body.user.uid 
+        };
+        createdUserIds.push(userB.uid);
 
-      console.log('✅ Users signed up and logged in successfully via API');
-    });
+        console.log('✅ Users signed up and logged in successfully via API');
+      } catch (error) {
+        console.error('Authentication test failed:', error);
+        throw error;
+      }
+    }, 15000); // Increase timeout for auth test
     
     test('Health check endpoint works', async () => {
-      const response = await apiClient.get('/health');
-      
-      console.log('Health check response:', {
-        status: response.status,
-        body: response.body,
-        text: response.text
-      });
-      
-      expect(response.status).toBe(200);
-      console.log('✅ Health check passed');
+      try {
+        const response = await apiClient.get('/health');
+        
+        console.log('Health check response:', {
+          status: response.status,
+          body: response.body
+        });
+        
+        expect(response.status).toBe(200);
+        console.log('✅ Health check passed');
+      } catch (error) {
+        console.error('Health check failed:', error);
+        throw error;
+      }
     });
   });
   

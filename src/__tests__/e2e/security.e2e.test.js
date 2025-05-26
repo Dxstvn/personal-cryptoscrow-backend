@@ -375,16 +375,19 @@ describe('E2E Security and Edge Case Tests', () => {
       apiClient.setAuthToken(userA.idToken);
       
       // Try to create multiple transactions concurrently
-      const transactions = Array(3).fill(null).map((_, i) => 
-        apiClient.post('/transaction/create', {
+      const transactions = Array(3).fill(null).map(async (_, i) => {
+        const buyerWallet = await getWallet(process.env.TEST_USER_A_PK);
+        const sellerWallet = await getWallet(process.env.TEST_USER_B_PK);
+        
+        return apiClient.post('/transaction/create', {
           initiatedBy: 'BUYER',
           propertyAddress: `${200 + i} Race Condition Ave`,
           amount: 0.01,
           otherPartyEmail: userB.email,
-          buyerWalletAddress: getWallet(process.env.TEST_USER_A_PK).address,
-          sellerWalletAddress: getWallet(process.env.TEST_USER_B_PK).address
-        })
-      );
+          buyerWalletAddress: buyerWallet.address,
+          sellerWalletAddress: sellerWallet.address
+        });
+      });
       
       const results = await Promise.allSettled(transactions);
       const successful = results.filter(r => r.status === 'fulfilled' && r.value.status === 201);
