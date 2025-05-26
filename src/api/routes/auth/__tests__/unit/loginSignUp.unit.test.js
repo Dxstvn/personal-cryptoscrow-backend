@@ -14,6 +14,9 @@ let mockVerifyIdToken;
 let mockAdminGetAuth; // For firebase-admin/auth
 let mockAdminAuthInstance; // The object returned by admin getAuth
 
+let mockGetFirestore; // For firebase-admin/firestore
+let mockFirestoreInstance; // The mock database instance
+
 // Mock firebase/auth (Client SDK)
 jest.unstable_mockModule('firebase/auth', () => {
   mockClientAuthInstance = { name: 'MockClientAuthInstance' }; 
@@ -43,6 +46,27 @@ jest.unstable_mockModule('firebase-admin/auth', () => {
 
   return {
     getAuth: mockAdminGetAuth, 
+  };
+});
+
+// Mock firebase-admin/firestore (Admin SDK)
+jest.unstable_mockModule('firebase-admin/firestore', () => {
+  const mockDoc = {
+    set: jest.fn().mockResolvedValue({}),
+  };
+  
+  const mockCollection = {
+    doc: jest.fn(() => mockDoc),
+  };
+  
+  mockFirestoreInstance = {
+    collection: jest.fn(() => mockCollection),
+  };
+  
+  mockGetFirestore = jest.fn(() => mockFirestoreInstance);
+
+  return {
+    getFirestore: mockGetFirestore,
   };
 });
 
@@ -113,7 +137,10 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       expect(mockAdminGetAuth).toHaveBeenCalledWith(adminAppMock);
       expect(mockSetCustomUserClaims).toHaveBeenCalledWith(mockUserPayload.uid, { admin: true });
       expect(res.status).toHaveBeenCalledWith(201);
-      expect(res.json).toHaveBeenCalledWith({ message: 'User created', uid: mockUserPayload.uid });
+      expect(res.json).toHaveBeenCalledWith({ 
+        message: 'User created successfully', 
+        user: { uid: mockUserPayload.uid, email: mockUserPayload.email } 
+      });
     });
 
     it('should create a user successfully (test env - no claims set)', async () => {
@@ -135,7 +162,10 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       expect(mockAdminGetAuth).not.toHaveBeenCalled();
       expect(mockSetCustomUserClaims).not.toHaveBeenCalled(); 
       expect(res.status).toHaveBeenCalledWith(201);
-      expect(res.json).toHaveBeenCalledWith({ message: 'User created', uid: mockUserPayload.uid });
+      expect(res.json).toHaveBeenCalledWith({ 
+        message: 'User created successfully', 
+        user: { uid: mockUserPayload.uid, email: mockUserPayload.email } 
+      });
     });
 
     it('should return 400 if email or password is missing', async () => {
@@ -151,7 +181,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       expect(mockCreateUserWithEmailAndPassword).not.toHaveBeenCalled();
     });
 
-    it('should return 401 if email already in use', async () => {
+    it('should return 409 if email already in use', async () => {
       mockCreateUserWithEmailAndPassword.mockRejectedValue({ code: 'auth/email-already-in-use' });
       const req = mockRequest({ email: 'test@example.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
@@ -160,11 +190,11 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       
       await new Promise(resolve => setImmediate(resolve));
 
-      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.status).toHaveBeenCalledWith(409);
       expect(res.json).toHaveBeenCalledWith({ error: 'Email already in use' });
     });
 
-    it('should return 401 for other Firebase errors during sign up', async () => {
+    it('should return 400 for other Firebase errors during sign up', async () => {
       const errorMessage = 'Some Firebase error';
       mockCreateUserWithEmailAndPassword.mockRejectedValue({ code: 'auth/some-other-error', message: errorMessage });
       const req = mockRequest({ email: 'test@example.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
@@ -174,7 +204,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       
       await new Promise(resolve => setImmediate(resolve));
 
-      expect(res.status).toHaveBeenCalledWith(401); 
+      expect(res.status).toHaveBeenCalledWith(400); 
       expect(res.json).toHaveBeenCalledWith({ error: errorMessage });
     });
   });
@@ -186,7 +216,11 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
     it('should sign in user successfully (test env)', async () => {
       process.env.NODE_ENV = 'test';
-      const mockUserPayload = { uid: 'testUid', email: 'test@example.com' }; 
+      const mockUserPayload = { 
+        uid: 'testUid', 
+        email: 'test@example.com',
+        getIdToken: jest.fn().mockResolvedValue('mock-id-token')
+      }; 
       mockSignInWithEmailAndPassword.mockResolvedValue({ user: mockUserPayload });
 
       const req = mockRequest({ email: 'test@example.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
@@ -203,12 +237,20 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       expect(mockAdminGetAuth).not.toHaveBeenCalled();
       expect(mockGetUser_admin).not.toHaveBeenCalled(); 
       expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({ message: 'User signed in', uid: mockUserPayload.email }); 
+      expect(res.json).toHaveBeenCalledWith({ 
+        message: 'User signed in successfully', 
+        token: 'mock-id-token',
+        user: { uid: mockUserPayload.uid, email: mockUserPayload.email } 
+      }); 
     });
 
     it('should sign in admin user successfully (non-test env)', async () => {
       process.env.NODE_ENV = 'development';
-      const mockUserPayload = { uid: 'testUid', email: 'admin@example.com' };
+      const mockUserPayload = { 
+        uid: 'testUid', 
+        email: 'admin@example.com',
+        getIdToken: jest.fn().mockResolvedValue('mock-admin-id-token')
+      };
       mockSignInWithEmailAndPassword.mockResolvedValue({ user: mockUserPayload });
       mockGetUser_admin.mockResolvedValue({ uid: mockUserPayload.uid, customClaims: { admin: true } });
 
@@ -226,12 +268,20 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       expect(mockAdminGetAuth).toHaveBeenCalledWith(adminAppMock);
       expect(mockGetUser_admin).toHaveBeenCalledWith(mockUserPayload.uid);
       expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith({ message: 'User signed in', uid: mockUserPayload.email });
+      expect(res.json).toHaveBeenCalledWith({ 
+        message: 'User signed in successfully', 
+        token: 'mock-admin-id-token',
+        user: { uid: mockUserPayload.uid, email: mockUserPayload.email } 
+      });
     });
 
     it('should return 401 if non-admin user signs in (non-test env and admin check is enforced)', async () => {
       process.env.NODE_ENV = 'development';
-      const mockUserPayload = { uid: 'testUid', email: 'user@example.com' };
+      const mockUserPayload = { 
+        uid: 'testUid', 
+        email: 'user@example.com',
+        getIdToken: jest.fn().mockResolvedValue('mock-user-id-token')
+      };
       mockSignInWithEmailAndPassword.mockResolvedValue({ user: mockUserPayload });
       mockGetUser_admin.mockResolvedValue({ uid: mockUserPayload.uid, customClaims: { admin: false } }); 
 
@@ -271,7 +321,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       await new Promise(resolve => setImmediate(resolve));
 
       expect(res.status).toHaveBeenCalledWith(401);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid password' });
+      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid credentials' });
     });
 
     it('should return 401 for user not found during sign in', async () => {
@@ -501,7 +551,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
         expect(mockAdminGetAuth).toHaveBeenCalledWith(adminAppMock);
         expect(mockVerifyIdToken).toHaveBeenCalledWith('tokenCausingInternalError', true);
         expect(res.status).toHaveBeenCalledWith(500);
-        expect(res.json).toHaveBeenCalledWith({ error: errorMessage });
+        expect(res.json).toHaveBeenCalledWith({ error: 'An internal error occurred during authentication.' });
       });
     });
   });

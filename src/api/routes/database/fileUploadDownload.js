@@ -9,6 +9,7 @@ import { adminApp } from '../auth/admin.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
+import { fileUploadRateLimit } from '../../middleware/securityMiddleware.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,61 +33,185 @@ async function authenticateToken(req, res, next) {
   }
 }
 
-// Configure multer for memory storage
+// Enhanced file validation
+const fileFilter = (req, file, cb) => {
+  // Allowed MIME types
+  const allowedMimeTypes = [
+    'application/pdf',
+    'image/jpeg',
+    'image/jpg',
+    'image/png',
+    'image/gif',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  ];
+
+  // Allowed extensions
+  const allowedExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.doc', '.docx'];
+  
+  const fileExtension = path.extname(file.originalname).toLowerCase();
+  
+  if (!allowedMimeTypes.includes(file.mimetype)) {
+    return cb(new Error(`File type not allowed. Allowed types: ${allowedMimeTypes.join(', ')}`), false);
+  }
+  
+  if (!allowedExtensions.includes(fileExtension)) {
+    return cb(new Error(`File extension not allowed. Allowed extensions: ${allowedExtensions.join(', ')}`), false);
+  }
+
+  // Sanitize filename
+  const sanitizedName = file.originalname
+    .replace(/[^a-zA-Z0-9.-]/g, '_') // Replace special chars with underscore
+    .replace(/_{2,}/g, '_') // Replace multiple underscores with single
+    .substring(0, 100); // Limit filename length
+
+  file.originalname = sanitizedName;
+  
+  cb(null, true);
+};
+
+// Validate file magic numbers (first few bytes) for additional security
+const validateFileSignature = (buffer, mimetype) => {
+  const signatures = {
+    'application/pdf': [0x25, 0x50, 0x44, 0x46], // %PDF
+    'image/jpeg': [0xFF, 0xD8, 0xFF],
+    'image/png': [0x89, 0x50, 0x4E, 0x47],
+    'image/gif': [0x47, 0x49, 0x46],
+    'application/msword': [0xD0, 0xCF, 0x11, 0xE0],
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': [0x50, 0x4B, 0x03, 0x04]
+  };
+
+  const signature = signatures[mimetype];
+  if (!signature) return false;
+
+  for (let i = 0; i < signature.length; i++) {
+    if (buffer[i] !== signature[i]) return false;
+  }
+  return true;
+};
+
+// Configure multer with enhanced security
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { 
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+    files: 1, // Only allow 1 file per request
+    fieldSize: 1024 * 1024, // 1MB field size limit
+    fieldNameSize: 100, // Limit field name size
+    headerPairs: 20 // Limit number of header pairs
+  },
+  fileFilter: fileFilter
 });
 
-// Upload endpoint
-router.post('/upload', authenticateToken, upload.single('file'), async (req, res) => {
+// Apply rate limiting to upload endpoint
+router.use('/upload', fileUploadRateLimit);
+
+// Error handling middleware for multer errors
+const handleMulterErrors = (err, req, res, next) => {
+  if (err) {
+    console.error('Multer error:', err.message);
+    
+    // Handle multer-specific errors
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'File too large. Maximum size is 5MB.' });
+      }
+      if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+        return res.status(400).json({ error: 'Unexpected file field.' });
+      }
+    }
+    
+    // Handle fileFilter errors
+    if (err.message && (err.message.includes('File type not allowed') || err.message.includes('File extension not allowed'))) {
+      return res.status(400).json({ error: 'Invalid file type' });
+    }
+    
+    // Default error response
+    return res.status(400).json({ error: err.message || 'File upload error' });
+  }
+  next();
+};
+
+// Upload endpoint with enhanced security
+router.post('/upload', authenticateToken, upload.single('file'), handleMulterErrors, async (req, res) => {
   try {
     const { dealId } = req.body;
     const userId = req.userId;
+
     if (!req.file || !dealId || !userId) {
       return res.status(400).json({ error: 'Missing file, dealId, or userId' });
     }
 
-    // Check if deal exists
+    // Validate file signature
+    if (!validateFileSignature(req.file.buffer, req.file.mimetype)) {
+      return res.status(400).json({ error: 'File signature does not match declared type' });
+    }
+
+    // Additional dealId validation
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(dealId)) {
+      return res.status(400).json({ error: 'Invalid dealId format' });
+    }
+
+    // Check if deal exists and user has permission
     const dealRef = db.collection('deals').doc(dealId);
     const dealDoc = await dealRef.get();
     if (!dealDoc.exists) {
       return res.status(404).json({ error: 'Deal not found' });
     }
 
-    // Restrict file types
-    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png'];
-    if (!allowedTypes.includes(req.file.mimetype)) {
-      return res.status(400).json({ error: 'Invalid file type' });
+    const dealData = dealDoc.data();
+    if (!dealData.participants || !dealData.participants.includes(userId)) {
+      return res.status(403).json({ error: 'Unauthorized access to this deal' });
     }
 
-    // Generate unique filename with dealId prefix
-    
-    // In the POST /upload route, after generating the filename and uploading the file
-  const filename = `deals/${dealId}/${uuidv4()}-${req.file.originalname}`;
-  const storageRef = ref(storage, filename);
-  await uploadBytes(storageRef, req.file.buffer, { contentType: req.file.mimetype });
-  const publicUrl = await getDownloadURL(storageRef);
+    // Generate secure file ID and path
+    const fileId = uuidv4();
+    const fileExtension = path.extname(req.file.originalname).toLowerCase();
+    const storagePath = `deals/${dealId}/${fileId}${fileExtension}`;
 
-  // Store metadata in Firestore, including storagePath
-  const fileRef = await dealRef.collection('files').add({
-    filename: req.file.originalname,
-    storagePath: filename, // Add the full storage path
-    url: publicUrl,
-    contentType: req.file.mimetype,
-    size: req.file.size,
-    uploadedAt: new Date(),
-    uploadedBy: userId,
-});
+    // Upload to Firebase Storage
+    const storageRef = ref(storage, storagePath);
+    const uploadResult = await uploadBytes(storageRef, req.file.buffer, {
+      contentType: req.file.mimetype,
+      customMetadata: {
+        uploadedBy: userId,
+        uploadedAt: new Date().toISOString(),
+        originalName: req.file.originalname,
+        dealId: dealId
+      }
+    });
+
+    const downloadURL = await getDownloadURL(uploadResult.ref);
+
+    // Store metadata in Firestore
+    const fileMetadata = {
+      filename: req.file.originalname,
+      storagePath: storagePath,
+      contentType: req.file.mimetype,
+      size: req.file.size,
+      uploadedAt: new Date(),
+      uploadedBy: userId,
+      url: downloadURL,
+      dealId: dealId
+    };
+
+    await dealRef.collection('files').doc(fileId).set(fileMetadata);
 
     res.status(200).json({
       message: 'File uploaded successfully',
-      fileId: fileRef.id,
-      url: publicUrl,
+      fileId: fileId,
+      url: downloadURL
     });
+
   } catch (error) {
-    console.error('Error in upload route:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('File upload error:', error.code || error.message);
+    
+    // Handle validation errors
+    if (error.message && error.message.includes('File signature does not match')) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.status(500).json({ error: 'Internal server error during file upload' });
   }
 });
 

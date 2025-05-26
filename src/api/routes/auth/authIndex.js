@@ -2,7 +2,7 @@ import { initializeApp } from "firebase/app";
 import { getAuth, connectAuthEmulator } from "firebase/auth"; // Import connectAuthEmulator
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
 import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
-import 'dotenv/config';
+import '../../../config/env.js';
 
 // Use test configuration if we're in a test environment
 const isTest = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test';

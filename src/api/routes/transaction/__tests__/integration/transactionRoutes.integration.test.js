@@ -1,29 +1,45 @@
 // src/api/routes/transaction/__tests__/transactionRoutes.test.js
-import request from 'supertest';
-import express from 'express';
-import transactionRoutes from '../../transactionRoutes.js';
 import { jest, describe, it, expect, beforeEach, beforeAll, afterAll } from '@jest/globals';
-import { Timestamp } from 'firebase-admin/firestore';
-import { adminFirestore, PROJECT_ID } from '../../../../../../jest.emulator.setup.js';
-import { deleteAdminApp } from '../../../auth/admin.js';
-import { createTestUser, cleanUp } from '../../../../../helperFunctions.js';
 
-// --- Mocking ethers ---
+// Mock the 'ethers' module using unstable mocking for ESM
 const mockIsAddress = jest.fn();
 const mockGetAddress = jest.fn();
 const mockParseUnits = jest.fn();
+const mockJsonRpcProvider = jest.fn();
+const mockWallet = jest.fn();
+const mockContractFactory = jest.fn();
+const mockContract = jest.fn();
 
-// Mock the 'ethers' module BEFORE it's imported by transactionRoutes.js
-// This is Jest's recommended way for ES Modules.
-jest.mock('ethers', () => {
-    // console.log('[DEBUG] jest.mock("ethers") factory executed'); // See if/when this runs
-    return {
-        __esModule: true,
+jest.unstable_mockModule('ethers', () => ({
+    __esModule: true,
+    isAddress: mockIsAddress,
+    getAddress: mockGetAddress,
+    parseUnits: mockParseUnits,
+    JsonRpcProvider: mockJsonRpcProvider,
+    Wallet: mockWallet,
+    ContractFactory: mockContractFactory,
+    Contract: mockContract,
+    ethers: {
         isAddress: mockIsAddress,
         getAddress: mockGetAddress,
         parseUnits: mockParseUnits,
-    };
-});
+        JsonRpcProvider: mockJsonRpcProvider,
+        Wallet: mockWallet,
+        ContractFactory: mockContractFactory,
+        Contract: mockContract,
+    }
+}));
+
+// Now import everything else after setting up the mock
+const { default: request } = await import('supertest');
+const { default: express } = await import('express');
+const { Timestamp } = await import('firebase-admin/firestore');
+const { adminFirestore, PROJECT_ID } = await import('../../../../../../jest.emulator.setup.js');
+const { deleteAdminApp } = await import('../../../auth/admin.js');
+const { createTestUser, cleanUp } = await import('../../../../../helperFunctions.js');
+
+// Import the module under test AFTER setting up the mock
+const { default: transactionRoutes } = await import('../../transactionRoutes.js');
 
 jest.setTimeout(60000);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -71,8 +87,37 @@ beforeEach(async () => {
         if (isNaN(numValue) || !isFinite(numValue)) {
             throw new Error(`Mock parseUnits: Invalid number value "${value}"`);
         }
-        return BigInt(Math.floor(numValue * (10 ** Number(decimals))));
+        
+        // Handle 'ether' and other string units
+        let decimalPlaces = 18; // Default for 'ether'
+        if (typeof decimals === 'number') {
+            decimalPlaces = decimals;
+        } else if (decimals === 'ether') {
+            decimalPlaces = 18;
+        } else if (decimals === 'gwei') {
+            decimalPlaces = 9;
+        } else if (decimals === 'wei') {
+            decimalPlaces = 0;
+        }
+        
+        // Use string arithmetic to avoid precision issues with large numbers
+        const multiplier = '1' + '0'.repeat(decimalPlaces);
+        const intValue = Math.floor(numValue * Math.pow(10, Math.min(decimalPlaces, 15))); // Limit precision
+        
+        if (decimalPlaces <= 15) {
+            return BigInt(intValue);
+        } else {
+            // For larger decimal places like ether (18), multiply by remaining power of 10
+            const remaining = decimalPlaces - 15;
+            return BigInt(intValue) * BigInt('1' + '0'.repeat(remaining));
+        }
     });
+    
+    // Reset other ethers mocks
+    mockJsonRpcProvider.mockReset();
+    mockWallet.mockReset();
+    mockContractFactory.mockReset();
+    mockContract.mockReset();
 
     try {
         const timestamp = Date.now();

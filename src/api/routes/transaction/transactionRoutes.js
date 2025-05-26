@@ -19,14 +19,13 @@ async function authenticateToken(req, res, next) {
         return res.status(401).json({ error: 'Authentication token is required.' });
     }
     try {
-        console.log(`[ROUTE DEBUG] Extracted token in authenticateToken: '${token}'`);
         const auth = getAdminAuth(adminApp);
         const decodedToken = await auth.verifyIdToken(token);
         req.userId = decodedToken.uid;
         req.userEmail = decodedToken.email;
         next();
     } catch (err) {
-        console.error('[ROUTE AUTH ERROR] Auth: Invalid or expired token.', err.code || err.message);
+        console.error('[ROUTE AUTH ERROR] Authentication failed:', err.code || 'Unknown error');
         return res.status(403).json({ error: 'Authentication failed. Invalid or expired token.' });
     }
 }
@@ -44,35 +43,7 @@ router.post('/create', authenticateToken, async (req, res) => {
         initialConditions, buyerWalletAddress, sellerWalletAddress
     } = req.body;
 
-    // --- TEMPORARY DEBUG LOGS ---
-    console.log(`[ROUTE LOG] /create - Request body received:`, JSON.stringify(req.body, null, 2));
-    console.log(`[ROUTE LOG] /create - Destructured buyerWalletAddress: "${buyerWalletAddress}" (type: ${typeof buyerWalletAddress})`);
-    console.log(`[ROUTE LOG] /create - Destructured sellerWalletAddress: "${sellerWalletAddress}" (type: ${typeof sellerWalletAddress})`);
 
-    let isBuyerAddrValidRouteCheck = false;
-    if (buyerWalletAddress && typeof buyerWalletAddress === 'string') {
-        try {
-            isBuyerAddrValidRouteCheck = isAddress(buyerWalletAddress); // Call the actual/mocked isAddress
-            console.log(`[ROUTE LOG] /create - Result of isAddress("${buyerWalletAddress}"): ${isBuyerAddrValidRouteCheck}`);
-        } catch (e) {
-            console.error(`[ROUTE LOG] /create - Error calling isAddress on buyerWalletAddress ("${buyerWalletAddress}"):`, e.message);
-        }
-    } else {
-        console.log(`[ROUTE LOG] /create - buyerWalletAddress is null, undefined, or not a string.`);
-    }
-
-    let isSellerAddrValidRouteCheck = false;
-    if (sellerWalletAddress && typeof sellerWalletAddress === 'string') {
-        try {
-            isSellerAddrValidRouteCheck = isAddress(sellerWalletAddress);
-            console.log(`[ROUTE LOG] /create - Result of isAddress("${sellerWalletAddress}"): ${isSellerAddrValidRouteCheck}`);
-        } catch (e) {
-            console.error(`[ROUTE LOG] /create - Error calling isAddress on sellerWalletAddress ("${sellerWalletAddress}"):`, e.message);
-        }
-    } else {
-        console.log(`[ROUTE LOG] /create - sellerWalletAddress is null, undefined, or not a string.`);
-    }
-    // --- END TEMPORARY DEBUG LOGS ---
 
     // --- Input Validations ---
     if (!initiatedBy || (initiatedBy !== 'BUYER' && initiatedBy !== 'SELLER')) {
@@ -88,16 +59,13 @@ router.post('/create', authenticateToken, async (req, res) => {
         return res.status(400).json({ error: 'Valid other party email is required.' });
     }
 
-    // This is the critical validation block
-    if (!buyerWalletAddress || !isAddress(buyerWalletAddress)) { // Re-check for logging context
-        console.error(`[ROUTE VALIDATION FAIL] Failing buyer wallet validation. Buyer Wallet: "${buyerWalletAddress}", isAddress Result: ${isBuyerAddrValidRouteCheck}`);
+    // Wallet address validation
+    if (!buyerWalletAddress || !isAddress(buyerWalletAddress)) {
         return res.status(400).json({ error: 'Valid buyer wallet address is required.' });
     }
-    if (!sellerWalletAddress || !isAddress(sellerWalletAddress)) { // Re-check for logging context
-        console.error(`[ROUTE VALIDATION FAIL] Failing seller wallet validation. Seller Wallet: "${sellerWalletAddress}", isAddress Result: ${isSellerAddrValidRouteCheck}`);
+    if (!sellerWalletAddress || !isAddress(sellerWalletAddress)) {
         return res.status(400).json({ error: 'Valid seller wallet address is required.' });
     }
-    // End critical validation block
 
     if (initialConditions && (!Array.isArray(initialConditions) || !initialConditions.every(c => c && typeof c.id === 'string' && c.id.trim() !== '' && typeof c.description === 'string' && typeof c.type === 'string'))) {
         return res.status(400).json({ error: 'Initial conditions must be an array of objects with non-empty "id", "type", and "description".' });

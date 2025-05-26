@@ -82,8 +82,9 @@ describe('Authentication Routes', () => {
           .send(mockUser);
 
         expect(response.status).toBe(201);
-        expect(response.body).toHaveProperty('uid');
-        expect(response.body).toHaveProperty('message', 'User created');
+        expect(response.body).toHaveProperty('user');
+        expect(response.body.user).toHaveProperty('uid');
+        expect(response.body).toHaveProperty('message', 'User created successfully');
       } catch (error) {
         console.error('Test error:', error);
         throw error;
@@ -126,7 +127,7 @@ describe('Authentication Routes', () => {
         .post('/auth/signUpEmailPass')
         .send(mockUserDuplicate);
 
-      expect(response.status).toBe(401);
+      expect(response.status).toBe(409);
       expect(response.body).toEqual({ error: 'Email already in use' });
     });
   });
@@ -147,8 +148,9 @@ describe('Authentication Routes', () => {
         .send(mockUser);
 
       expect(response.status).toBe(200);
-      expect(response.body).toHaveProperty('uid');
-      expect(response.body).toHaveProperty('message', 'User signed in');
+      expect(response.body).toHaveProperty('user');
+      expect(response.body.user).toHaveProperty('uid');
+      expect(response.body).toHaveProperty('message', 'User signed in successfully');
     });
 
     it('should reject sign-in with invalid password', async () => {
@@ -160,7 +162,7 @@ describe('Authentication Routes', () => {
         });
 
       expect(response.status).toBe(401);
-      expect(response.body).toEqual({ error: 'Invalid password' });
+      expect(response.body).toEqual({ error: 'Invalid credentials' });
     });
 
     it('should reject sign-in for non-existent user', async () => {

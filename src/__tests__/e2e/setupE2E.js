@@ -39,13 +39,14 @@ beforeAll(async () => {
     if (!process.env[envVar]) {
       throw new Error(`Missing required environment variable: ${envVar}`);
     }
-    // Log the PK values to ensure they are loaded
-    if (envVar.endsWith('_PK')) {
+    // Log only non-sensitive environment variables for debugging
+    if (envVar.endsWith('_EMAIL') || envVar === 'RPC_URL') {
       console.log(`Loaded ${envVar}: ${process.env[envVar]}`);
-    }
-    // Log password variables (first few chars only for security)
-    if (envVar.endsWith('_PASSWORD')) {
-      console.log(`Loaded ${envVar}: ${process.env[envVar].substring(0, 3)}...`);
+    } else if (envVar.includes('EMULATOR_HOST')) {
+      console.log(`Loaded ${envVar}: ${process.env[envVar]}`);
+    } else {
+      // For sensitive variables, just confirm they're loaded
+      console.log(`Loaded ${envVar}: [CONFIGURED]`);
     }
   }
   

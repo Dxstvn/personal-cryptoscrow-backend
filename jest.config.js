@@ -19,6 +19,10 @@ const config = {
   coverageDirectory: 'coverage',
   coverageReporters: ['json', 'text', 'lcov', 'clover'],
 
+  // Increase timeouts for integration tests that need emulators
+  testTimeout: 90000, // 90 seconds for integration tests with emulator startup
+  setupFilesAfterEnv: [],
+
   // No 'extensionsToTreatAsEsm' needed when type: "module" is in package.json for .js files.
   // No 'transform' needed if Babel is removed and we rely on native Node ESM support via --experimental-vm-modules.
   // Jest will use its default mechanisms.

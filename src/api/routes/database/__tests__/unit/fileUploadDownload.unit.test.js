@@ -408,6 +408,18 @@ jest.unstable_mockModule('../../../auth/admin.js', () => {
   };
 });
 
+// Mocking securityMiddleware.js for rate limiting
+jest.unstable_mockModule('../../../../middleware/securityMiddleware.js', () => {
+  console.log('[LOG] unstable_mockModule factory for "../../../../middleware/securityMiddleware.js" executing');
+  return {
+    fileUploadRateLimit: jest.fn((req, res, next) => {
+      console.log('[LOG MOCK] fileUploadRateLimit middleware called - passing through');
+      next(); // Just pass through for tests
+    }),
+    // Add other middleware exports if needed
+  };
+});
+
 console.log('[LOG] All unstable_mockModule calls processed.');
 
 // Declare variables for modules to be imported dynamically
@@ -554,7 +566,8 @@ describe('File Upload/Download Routes (Unit)', () => {
     console.log('[LOG TEST GROUP] Starting tests for POST /upload/:dealId');
     it('should upload a file successfully and return 201', async () => {
       console.log('[LOG TEST] POST /upload: successful upload');
-      const mockFileBuffer = Buffer.from('This is a test file content.');
+      // Create a buffer with proper JPEG signature
+      const mockFileBuffer = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, ...Buffer.from('fake jpeg data')]);
       const mockFileName = 'test-upload.jpg';
       const mockFileMimeType = 'image/jpeg';
 
@@ -582,35 +595,8 @@ describe('File Upload/Download Routes (Unit)', () => {
       mocks.databaseServiceAddFileMetadata.mockResolvedValue({ id: testFileId }); // Not directly used by route
 
       // Mock client-side Firebase Storage operations (used by the route)
-      const mockUploadTaskSnapshot = {
-        state: 'success',
-        bytesTransferred: mockFileBuffer.length,
-        totalBytes: mockFileBuffer.length,
-        ref: mockClientStorageReferenceInstance, // Use the static mock instance
-         metadata: {
-            name: mockFileName,
-            contentType: mockFileMimeType,
-            size: mockFileBuffer.length,
-            updated: new Date().toISOString(),
-        },
-      };
       mocks.clientStorageRef.mockReturnValue(mockClientStorageReferenceInstance);
-      mocks.clientUploadBytesResumable.mockImplementation((ref, buffer, metadata) => {
-        const uploadTask = {
-          on: jest.fn((event, progress, error, complete) => {
-            if (event === 'state_changed' && complete) {
-              process.nextTick(() => complete(mockUploadTaskSnapshot));
-            }
-            return uploadTask;
-          }),
-          then: jest.fn(onFulfilled => Promise.resolve(onFulfilled(mockUploadTaskSnapshot))),
-          catch: jest.fn(),
-          pause: jest.fn(),
-          resume: jest.fn(),
-          cancel: jest.fn(),
-        };
-        return uploadTask;
-      });
+      mocks.clientUploadBytes.mockResolvedValue({ ref: mockClientStorageReferenceInstance });
       mocks.clientGetDownloadURL.mockResolvedValue(`https://firebasestorage.googleapis.com/v0/b/mock-bucket/o/${mockFileName}?alt=media`);
 
       const response = await request(app)
@@ -635,8 +621,9 @@ describe('File Upload/Download Routes (Unit)', () => {
       expect(mocks.clientUploadBytes).toHaveBeenCalled(); // Route uses uploadBytes
       expect(mocks.clientGetDownloadURL).toHaveBeenCalled();
       
-      // Check Firestore add for metadata
-      expect(mocks.firestoreCollectionInstance.add).toHaveBeenCalledWith(expect.objectContaining({
+      // Check Firestore set for metadata (route uses dealRef.collection('files').doc(fileId).set())
+      expect(mocks.firestoreDocInstance.collection).toHaveBeenCalledWith('files');
+      expect(mocks.firestoreDocInstance.set).toHaveBeenCalledWith(expect.objectContaining({
         filename: mockFileName,
         uploadedBy: testUserId, // From authenticated user
         contentType: mockFileMimeType,
@@ -666,14 +653,15 @@ describe('File Upload/Download Routes (Unit)', () => {
 
     it('should return 404 if deal not found', async () => {
         console.log('[LOG TEST] POST /upload: deal not found');
-        const mockFileBuffer = Buffer.from('test content for deal not found');
-        const mockFileName = 'test-dealnotfound.txt';
+        // Create a buffer with proper PDF signature so it passes file validation
+        const mockFileBuffer = Buffer.from([0x25, 0x50, 0x44, 0x46, ...Buffer.from('fake pdf data')]);
+        const mockFileName = 'test-dealnotfound.pdf';
 
         // Configure multer mock for this test
         mocks.multerMiddlewareHandler.mockImplementationOnce((req, res, next) => {
             req.file = {
                 originalname: mockFileName,
-                mimetype: 'text/plain',
+                mimetype: 'application/pdf',
                 buffer: mockFileBuffer,
                 size: mockFileBuffer.length,
             };
@@ -690,7 +678,7 @@ describe('File Upload/Download Routes (Unit)', () => {
             .post(`/files/upload`)
             .set('Authorization', bearerToken)
             .field('dealId', 'nonExistentDealId')
-            .attach('file', Buffer.from('test'), 'test.txt');
+            .attach('file', mockFileBuffer, { filename: mockFileName, contentType: 'application/pdf' });
         expect(response.status).toBe(404);
         expect(response.body).toEqual({ error: 'Deal not found' });
         expect(mocks.firestoreCollectionInstance.doc).toHaveBeenCalledWith('nonExistentDealId');
@@ -734,12 +722,13 @@ describe('File Upload/Download Routes (Unit)', () => {
             .attach('file', Buffer.from('test'), { filename: 'test.exe', contentType: 'application/octet-stream' });
         
         expect(response.status).toBe(400);
-        expect(response.body).toEqual({ error: 'Invalid file type' });
+        expect(response.body).toEqual({ error: 'File signature does not match declared type' });
     });
 
     it('should return 500 if Firestore add operation fails', async () => {
       console.log('[LOG TEST] POST /upload: Firestore add operation failure');
-      const mockFileBuffer = Buffer.from('This is a test file content.');
+      // Create a buffer with proper JPEG signature
+      const mockFileBuffer = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, ...Buffer.from('fake jpeg data')]);
       const mockFileName = 'test-upload-failure.jpg';
       const mockFileMimeType = 'image/jpeg';
       const genericError = new Error('Simulated Firestore add error');
@@ -767,8 +756,8 @@ describe('File Upload/Download Routes (Unit)', () => {
       mocks.clientUploadBytes.mockResolvedValue({ ref: mockClientStorageReferenceInstance }); // Assume client upload is fine
       mocks.clientGetDownloadURL.mockResolvedValue(`https://firebasestorage.googleapis.com/v0/b/mock-bucket/o/${mockFileName}?alt=media`);
 
-      // Force Firestore add operation to fail
-      mocks.firestoreCollectionInstance.add.mockRejectedValueOnce(genericError);
+      // Force Firestore set operation to fail (route uses dealRef.collection('files').doc(fileId).set())
+      mocks.firestoreDocInstance.set.mockRejectedValueOnce(genericError);
 
       const response = await request(app)
         .post(`/files/upload`)
@@ -777,8 +766,8 @@ describe('File Upload/Download Routes (Unit)', () => {
         .attach('file', mockFileBuffer, { filename: mockFileName, contentType: mockFileMimeType });
 
       expect(response.status).toBe(500);
-      expect(response.body).toEqual({ error: 'Internal server error' });
-      expect(consoleErrorSpy).toHaveBeenCalledWith('Error in upload route:', genericError);
+      expect(response.body).toEqual({ error: 'Internal server error during file upload' });
+      expect(consoleErrorSpy).toHaveBeenCalledWith('File upload error:', genericError.message);
 
       // Restore console.error spy
       consoleErrorSpy.mockRestore();
@@ -786,14 +775,15 @@ describe('File Upload/Download Routes (Unit)', () => {
 
     it('should return 400 if dealId is missing', async () => {
       console.log('[LOG TEST] POST /upload: dealId missing');
-      const mockFileBuffer = Buffer.from('test file content');
-      const mockFileName = 'test-no-dealid.txt';
+      // Create a buffer with proper PDF signature
+      const mockFileBuffer = Buffer.from([0x25, 0x50, 0x44, 0x46, ...Buffer.from('fake pdf data')]);
+      const mockFileName = 'test-no-dealid.pdf';
       const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
       mocks.multerMiddlewareHandler.mockImplementationOnce((req, res, next) => {
         req.file = {
           originalname: mockFileName,
-          mimetype: 'text/plain',
+          mimetype: 'application/pdf',
           buffer: mockFileBuffer,
           size: mockFileBuffer.length,
         };
@@ -807,7 +797,7 @@ describe('File Upload/Download Routes (Unit)', () => {
         .post(`/files/upload`)
         .set('Authorization', bearerToken)
         // Not sending 'dealId' field
-        .attach('file', mockFileBuffer, { filename: mockFileName, contentType: 'text/plain' });
+        .attach('file', mockFileBuffer, { filename: mockFileName, contentType: 'application/pdf' });
 
       expect(response.status).toBe(400);
       expect(response.body).toEqual({ error: 'Missing file, dealId, or userId' });
@@ -818,8 +808,9 @@ describe('File Upload/Download Routes (Unit)', () => {
 
     it('should return 400 if userId is missing (e.g., auth middleware problem)', async () => {
       console.log('[LOG TEST] POST /upload: userId missing');
-      const mockFileBuffer = Buffer.from('test file content');
-      const mockFileName = 'test-no-userid.txt';
+      // Create a buffer with proper PDF signature
+      const mockFileBuffer = Buffer.from([0x25, 0x50, 0x44, 0x46, ...Buffer.from('fake pdf data')]);
+      const mockFileName = 'test-no-userid.pdf';
       const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
       // Override authenticateToken for this test to simulate req.userId not being set
@@ -835,7 +826,7 @@ describe('File Upload/Download Routes (Unit)', () => {
       mocks.multerMiddlewareHandler.mockImplementationOnce((req, res, next) => {
         req.file = {
           originalname: mockFileName,
-          mimetype: 'text/plain',
+          mimetype: 'application/pdf',
           buffer: mockFileBuffer,
           size: mockFileBuffer.length,
         };
@@ -859,7 +850,7 @@ describe('File Upload/Download Routes (Unit)', () => {
         .post(`/files/upload`)
         .set('Authorization', bearerToken)
         .field('dealId', testDealId)
-        .attach('file', mockFileBuffer, { filename: mockFileName, contentType: 'text/plain' });
+        .attach('file', mockFileBuffer, { filename: mockFileName, contentType: 'application/pdf' });
 
       expect(response.status).toBe(400);
       expect(response.body).toEqual({ error: 'Missing file, dealId, or userId' });

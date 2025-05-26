@@ -23,16 +23,16 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>8/8</span>
+                <span class='fraction'>0/10</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">66.66% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>4/6</span>
+                <span class='fraction'>0/6</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>8/8</span>
+                <span class='fraction'>0/10</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line high'></div>
+    <div class='status-line low'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -99,27 +99,21 @@
 <a name='L34'></a><a href='#L34'>34</a>
 <a name='L35'></a><a href='#L35'>35</a>
 <a name='L36'></a><a href='#L36'>36</a>
-<a name='L37'></a><a href='#L37'>37</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
+<a name='L37'></a><a href='#L37'>37</a>
+<a name='L38'></a><a href='#L38'>38</a>
+<a name='L39'></a><a href='#L39'>39</a>
+<a name='L40'></a><a href='#L40'>40</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -127,32 +121,45 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { initializeApp } from "firebase/app";
 import { getAuth, connectAuthEmulator } from "firebase/auth"; // Import connectAuthEmulator
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
-import 'dotenv/config';
+import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
+import '../../../config/env.js';
 &nbsp;
 // Use test configuration if we're in a test environment
-const isTest = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test';
+const isTest = <span class="cstat-no" title="statement not covered" >process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test';</span>
 &nbsp;
 // When using the Firebase Auth Emulator, API key validation is bypassed
 // So we can use any value for the apiKey in test mode
-const firebaseConfig = isTest ? {
+const firebaseConfig = <span class="cstat-no" title="statement not covered" >isTest ? {</span>
   apiKey: "demo-api-key", // Any value works with emulator
   authDomain: "localhost",
   projectId: "demo-test", // Must match the project ID used by the admin SDK
   storageBucket: "demo-test.appspot.com",
   messagingSenderId: "123456789",
   appId: "1:123456789:web:abcdef"
-} : <span class="branch-1 cbranch-no" title="branch not covered" >{</span>
+} : {
   apiKey: process.env.FIREBASE_API_KEY,
   authDomain: process.env.FIREBASE_AUTH_DOMAIN,
   projectId: process.env.FIREBASE_PROJECT_ID,
@@ -163,14 +170,16 @@ const firebaseConfig = isTest ? {
 };
 &nbsp;
 // Initialize Firebase app
-export const ethEscrowApp = initializeApp(firebaseConfig, "ethEscrowApp");
+export const ethEscrowApp = <span class="cstat-no" title="statement not covered" >initializeApp(firebaseConfig, "ethEscrowApp");</span>
 &nbsp;
 // Connect to Auth emulator in test environment
-<span class="missing-if-branch" title="else path not taken" >E</span>if (isTest) {
-  const auth = getAuth(ethEscrowApp);
-  const storage = getStorage(ethEscrowApp);
-  connectAuthEmulator(auth, "http://localhost:9099", { disableWarnings: true });
-  connectStorageEmulator(storage, "localhost", 9199);
+<span class="cstat-no" title="statement not covered" >if (isTest) {</span>
+  const auth = <span class="cstat-no" title="statement not covered" >getAuth(ethEscrowApp);</span>
+  const storage = <span class="cstat-no" title="statement not covered" >getStorage(ethEscrowApp);</span>
+  const firestore = <span class="cstat-no" title="statement not covered" >getFirestore(ethEscrowApp);</span>
+<span class="cstat-no" title="statement not covered" >  connectAuthEmulator(auth, "http://localhost:9099", { disableWarnings: true });</span>
+<span class="cstat-no" title="statement not covered" >  connectStorageEmulator(storage, "localhost", 9199);</span>
+<span class="cstat-no" title="statement not covered" >  connectFirestoreEmulator(firestore, 'localhost', 5004);</span>
 }</pre></td></tr></table></pre>
 
                 <div class='push'></div><!-- for sticky footer -->
@@ -178,7 +187,7 @@ export const ethEscrowApp = initializeApp(firebaseConfig, "ethEscrowApp");
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-05-23T03:08:11.180Z
+                at 2025-05-26T06:00:54.478Z
             </div>
         <script src="../../../../prettify.js"></script>
         <script>

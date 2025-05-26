@@ -205,7 +205,7 @@ let fundingWalletInstance = null;
 let fundingWalletNonce = null;
 
 export const getWallet = async (privateKey) => {
-  console.log('Attempting to create wallet with PK:', privateKey ? `${privateKey.substring(0, 10)}...` : 'undefined');
+  console.log('Creating wallet from private key');
   
   if (!privateKey) {
     throw new Error('Private key is undefined or empty');
@@ -226,7 +226,7 @@ export const getWallet = async (privateKey) => {
     console.log(`✅ Created wallet with address: ${wallet.address}`);
     return wallet;
   } catch (error) {
-    console.error('Failed to create wallet:', error);
+    console.error('Failed to create wallet:', error.message);
     throw error;
   }
 };

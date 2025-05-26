@@ -66,11 +66,22 @@ async function cleanUp() {
     }
   }
   try {
-     // Simple clear for Firestore Emulator - assumes no complex dependencies
-     // Consider using @firebase/rules-unit-testing clearFirestoreData if needed
+     // Enhanced cleanup for Firestore Emulator - recursively delete subcollections
      const collections = await adminFirestore.listCollections();
      for (const collection of collections) {
         const docs = await collection.get();
+        
+        // Delete subcollections first (specifically the 'files' subcollection in deals)
+        for (const doc of docs.docs) {
+          const subcollections = await doc.ref.listCollections();
+          for (const subcollection of subcollections) {
+            const subDocs = await subcollection.get();
+            const deleteSubDocPromises = subDocs.docs.map(subDoc => subDoc.ref.delete());
+            await Promise.all(deleteSubDocPromises);
+          }
+        }
+        
+        // Then delete the main documents
         const deleteDocPromises = docs.docs.map(doc => doc.ref.delete());
         await Promise.all(deleteDocPromises);
      }
@@ -113,8 +124,8 @@ describe('File Upload and Download Routes', () => {
   // (These tests should remain largely unchanged as they were passing)
   describe('POST /files/upload', () => {
      it('should upload a file successfully', async () => {
-        const { uid, token } = await createTestUser('test-upload@example.com');
-        const dealId = 'testDealUpload';
+        const { uid, token } = await createTestUser(`test-upload-${Date.now()}@example.com`);
+        const dealId = `testDealUpload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         await adminFirestore.collection('deals').doc(dealId).set({ participants: [uid] });
 
         const fileContent = Buffer.from('%PDF-1.4 fake pdf');
@@ -144,8 +155,8 @@ describe('File Upload and Download Routes', () => {
      });
 
      it('should return error when no file is provided', async () => {
-      const { uid, token } = await createTestUser('test-nofile@example.com');
-      const dealId = 'testDealNoFile';
+      const { uid, token } = await createTestUser(`test-nofile-${Date.now()}@example.com`);
+      const dealId = `testDealNoFile-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       await adminFirestore.collection('deals').doc(dealId).set({ participants: [uid] });
 
       const response = await request(app)
@@ -158,7 +169,7 @@ describe('File Upload and Download Routes', () => {
     });
 
      it('should return error when dealId is missing', async () => {
-      const { token } = await createTestUser('test-nodealid@example.com');
+      const { token } = await createTestUser(`test-nodealid-${Date.now()}@example.com`);
       const fileContent = Buffer.from('test content');
 
       const response = await request(app)
@@ -171,8 +182,8 @@ describe('File Upload and Download Routes', () => {
     });
 
     it('should return error when deal does not exist', async () => {
-      const { token } = await createTestUser('test-baddeal@example.com');
-      const fileContent = Buffer.from('test content');
+      const { token } = await createTestUser(`test-baddeal-${Date.now()}@example.com`);
+      const fileContent = Buffer.from('%PDF-1.4 test content'); // Valid PDF signature
 
       const response = await request(app)
         .post('/files/upload')
@@ -185,8 +196,8 @@ describe('File Upload and Download Routes', () => {
     });
 
     it('should return error for invalid file type', async () => {
-      const { uid, token } = await createTestUser('test-badtype@example.com');
-      const dealId = 'testDealBadType';
+      const { uid, token } = await createTestUser(`test-badtype-${Date.now()}@example.com`);
+      const dealId = `testDealBadType-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       await adminFirestore.collection('deals').doc(dealId).set({ participants: [uid] });
 
       const response = await request(app)

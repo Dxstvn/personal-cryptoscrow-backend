@@ -12,6 +12,14 @@ const mockFieldValueArrayUnion = jest.fn((...args) => ({ type: 'arrayUnion', arg
 const mockTimestampNow = jest.fn();
 const mockAdminApp = {}; // Mock adminApp
 
+// Mock the firebase-admin default import - this is what databaseService uses in test mode
+const mockFirestore = jest.fn();
+jest.unstable_mockModule('firebase-admin', () => ({
+  default: {
+    firestore: mockFirestore,
+  },
+}));
+
 jest.unstable_mockModule('firebase-admin/firestore', () => ({
   getFirestore: mockGetFirestore,
   Timestamp: {
@@ -39,12 +47,17 @@ let getDealsPastFinalApproval, getDealsPastDisputeDeadline, updateDealStatusInDB
 
 describe('Database Service - Unit Tests', () => {
   beforeAll(async () => {
-    // Setup default mock implementation for getFirestore BEFORE importing the service
-    mockGetFirestore.mockReturnValue({
+    // Setup the mock database instance that will be returned by admin.firestore()
+    const mockDbInstance = {
       collection: mockCollection,
-      // Add doc and runTransaction if db is used directly for those at the top level of databaseService.js
-      // For now, only collection is directly used on the db instance from getFirestore
-    });
+      doc: mockDoc,
+    };
+
+    // Configure admin.firestore() to return our mock database instance
+    mockFirestore.mockReturnValue(mockDbInstance);
+
+    // Setup default mock implementation for getFirestore (for non-test environments)
+    mockGetFirestore.mockReturnValue(mockDbInstance);
 
     // Import service functions here so they use the mocked dependencies
     const service = await import('../../databaseService.js');

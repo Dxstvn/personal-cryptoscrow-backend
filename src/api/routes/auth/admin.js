@@ -1,6 +1,6 @@
 import { initializeApp, cert, getApp, getApps, deleteApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import 'dotenv/config';
+import '../../../config/env.js';
 import fs from 'fs';
 
 const isTest = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test';

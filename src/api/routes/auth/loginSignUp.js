@@ -5,7 +5,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { ethEscrowApp } from "./authIndex.js"; // This will be the mocked version in tests
 import { adminApp } from "./admin.js";     // This will be the mocked version in tests
 import express from "express";
-import 'dotenv/config';
+import '../../../config/env.js';
 
 const router = express.Router();
 const db = getFirestore(adminApp);
@@ -120,8 +120,7 @@ router.post("/signInGoogle", async (req, res) => {
   const { idToken } = req.body;
   const currentIsTest = process.env.NODE_ENV === 'test'; // Check NODE_ENV at execution time
 
-  console.log("/signInGoogle: Received ID Token snippet:", idToken?.substring(0, 10) + "...");
-
+  // Remove token logging for security
   if (!idToken) {
     console.log("/signInGoogle: Missing ID token.");
     return res.status(400).json({ error: "Missing ID token" });
@@ -136,17 +135,17 @@ router.post("/signInGoogle", async (req, res) => {
     }
     const adminAuthInstance = getAdminAuth(adminApp);
     try {
-      console.log(`/signInGoogle: Test mode - Treating token as UID: ${idToken}`);
+      console.log(`/signInGoogle: Test mode - Processing user authentication`);
       const userRecord = await adminAuthInstance.getUser(idToken);
       const isAdmin = userRecord.customClaims?.admin === true;
-      console.log(`/signInGoogle: Test mode - User found. UID: ${userRecord.uid}, isAdmin claim: ${isAdmin}`);
+      console.log(`/signInGoogle: Test mode - User authenticated, admin status: ${isAdmin}`);
       if (!isAdmin) {
         console.log("/signInGoogle: Test mode - User does not have admin claim.");
         return res.status(401).json({ error: 'Unauthorized user (test mode - admin required)' });
       }
       return res.status(200).json({ message: "User authenticated (test)", uid: userRecord.uid, isAdmin: true });
     } catch (err) {
-      console.error('/signInGoogle: Test mode - Error looking up user by UID:', err);
+      console.error('/signInGoogle: Test mode - Authentication error');
       return res.status(401).json({ error: 'Invalid user UID provided as token (test mode)' });
     }
   } else { // Production mode
@@ -155,27 +154,23 @@ router.post("/signInGoogle", async (req, res) => {
       console.log("/signInGoogle: Production mode - Verifying ID token...");
       const decodedToken = await adminAuthInstance.verifyIdToken(idToken, true);
       const uid = decodedToken.uid;
-      console.log(`/signInGoogle: Production mode - Token verified. UID: ${uid}, Email: ${decodedToken.email}`);
+      console.log(`/signInGoogle: Production mode - Token verified for user`);
 
       console.log("/signInGoogle: Production mode - Getting user details...");
       const user = await adminAuthInstance.getUser(uid);
-      console.log(`/signInGoogle: Production mode - User email from record: ${user.email}`);
 
-      const allowedEmails = [
-        "jasmindustin@gmail.com",
-        "dustin.jasmin@jaspire.co",
-        "andyrowe00@gmail.com"
-      ];
-      console.log("/signInGoogle: Production mode - Checking against allowed emails:", allowedEmails);
+      // Get allowed emails from environment variable for security
+      const allowedEmailsString = process.env.ALLOWED_EMAILS || "jasmindustin@gmail.com,dustin.jasmin@jaspire.co,andyrowe00@gmail.com";
+      const allowedEmails = allowedEmailsString.split(',').map(email => email.trim().toLowerCase());
 
       if (!user.email || !allowedEmails.includes(user.email.toLowerCase())) {
-        console.warn(`/signInGoogle: Production mode - Unauthorized email attempt: ${user.email}`);
+        console.warn(`/signInGoogle: Production mode - Unauthorized email attempt`);
         return res.status(403).json({ error: "Access denied. This email address is not authorized." });
       }
 
-      console.log(`/signInGoogle: Production mode - Email ${user.email} is authorized.`);
+      console.log(`/signInGoogle: Production mode - Email authorized`);
       const isAdmin = user.email.toLowerCase() === "jasmindustin@gmail.com";
-      console.log(`/signInGoogle: Production mode - isAdmin determined as: ${isAdmin}`);
+      console.log(`/signInGoogle: Production mode - Admin status determined`);
 
       return res.status(200).json({
         message: "User authenticated",
@@ -183,11 +178,7 @@ router.post("/signInGoogle", async (req, res) => {
         isAdmin
       });
     } catch (error) {
-      console.error('/signInGoogle: Production mode - Google sign-in verification/lookup error:', {
-        errorCode: error.code,
-        errorMessage: error.message,
-        idTokenSnippet: idToken?.substring(0, 50) + '...',
-      });
+      console.error('/signInGoogle: Production mode - Authentication error:', error.code || 'Unknown error');
 
       if (error.code === 'auth/id-token-expired') {
         return res.status(401).json({ error: 'Login session expired, please sign in again.' });
@@ -198,7 +189,7 @@ router.post("/signInGoogle", async (req, res) => {
       } else if (error.code === 'auth/user-not-found') {
         return res.status(404).json({ error: 'Authenticated user profile not found.' });
       }
-      return res.status(500).json({ error: error.message || 'An internal error occurred during authentication.' });
+      return res.status(500).json({ error: 'An internal error occurred during authentication.' });
     }
   }
 });
