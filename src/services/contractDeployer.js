@@ -27,7 +27,7 @@ export function __TEST_ONLY_setArtifactToNull() {
 }
 
 
-async function deployPropertyEscrowContract(sellerAddress, buyerAddress, escrowAmountWei, privateKey, rpcUrl) {
+async function deployPropertyEscrowContract(sellerAddress, buyerAddress, escrowAmountWei, privateKey, rpcUrl, serviceWallet) {
     if (!PropertyEscrowArtifact || !PropertyEscrowArtifact.abi || !PropertyEscrowArtifact.bytecode) {
         throw new Error('PropertyEscrow artifact (ABI or bytecode) not loaded. Check path and artifact integrity.');
     }
@@ -36,6 +36,9 @@ async function deployPropertyEscrowContract(sellerAddress, buyerAddress, escrowA
     }
     if (!buyerAddress || !isAddress(buyerAddress)) {
         throw new Error('Invalid buyer address provided for deployment.');
+    }
+    if (!serviceWallet || !isAddress(serviceWallet)) {
+        throw new Error('Invalid service wallet address provided for deployment.');
     }
 
     // Refined amount validation
@@ -58,8 +61,11 @@ async function deployPropertyEscrowContract(sellerAddress, buyerAddress, escrowA
         throw new Error('Invalid RPC URL provided for deployment.');
     }
 
-    console.log(`Attempting to deploy PropertyEscrow with (ethers.js v6):`);
-    // ... (rest of the console logs)
+    console.log(`Attempting to deploy PropertyEscrow with service fee functionality (ethers.js v6):`);
+    console.log(`- Seller: ${sellerAddress}`);
+    console.log(`- Buyer: ${buyerAddress}`);
+    console.log(`- Escrow Amount: ${escrowAmountWei} wei`);
+    console.log(`- Service Wallet: ${serviceWallet}`);
 
     let deployerWallet;
     let provider; // Declare provider here to access in finally block
@@ -79,7 +85,8 @@ async function deployPropertyEscrowContract(sellerAddress, buyerAddress, escrowA
         const escrowContractInstance = await PropertyEscrowFactory.deploy(
             sellerAddress,
             buyerAddress,
-            escrowAmountWei 
+            escrowAmountWei,
+            serviceWallet
         );
 
         await escrowContractInstance.waitForDeployment();
@@ -90,6 +97,7 @@ async function deployPropertyEscrowContract(sellerAddress, buyerAddress, escrowA
 
         console.log("PropertyEscrow contract deployed successfully!");
         console.log("Contract address:", contractAddress);
+        console.log("Service wallet configured:", serviceWallet);
         if (transactionHash) {
             console.log("Transaction hash:", transactionHash);
         } else {

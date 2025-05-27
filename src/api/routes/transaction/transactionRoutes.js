@@ -3,8 +3,8 @@ import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { adminApp } from '../auth/admin.js';
 import { deployPropertyEscrowContract } from '../../../services/contractDeployer.js';
-// Import ethers v6 functions directly
 import { isAddress, getAddress, parseUnits } from 'ethers'; // This is the import we are interested in
+import { Wallet } from 'ethers';
 
 const router = express.Router();
 const db = getFirestore(adminApp);
@@ -139,14 +139,29 @@ router.post('/create', authenticateToken, async (req, res) => {
         } else {
             try {
                 console.log(`[ROUTE LOG] Attempting to deploy PropertyEscrow contract. Buyer: ${finalBuyerWallet}, Seller: ${finalSellerWallet}, Amount: ${newTransactionData.escrowAmountWei}`);
-                deployedContractAddress = await deployPropertyEscrowContract(
-                    finalSellerWallet, finalBuyerWallet, newTransactionData.escrowAmountWei,
+                
+                // Derive service wallet address from deployer private key
+                const deployerWallet = new Wallet(currentDeployerKey);
+                const serviceWalletAddress = deployerWallet.address;
+                console.log(`[ROUTE LOG] Using service wallet: ${serviceWalletAddress} (derived from deployer key)`);
+                
+                const deploymentResult = await deployPropertyEscrowContract(
+                    finalSellerWallet, 
+                    finalBuyerWallet, 
+                    newTransactionData.escrowAmountWei,
                     currentDeployerKey, // Use dynamically read key
-                    currentRpcUrl       // Use dynamically read URL
+                    currentRpcUrl,      // Use dynamically read URL
+                    serviceWalletAddress // Service wallet for 2% fee
                 );
+                
+                deployedContractAddress = deploymentResult.contractAddress;
                 newTransactionData.smartContractAddress = deployedContractAddress;
-                newTransactionData.timeline.push({ event: `PropertyEscrow smart contract deployed at ${deployedContractAddress}.`, timestamp: Timestamp.now(), system: true });
-                console.log(`[ROUTE LOG] Smart contract deployed: ${deployedContractAddress}`);
+                newTransactionData.timeline.push({ 
+                    event: `PropertyEscrow smart contract deployed at ${deployedContractAddress} with 2% service fee to ${serviceWalletAddress}.`, 
+                    timestamp: Timestamp.now(), 
+                    system: true 
+                });
+                console.log(`[ROUTE LOG] Smart contract deployed: ${deployedContractAddress} with service wallet: ${serviceWalletAddress}`);
             } catch (deployError) {
                 console.error('[ROUTE ERROR] Smart contract deployment failed:', deployError.message, deployError.stack);
                 newTransactionData.timeline.push({ event: `Smart contract deployment FAILED: ${deployError.message}. Proceeding as off-chain.`, timestamp: Timestamp.now(), system: true });

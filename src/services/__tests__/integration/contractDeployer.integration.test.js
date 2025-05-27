@@ -33,6 +33,7 @@ const HARDHAT_PORT = 8545;
 // Use Hardhat's default accounts
 const TEST_SELLER_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'; // HH Account 0
 const TEST_BUYER_ADDRESS = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'; // HH Account 1
+const TEST_SERVICE_WALLET = '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC'; // HH Account 2
 const DEPLOYER_PRIVATE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'; // HH Account 0 PK
 
 describe('ContractDeployer Integration Tests', () => {
@@ -84,7 +85,8 @@ describe('ContractDeployer Integration Tests', () => {
             TEST_BUYER_ADDRESS,
             "1000000000000000000", 
             DEPLOYER_PRIVATE_KEY,
-            RPC_URL
+            RPC_URL,
+            TEST_SERVICE_WALLET
         )).rejects.toThrow('PropertyEscrow artifact (ABI or bytecode) not loaded.');
         
         // The next test will get its own fresh import due to cache busting.
@@ -99,7 +101,8 @@ describe('ContractDeployer Integration Tests', () => {
             TEST_BUYER_ADDRESS,
             escrowAmountWei,
             DEPLOYER_PRIVATE_KEY,
-            RPC_URL
+            RPC_URL,
+            TEST_SERVICE_WALLET
         );
 
         expect(contractAddress).toBeDefined();
@@ -112,6 +115,7 @@ describe('ContractDeployer Integration Tests', () => {
         
         const seller = await deployedContract.seller();
         const buyer = await deployedContract.buyer();
+        const serviceWallet = await deployedContract.serviceWallet();
         const escrowAmount = await deployedContract.escrowAmount();
         // Assuming 'State' enum exists and 0 is 'AwaitingPayment' or similar initial state.
         // If your contract doesn't have `currentState()`, remove this or adapt.
@@ -119,6 +123,7 @@ describe('ContractDeployer Integration Tests', () => {
 
         expect(seller).toBe(TEST_SELLER_ADDRESS);
         expect(buyer).toBe(TEST_BUYER_ADDRESS);
+        expect(serviceWallet).toBe(TEST_SERVICE_WALLET);
         expect(escrowAmount.toString()).toBe(escrowAmountWei);
         expect(state).toBe(0n); 
     }, 30000);
@@ -126,35 +131,42 @@ describe('ContractDeployer Integration Tests', () => {
     it('should throw an error for invalid seller address', async () => {
         const { deployPropertyEscrowContract: freshDeployFn } = await import('../../contractDeployer.js?bustcache=' + Date.now() + '_invalidSeller');
         await expect(freshDeployFn(
-            "0xInvalidAddress", TEST_BUYER_ADDRESS, "1000000000000000000", DEPLOYER_PRIVATE_KEY, RPC_URL
+            "0xInvalidAddress", TEST_BUYER_ADDRESS, "1000000000000000000", DEPLOYER_PRIVATE_KEY, RPC_URL, TEST_SERVICE_WALLET
         )).rejects.toThrow('Invalid seller address provided for deployment.');
     });
 
     it('should throw an error for invalid buyer address', async () => {
         const { deployPropertyEscrowContract: freshDeployFn } = await import('../../contractDeployer.js?bustcache=' + Date.now() + '_invalidBuyer');
         await expect(freshDeployFn(
-            TEST_SELLER_ADDRESS, "0xInvalidAddress", "1000000000000000000", DEPLOYER_PRIVATE_KEY, RPC_URL
+            TEST_SELLER_ADDRESS, "0xInvalidAddress", "1000000000000000000", DEPLOYER_PRIVATE_KEY, RPC_URL, TEST_SERVICE_WALLET
         )).rejects.toThrow('Invalid buyer address provided for deployment.');
+    });
+
+    it('should throw an error for invalid service wallet address', async () => {
+        const { deployPropertyEscrowContract: freshDeployFn } = await import('../../contractDeployer.js?bustcache=' + Date.now() + '_invalidServiceWallet');
+        await expect(freshDeployFn(
+            TEST_SELLER_ADDRESS, TEST_BUYER_ADDRESS, "1000000000000000000", DEPLOYER_PRIVATE_KEY, RPC_URL, "0xInvalidServiceWallet"
+        )).rejects.toThrow('Invalid service wallet address provided for deployment.');
     });
     
     it('should throw an error for non-positive escrow amount', async () => {
         const { deployPropertyEscrowContract: freshDeployFn } = await import('../../contractDeployer.js?bustcache=' + Date.now() + '_zeroAmount');
         await expect(freshDeployFn(
-            TEST_SELLER_ADDRESS, TEST_BUYER_ADDRESS, "0", DEPLOYER_PRIVATE_KEY, RPC_URL
+            TEST_SELLER_ADDRESS, TEST_BUYER_ADDRESS, "0", DEPLOYER_PRIVATE_KEY, RPC_URL, TEST_SERVICE_WALLET
         )).rejects.toThrow('Escrow amount must be positive.');
     });
 
     it('should throw an error for invalid private key', async () => {
         const { deployPropertyEscrowContract: freshDeployFn } = await import('../../contractDeployer.js?bustcache=' + Date.now() + '_invalidPK');
         await expect(freshDeployFn(
-            TEST_SELLER_ADDRESS, TEST_BUYER_ADDRESS, "1000000000000000000", "invalidPrivateKey", RPC_URL
+            TEST_SELLER_ADDRESS, TEST_BUYER_ADDRESS, "1000000000000000000", "invalidPrivateKey", RPC_URL, TEST_SERVICE_WALLET
         )).rejects.toThrow('Invalid private key provided for deployment.');
     });
 
     it('should throw an error for invalid RPC URL (empty string)', async () => {
         const { deployPropertyEscrowContract: freshDeployFn } = await import('../../contractDeployer.js?bustcache=' + Date.now() + '_emptyRpc');
         await expect(freshDeployFn(
-            TEST_SELLER_ADDRESS, TEST_BUYER_ADDRESS, "1000000000000000000", DEPLOYER_PRIVATE_KEY, ""
+            TEST_SELLER_ADDRESS, TEST_BUYER_ADDRESS, "1000000000000000000", DEPLOYER_PRIVATE_KEY, "", TEST_SERVICE_WALLET
         )).rejects.toThrow('Invalid RPC URL provided for deployment.');
     });
     
@@ -162,14 +174,14 @@ describe('ContractDeployer Integration Tests', () => {
         const { deployPropertyEscrowContract: freshDeployFn } = await import('../../contractDeployer.js?bustcache=' + Date.now() + '_networkError');
         const NON_EXISTENT_RPC_URL = 'http://127.0.0.1:12345'; 
         await expect(freshDeployFn(
-            TEST_SELLER_ADDRESS, TEST_BUYER_ADDRESS, "1000000000000000000", DEPLOYER_PRIVATE_KEY, NON_EXISTENT_RPC_URL 
+            TEST_SELLER_ADDRESS, TEST_BUYER_ADDRESS, "1000000000000000000", DEPLOYER_PRIVATE_KEY, NON_EXISTENT_RPC_URL, TEST_SERVICE_WALLET
         )).rejects.toThrow(/NETWORK_ERROR|could not connect|ECONNREFUSED/i); 
     });
 
     it('should throw an error for unparseable escrow amount string', async () => {
         const { deployPropertyEscrowContract: freshDeployFn } = await import('../../contractDeployer.js?bustcache=' + Date.now() + '_unparseableAmount');
         await expect(freshDeployFn(
-            TEST_SELLER_ADDRESS, TEST_BUYER_ADDRESS, "not-a-number", DEPLOYER_PRIVATE_KEY, RPC_URL
+            TEST_SELLER_ADDRESS, TEST_BUYER_ADDRESS, "not-a-number", DEPLOYER_PRIVATE_KEY, RPC_URL, TEST_SERVICE_WALLET
         )).rejects.toThrow('Invalid escrow amount provided for deployment. Must be a valid number string representing Wei.');
     });
 
@@ -180,7 +192,8 @@ describe('ContractDeployer Integration Tests', () => {
             TEST_SELLER_ADDRESS, // Buyer is same as seller
             "1000000000000000000",
             DEPLOYER_PRIVATE_KEY,
-            RPC_URL
+            RPC_URL,
+            TEST_SERVICE_WALLET
         )).rejects.toThrow(/Smart contract deployment failed|UNPREDICTABLE_GAS_LIMIT|Seller and buyer cannot be the same/i); 
     });
 }); 

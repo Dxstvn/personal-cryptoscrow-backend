@@ -46,6 +46,7 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
 
     const validSellerAddress = actualEthers.Wallet.createRandom().address;
     const validBuyerAddress = actualEthers.Wallet.createRandom().address;
+    const validServiceWallet = actualEthers.Wallet.createRandom().address;
     const validEscrowAmountWei = '1000000000000000000'; 
     const validPrivateKey = '0x0123456789012345678901234567890123456789012345678901234567890123';
     const validRpcUrl = 'http://localhost:8545';
@@ -100,7 +101,8 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
             validBuyerAddress,
             validEscrowAmountWei,
             validPrivateKey,
-            validRpcUrl
+            validRpcUrl,
+            validServiceWallet
         );
 
         expect(mockedEthersModule.JsonRpcProvider).toHaveBeenCalledWith(validRpcUrl);
@@ -113,7 +115,8 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
         expect(mockContractFactoryInstance.deploy).toHaveBeenCalledWith(
             validSellerAddress,
             validBuyerAddress,
-            validEscrowAmountWei
+            validEscrowAmountWei,
+            validServiceWallet
         );
         expect(mockDeployedContractInstance.waitForDeployment).toHaveBeenCalledTimes(1);
         expect(mockDeployedContractInstance.getAddress).toHaveBeenCalledTimes(1);
@@ -130,7 +133,7 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
         it('should throw if sellerAddress is invalid', async () => {
             mockedEthersModule.isAddress.mockImplementationOnce((addr) => addr !== 'invalidSeller');
             await expect(
-                deployPropertyEscrowContract('invalidSeller', validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl)
+                deployPropertyEscrowContract('invalidSeller', validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl, validServiceWallet)
             ).rejects.toThrow('Invalid seller address provided for deployment.');
         });
 
@@ -139,48 +142,58 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
                 .mockImplementationOnce((addr) => addr === validSellerAddress) 
                 .mockImplementationOnce((addr) => addr !== 'invalidBuyer'); 
             await expect(
-                deployPropertyEscrowContract(validSellerAddress, 'invalidBuyer', validEscrowAmountWei, validPrivateKey, validRpcUrl)
+                deployPropertyEscrowContract(validSellerAddress, 'invalidBuyer', validEscrowAmountWei, validPrivateKey, validRpcUrl, validServiceWallet)
             ).rejects.toThrow('Invalid buyer address provided for deployment.');
+        });
+
+        it('should throw if serviceWallet is invalid', async () => {
+            mockedEthersModule.isAddress
+                .mockImplementationOnce((addr) => addr === validSellerAddress) 
+                .mockImplementationOnce((addr) => addr === validBuyerAddress)
+                .mockImplementationOnce((addr) => addr !== 'invalidServiceWallet'); 
+            await expect(
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl, 'invalidServiceWallet')
+            ).rejects.toThrow('Invalid service wallet address provided for deployment.');
         });
 
         it('should throw if escrowAmountWei is zero', async () => {
             await expect(
-                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, '0', validPrivateKey, validRpcUrl)
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, '0', validPrivateKey, validRpcUrl, validServiceWallet)
             ).rejects.toThrow('Escrow amount must be positive.');
         });
 
         it('should throw if escrowAmountWei is negative', async () => {
             await expect(
-                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, '-100', validPrivateKey, validRpcUrl)
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, '-100', validPrivateKey, validRpcUrl, validServiceWallet)
             ).rejects.toThrow('Escrow amount must be positive.');
         });
         
         it('should throw if escrowAmountWei is not a valid number string', async () => {
             await expect(
-                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, 'not-a-number', validPrivateKey, validRpcUrl)
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, 'not-a-number', validPrivateKey, validRpcUrl, validServiceWallet)
             ).rejects.toThrow('Invalid escrow amount provided for deployment. Must be a valid number string representing Wei.');
         });
 
         it('should throw if privateKey is invalid (not hex)', async () => {
             await expect(
-                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, 'invalidPK', validRpcUrl)
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, 'invalidPK', validRpcUrl, validServiceWallet)
             ).rejects.toThrow('Invalid private key provided for deployment. Must be a hex string.');
         });
         
         it('should throw if privateKey is missing prefix', async () => {
             await expect( 
-                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, '0123456789abcdef'.repeat(4), validRpcUrl)
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, '0123456789abcdef'.repeat(4), validRpcUrl, validServiceWallet)
             ).rejects.toThrow('Invalid private key provided for deployment. Must be a hex string.');
         });
 
         it('should throw if rpcUrl is not a string', async () => {
             await expect(
-                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, null)
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, null, validServiceWallet)
             ).rejects.toThrow('Invalid RPC URL provided for deployment.');
         });
          it('should throw if rpcUrl is an empty string', async () => {
             await expect(
-                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, '')
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, '', validServiceWallet)
             ).rejects.toThrow('Invalid RPC URL provided for deployment.');
         });
     });
@@ -215,7 +228,7 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
     
         it('should throw if PropertyEscrow artifact is not loaded (simulated via backdoor)', async () => {
             await expect(
-                deployFnForArtifactTest(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl)
+                deployFnForArtifactTest(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl, validServiceWallet)
             ).rejects.toThrow('PropertyEscrow artifact (ABI or bytecode) not loaded. Check path and artifact integrity.');
             
             expect(consoleLogSpy).toHaveBeenCalledWith(
@@ -239,7 +252,7 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
                 throw new Error('Mocked Provider Error');
             });
             await expect(
-                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl)
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl, validServiceWallet)
             ).rejects.toThrow('Smart contract deployment failed: Mocked Provider Error');
         });
 
@@ -248,7 +261,7 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
                 throw new Error('Mocked Wallet Error');
             });
             await expect(
-                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl)
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl, validServiceWallet)
             ).rejects.toThrow('Smart contract deployment failed: Mocked Wallet Error');
         });
         
@@ -257,7 +270,7 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
                 throw new Error('Mocked ContractFactory Error');
             });
             await expect(
-                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl)
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl, validServiceWallet)
             ).rejects.toThrow('Smart contract deployment failed: Mocked ContractFactory Error');
         });
 
@@ -265,7 +278,7 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
             const insufficientFundsError = { code: 'INSUFFICIENT_FUNDS', message: 'insufficient funds for intrinsic transaction cost' };
             mockContractFactoryInstance.deploy.mockRejectedValueOnce(insufficientFundsError);
             await expect(
-                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl)
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl, validServiceWallet)
             ).rejects.toThrow(`Deployment failed: Insufficient funds in deployer account (${mockDeployerWalletInstance.address}). Error: ${insufficientFundsError.message}`);
         });
 
@@ -273,7 +286,7 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
             const networkError = { code: 'NETWORK_ERROR', message: 'could not detect network' };
             mockContractFactoryInstance.deploy.mockRejectedValueOnce(networkError);
             await expect(
-                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl)
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl, validServiceWallet)
             ).rejects.toThrow(`Deployment failed: Network error connecting to RPC URL (${validRpcUrl}). Error: ${networkError.message}`);
         });
         
@@ -281,28 +294,28 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
             const gasError = { code: 'UNPREDICTABLE_GAS_LIMIT', message: 'cannot estimate gas; transaction may fail or may require manual gas limit' };
             mockContractFactoryInstance.deploy.mockRejectedValueOnce(gasError);
             await expect(
-                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl)
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl, validServiceWallet)
             ).rejects.toThrow(`Deployment failed: Unpredictable gas limit. This might be due to an error in the contract constructor or insufficient funds. Error: ${gasError.message}`);
         });
 
         it('should handle generic error during factory.deploy()', async () => {
             mockContractFactoryInstance.deploy.mockRejectedValueOnce(new Error('Generic Deploy Error'));
             await expect(
-                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl)
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl, validServiceWallet)
             ).rejects.toThrow('Smart contract deployment failed: Generic Deploy Error');
         });
 
         it('should handle error during waitForDeployment()', async () => {
             mockDeployedContractInstance.waitForDeployment.mockRejectedValueOnce(new Error('Wait For Deployment Error'));
             await expect(
-                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl)
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl, validServiceWallet)
             ).rejects.toThrow('Smart contract deployment failed: Wait For Deployment Error');
         });
         
         it('should handle error if getAddress() fails', async () => {
             mockDeployedContractInstance.getAddress.mockRejectedValueOnce(new Error('Get Address Error'));
             await expect(
-                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl)
+                deployPropertyEscrowContract(validSellerAddress, validBuyerAddress, validEscrowAmountWei, validPrivateKey, validRpcUrl, validServiceWallet)
             ).rejects.toThrow('Smart contract deployment failed: Get Address Error');
         });
 
@@ -313,7 +326,8 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
                 validBuyerAddress,
                 validEscrowAmountWei,
                 validPrivateKey,
-                validRpcUrl
+                validRpcUrl,
+                validServiceWallet
             );
             expect(result.transactionHash).toBeNull();
             expect(console.warn).toHaveBeenCalledWith("Could not retrieve deployment transaction hash.");

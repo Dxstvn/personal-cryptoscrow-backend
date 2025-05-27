@@ -7,14 +7,17 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  * @title PropertyEscrowV3
  * @dev Manages escrow for property deals with buyer-defined conditions,
  * a final approval period, and deadline-driven dispute resolution.
+ * Includes a 2% service fee that goes to the service wallet.
  */
 contract PropertyEscrow is ReentrancyGuard {
     address public seller;
     address public buyer;
+    address public serviceWallet;
     uint256 public escrowAmount;
 
     uint256 public constant FINAL_APPROVAL_PERIOD = 48 hours;
     uint256 public constant DISPUTE_RESOLUTION_PERIOD = 7 days;
+    uint256 public constant SERVICE_FEE_PERCENTAGE = 200; // 2% = 200 basis points out of 10000
 
     enum State {
         AWAITING_CONDITION_SETUP,   // Initial: buyer needs to set conditions
@@ -44,6 +47,7 @@ contract PropertyEscrow is ReentrancyGuard {
     event DisputeConditionReFulfilled(address indexed buyer, bytes32 indexed conditionId);
     event FinalApprovalPeriodStarted(uint256 deadline);
     event FundsReleasedToSeller(address indexed seller, uint256 amount);
+    event ServiceFeeTransferred(address indexed serviceWallet, uint256 amount);
     event EscrowCancelledBySystem(string reason, address indexed refundee, uint256 refundAmount); // For deadline-based cancellations
     event EscrowCancelledByUser(address indexed canceller, address indexed refundee, uint256 refundAmount); // For mutual agreement cancellations
 
@@ -63,15 +67,17 @@ contract PropertyEscrow is ReentrancyGuard {
         _;
     }
 
-    constructor(address _seller, address _buyer, uint256 _escrowAmount) {
+    constructor(address _seller, address _buyer, uint256 _escrowAmount, address _serviceWallet) {
         require(_seller != address(0), "Seller address cannot be zero");
         require(_buyer != address(0), "Buyer address cannot be zero");
         require(_escrowAmount > 0, "Escrow amount must be positive");
         require(_seller != _buyer, "Seller and buyer cannot be the same");
+        require(_serviceWallet != address(0), "Service wallet address cannot be zero");
 
         seller = _seller;
         buyer = _buyer;
         escrowAmount = _escrowAmount;
+        serviceWallet = _serviceWallet;
         currentState = State.AWAITING_CONDITION_SETUP;
 
         emit EscrowCreated(_seller, _buyer, _escrowAmount);
@@ -201,8 +207,13 @@ contract PropertyEscrow is ReentrancyGuard {
         uint256 balance = address(this).balance;
         require(balance >= escrowAmount, "Insufficient balance for release");
         
-        payable(seller).transfer(escrowAmount);
-        emit FundsReleasedToSeller(seller, escrowAmount);
+        uint256 serviceFee = (escrowAmount * SERVICE_FEE_PERCENTAGE) / 10000;
+        uint256 remainingAmount = escrowAmount - serviceFee;
+        
+        payable(seller).transfer(remainingAmount);
+        payable(serviceWallet).transfer(serviceFee);
+        emit FundsReleasedToSeller(seller, remainingAmount);
+        emit ServiceFeeTransferred(serviceWallet, serviceFee);
 
         if (address(this).balance > 0) {
             payable(buyer).transfer(address(this).balance); // Return any excess
@@ -307,5 +318,13 @@ contract PropertyEscrow is ReentrancyGuard {
 
     function getContractState() external view returns (State) {
         return currentState;
+    }
+
+    function getServiceWallet() external view returns (address) {
+        return serviceWallet;
+    }
+
+    function getServiceFeePercentage() external pure returns (uint256) {
+        return SERVICE_FEE_PERCENTAGE;
     }
 }
