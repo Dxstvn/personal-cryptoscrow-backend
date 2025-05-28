@@ -45,7 +45,7 @@ module.exports = {
       repo: 'https://github.com/Dxstvn/personal-cryptoscrow-backend.git',
       path: '/home/ec2-user/app',
       'pre-deploy-local': '',
-      'post-deploy': 'npm install && pm2 reload ecosystem.config.js --env production',
+      'post-deploy': 'npm install && pm2 reload ecosystem.config.cjs --env production',
       'pre-setup': ''
     }
   }
