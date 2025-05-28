@@ -10,8 +10,16 @@ import cors from "cors";
 const app = express();
 
 const corsOptions = {
-    origin: ["http://localhost:3000", process.env.FRONTEND_URL],
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    origin: [
+        "http://localhost:3000", 
+        "http://localhost:3001",
+        "http://44.202.141.56:3000",
+        "https://44.202.141.56:3000",
+        process.env.FRONTEND_URL
+    ].filter(Boolean),
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    credentials: true,
+    optionsSuccessStatus: 200
 }
 
 app.use(cors(corsOptions));

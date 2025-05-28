@@ -142,6 +142,8 @@ export const corsOptions = {
     const allowedOrigins = [
       'http://localhost:3000',
       'http://localhost:3001',
+      'http://44.202.141.56:3000',
+      'https://44.202.141.56:3000',
       process.env.FRONTEND_URL
     ].filter(Boolean); // Remove any undefined values
 
