@@ -3,12 +3,17 @@ import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword } f
 import { getAuth as getAdminAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import { ethEscrowApp } from "./authIndex.js"; // This will be the mocked version in tests
-import { adminApp } from "./admin.js";     // This will be the mocked version in tests
+import { getAdminApp } from "./admin.js";     // Use the async function instead of adminApp
 import express from "express";
 import '../../../config/env.js';
 
 const router = express.Router();
-const db = getFirestore(adminApp);
+
+// Helper function to get database instance
+async function getDb() {
+  const app = await getAdminApp();
+  return getFirestore(app);
+}
 
 // Email/Password Sign-Up Route
 router.post("/signUpEmailPass", async (req, res) => {
@@ -26,7 +31,8 @@ router.post("/signUpEmailPass", async (req, res) => {
     const userCredential = await createUserWithEmailAndPassword(authInstance, email, password);
     const user = userCredential.user;
     
-    // Create user profile in Firestore
+    // Create user profile in Firestore using async db function
+    const db = await getDb();
     const userProfileData = {
       email: email.toLowerCase(),
       first_name: '', // Can be updated later
@@ -47,7 +53,8 @@ router.post("/signUpEmailPass", async (req, res) => {
     }
     
     if (!currentIsTest) {
-      const adminAuthInstance = getAdminAuth(adminApp); // adminApp is the Firebase Admin App instance
+      const adminApp = await getAdminApp();
+      const adminAuthInstance = getAdminAuth(adminApp); // Use async adminApp
       await adminAuthInstance.setCustomUserClaims(user.uid, { admin: true });
       console.log(`/signUpEmailPass: Admin claims set for user ${user.uid}`);
     }
@@ -87,6 +94,7 @@ router.post("/signInEmailPass", async (req, res) => {
     const idToken = await user.getIdToken();
     
     if (!currentIsTest) {
+      const adminApp = await getAdminApp();
       const adminAuthInstance = getAdminAuth(adminApp);
       const userRecord = await adminAuthInstance.getUser(user.uid);
       if (!userRecord.customClaims?.admin) {
@@ -133,6 +141,7 @@ router.post("/signInGoogle", async (req, res) => {
       console.log("/signInGoogle: Test mode - invalid-token received.");
       return res.status(401).json({ error: 'Invalid ID token' });
     }
+    const adminApp = await getAdminApp();
     const adminAuthInstance = getAdminAuth(adminApp);
     try {
       console.log(`/signInGoogle: Test mode - Processing user authentication`);
@@ -150,6 +159,7 @@ router.post("/signInGoogle", async (req, res) => {
     }
   } else { // Production mode
     try {
+      const adminApp = await getAdminApp();
       const adminAuthInstance = getAdminAuth(adminApp);
       console.log("/signInGoogle: Production mode - Verifying ID token...");
       const decodedToken = await adminAuthInstance.verifyIdToken(idToken, true);
