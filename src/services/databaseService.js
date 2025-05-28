@@ -1,11 +1,11 @@
 // src/services/databaseService.js
 import { getFirestore, Timestamp, FieldValue } from 'firebase-admin/firestore';
-import { adminApp } from '../api/routes/auth/admin.js'; // Adjust path if adminApp is elsewhere
+import { getAdminApp } from '../api/routes/auth/admin.js'; // Use async getAdminApp
 import admin from 'firebase-admin'; // Import admin to access default app
 
 let dbInstance = null;
 
-function getDb() {
+async function getDb() {
   if (dbInstance) {
     return dbInstance;
   }
@@ -23,6 +23,7 @@ function getDb() {
     }
   } else {
     console.log('[DBService Prod Env] Using Firestore from adminApp.');
+    const adminApp = await getAdminApp();
     dbInstance = getFirestore(adminApp);
   }
   return dbInstance;
@@ -35,7 +36,8 @@ function getDb() {
 export async function getDealsPastFinalApproval() {
   const now = Timestamp.now();
   try {
-    const snapshot = await getDb().collection('deals')
+    const db = await getDb();
+    const snapshot = await db.collection('deals')
       .where('status', '==', 'IN_FINAL_APPROVAL')
       .where('finalApprovalDeadlineBackend', '<=', now)
       .get();
@@ -57,7 +59,8 @@ export async function getDealsPastFinalApproval() {
 export async function getDealsPastDisputeDeadline() {
   const now = Timestamp.now();
   try {
-    const snapshot = await getDb().collection('deals')
+    const db = await getDb();
+    const snapshot = await db.collection('deals')
       .where('status', '==', 'IN_DISPUTE')
       .where('disputeResolutionDeadlineBackend', '<=', now)
       .get();
@@ -84,8 +87,10 @@ export async function updateDealStatusInDB(dealId, updateData) {
     console.error("[DBService] Invalid parameters for updateDealStatusInDB:", { dealId, updateData });
     return;
   }
-  const dealRef = getDb().collection('deals').doc(dealId);
   try {
+    const db = await getDb();
+    const dealRef = db.collection('deals').doc(dealId);
+    
     const timelineEvent = {
       event: updateData.timelineEventMessage,
       timestamp: Timestamp.now(),
@@ -130,7 +135,8 @@ export async function getDealById(dealId) {
     return null;
   }
   try {
-    const docRef = getDb().collection('deals').doc(dealId);
+    const db = await getDb();
+    const docRef = db.collection('deals').doc(dealId);
     const docSnap = await docRef.get();
     if (docSnap.exists) {
       return { id: docSnap.id, ...docSnap.data() };

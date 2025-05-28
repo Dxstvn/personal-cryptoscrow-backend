@@ -1,10 +1,18 @@
 import express from 'express';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'; // Import FieldValue
 import { getAuth } from 'firebase-admin/auth';
-import { adminApp } from '../auth/admin.js'; // Assuming this path is correct
+import { getAdminApp } from '../auth/admin.js'; // Use async getAdminApp
 
 const router = express.Router();
-const db = getFirestore(adminApp);
+
+// Helper function to get Firebase services
+async function getFirebaseServices() {
+  const adminApp = await getAdminApp();
+  return {
+    db: getFirestore(adminApp),
+    auth: getAuth(adminApp)
+  };
+}
 
 // Authentication middleware (keep as is)
 async function authenticateToken(req, res, next) {
@@ -12,7 +20,7 @@ async function authenticateToken(req, res, next) {
   const token = authHeader && authHeader.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token provided' });
   try {
-    const auth = getAuth(adminApp);
+    const { auth } = await getFirebaseServices();
     const decodedToken = await auth.verifyIdToken(token);
     req.userId = decodedToken.uid;
     next();
@@ -41,6 +49,7 @@ router.post('/invite', authenticateToken, async (req, res) => {
 
 
     // Get sender's information
+    const { db } = await getFirebaseServices();
     const userDoc = await db.collection('users').doc(userId).get();
     const userData = userDoc.data();
 
@@ -254,6 +263,7 @@ router.get('/contacts', authenticateToken, async (req, res) => {
   try {
     const userId = req.userId;
 
+    const { db } = await getFirebaseServices();
     const contactsRef = db.collection('users').doc(userId).collection('contacts');
     // Only retrieve contacts marked as accepted
     const contactsSnapshot = await contactsRef.where('accepted', '==', true).get();
@@ -293,6 +303,7 @@ router.delete('/contacts/:contactId', authenticateToken, async (req, res) => {
     }
 
     // Use a batch write to delete the contact from both users' contact lists
+    const { db } = await getFirebaseServices();
     const batch = db.batch();
 
     const userContactRef = db.collection('users').doc(userId).collection('contacts').doc(contactId);

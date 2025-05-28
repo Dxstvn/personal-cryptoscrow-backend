@@ -1,13 +1,21 @@
 import express from 'express';
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
-import { adminApp } from '../auth/admin.js';
+import { getAdminApp } from '../auth/admin.js';
 import { deployPropertyEscrowContract } from '../../../services/contractDeployer.js';
 import { isAddress, getAddress, parseUnits } from 'ethers'; // This is the import we are interested in
 import { Wallet } from 'ethers';
 
 const router = express.Router();
-const db = getFirestore(adminApp);
+
+// Helper function to get Firebase services
+async function getFirebaseServices() {
+  const adminApp = await getAdminApp();
+  return {
+    db: getFirestore(adminApp),
+    auth: getAdminAuth(adminApp)
+  };
+}
 
 // const DEPLOYER_PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY; // REMOVE
 // const RPC_URL = process.env.RPC_URL || process.env.SEPOLIA_RPC_URL; // REMOVE
@@ -19,7 +27,7 @@ async function authenticateToken(req, res, next) {
         return res.status(401).json({ error: 'Authentication token is required.' });
     }
     try {
-        const auth = getAdminAuth(adminApp);
+        const { auth } = await getFirebaseServices();
         const decodedToken = await auth.verifyIdToken(token);
         req.userId = decodedToken.uid;
         req.userEmail = decodedToken.email;
@@ -43,143 +51,148 @@ router.post('/create', authenticateToken, async (req, res) => {
         initialConditions, buyerWalletAddress, sellerWalletAddress
     } = req.body;
 
-
-
-    // --- Input Validations ---
-    if (!initiatedBy || (initiatedBy !== 'BUYER' && initiatedBy !== 'SELLER')) {
-        return res.status(400).json({ error: 'Invalid "initiatedBy". Must be "BUYER" or "SELLER".' });
-    }
-    if (typeof propertyAddress !== 'string' || propertyAddress.trim() === '') {
-        return res.status(400).json({ error: 'Property address is required.' });
-    }
-    if (typeof amount !== 'number' || amount <= 0 || !Number.isFinite(amount)) {
-        return res.status(400).json({ error: 'Amount must be a positive finite number.' });
-    }
-    if (typeof otherPartyEmail !== 'string' || otherPartyEmail.trim() === '' || !otherPartyEmail.includes('@')) {
-        return res.status(400).json({ error: 'Valid other party email is required.' });
-    }
-
-    // Wallet address validation
-    if (!buyerWalletAddress || !isAddress(buyerWalletAddress)) {
-        return res.status(400).json({ error: 'Valid buyer wallet address is required.' });
-    }
-    if (!sellerWalletAddress || !isAddress(sellerWalletAddress)) {
-        return res.status(400).json({ error: 'Valid seller wallet address is required.' });
-    }
-
-    if (initialConditions && (!Array.isArray(initialConditions) || !initialConditions.every(c => c && typeof c.id === 'string' && c.id.trim() !== '' && typeof c.description === 'string' && typeof c.type === 'string'))) {
-        return res.status(400).json({ error: 'Initial conditions must be an array of objects with non-empty "id", "type", and "description".' });
-    }
-
-    console.log(`[ROUTE LOG] /create - Transaction creation request by UID: ${initiatorId} (${initiatorEmail}), Role: ${initiatedBy}`);
-
-    let escrowAmountWeiString;
     try {
-        escrowAmountWeiString = parseUnits(String(amount), 'ether').toString();
-    } catch (parseError) {
-        console.error("[ROUTE ERROR] Error parsing amount to Wei:", parseError);
-        return res.status(400).json({ error: `Invalid amount format: ${amount}. ${parseError.message}` });
-    }
-
-    try {
+        const { db } = await getFirebaseServices();
         const normalizedOtherPartyEmail = otherPartyEmail.trim().toLowerCase();
-        if (initiatorEmail.toLowerCase() === normalizedOtherPartyEmail) {
-            return res.status(400).json({ error: 'Cannot create a transaction with yourself.' });
+
+        // --- Input Validations ---
+        if (!initiatedBy || (initiatedBy !== 'BUYER' && initiatedBy !== 'SELLER')) {
+            return res.status(400).json({ error: 'Invalid "initiatedBy". Must be "BUYER" or "SELLER".' });
+        }
+        if (typeof propertyAddress !== 'string' || propertyAddress.trim() === '') {
+            return res.status(400).json({ error: 'Property address is required.' });
+        }
+        if (typeof amount !== 'number' || amount <= 0 || !Number.isFinite(amount)) {
+            return res.status(400).json({ error: 'Amount must be a positive finite number.' });
+        }
+        if (typeof otherPartyEmail !== 'string' || otherPartyEmail.trim() === '' || !otherPartyEmail.includes('@')) {
+            return res.status(400).json({ error: 'Valid other party email is required.' });
         }
 
-        const otherPartyQuery = await db.collection('users').where('email', '==', normalizedOtherPartyEmail).limit(1).get();
-        if (otherPartyQuery.empty) {
-            return res.status(404).json({ error: `User with email ${otherPartyEmail} not found.` });
+        // Wallet address validation
+        if (!buyerWalletAddress || !isAddress(buyerWalletAddress)) {
+            return res.status(400).json({ error: 'Valid buyer wallet address is required.' });
         }
-        const otherPartyId = otherPartyQuery.docs[0].id;
-        const otherPartyData = otherPartyQuery.docs[0].data();
-
-        let buyerIdFs, sellerIdFs, status;
-        const finalBuyerWallet = getAddress(buyerWalletAddress);
-        const finalSellerWallet = getAddress(sellerWalletAddress);
-
-        if (finalBuyerWallet === finalSellerWallet) {
-            return res.status(400).json({ error: 'Buyer and Seller wallet addresses cannot be the same.' });
+        if (!sellerWalletAddress || !isAddress(sellerWalletAddress)) {
+            return res.status(400).json({ error: 'Valid seller wallet address is required.' });
         }
 
-        if (initiatedBy === 'SELLER') {
-            sellerIdFs = initiatorId; buyerIdFs = otherPartyId; status = 'PENDING_BUYER_REVIEW';
-        } else {
-            buyerIdFs = initiatorId; sellerIdFs = otherPartyId; status = 'PENDING_SELLER_REVIEW';
+        if (initialConditions && (!Array.isArray(initialConditions) || !initialConditions.every(c => c && typeof c.id === 'string' && c.id.trim() !== '' && typeof c.description === 'string' && typeof c.type === 'string'))) {
+            return res.status(400).json({ error: 'Initial conditions must be an array of objects with non-empty "id", "type", and "description".' });
         }
 
-        const now = Timestamp.now();
-        const newTransactionData = {
-            propertyAddress: propertyAddress.trim(), amount: Number(amount), escrowAmountWei: escrowAmountWeiString,
-            sellerId: sellerIdFs, buyerId: buyerIdFs, buyerWalletAddress: finalBuyerWallet, sellerWalletAddress: finalSellerWallet,
-            participants: [sellerIdFs, buyerIdFs], status, createdAt: now, updatedAt: now, initiatedBy,
-            otherPartyEmail: normalizedOtherPartyEmail, initiatorEmail: initiatorEmail.toLowerCase(),
-            conditions: (initialConditions || []).map(cond => ({
-                id: cond.id.trim(), type: cond.type.trim() || 'CUSTOM', description: String(cond.description).trim(),
-                status: 'PENDING_BUYER_ACTION', documents: [], createdBy: initiatorId, createdAt: now, updatedAt: now,
-            })),
-            documents: [],
-            timeline: [{ event: `Transaction initiated by ${initiatedBy.toLowerCase()} (${initiatorEmail}). Other party: ${otherPartyData.email}.`, timestamp: now, userId: initiatorId }],
-            smartContractAddress: null, fundsDepositedByBuyer: false, fundsReleasedToSeller: false,
-            finalApprovalDeadlineBackend: null, disputeResolutionDeadlineBackend: null,
-        };
-        if (initialConditions && initialConditions.length > 0) {
-             newTransactionData.timeline.push({ event: `${initiatedBy.toLowerCase()} specified ${initialConditions.length} initial condition(s) for review.`, timestamp: now, userId: initiatorId });
+        console.log(`[ROUTE LOG] /create - Transaction creation request by UID: ${initiatorId} (${initiatorEmail}), Role: ${initiatedBy}`);
+
+        let escrowAmountWeiString;
+        try {
+            escrowAmountWeiString = parseUnits(String(amount), 'ether').toString();
+        } catch (parseError) {
+            console.error("[ROUTE ERROR] Error parsing amount to Wei:", parseError);
+            return res.status(400).json({ error: `Invalid amount format: ${amount}. ${parseError.message}` });
         }
 
-        let deployedContractAddress = null;
-
-        // Dynamically read env vars for deployment
-        const currentDeployerKey = process.env.DEPLOYER_PRIVATE_KEY;
-        const currentRpcUrl = process.env.RPC_URL || process.env.SEPOLIA_RPC_URL;
-
-        if (!currentDeployerKey || !currentRpcUrl) {
-            console.warn("[ROUTE WARN] Deployment skipped: DEPLOYER_PRIVATE_KEY or RPC_URL not set in .env. Transaction will be off-chain only.");
-            newTransactionData.timeline.push({ event: `Smart contract deployment SKIPPED (off-chain only mode).`, timestamp: Timestamp.now(), system: true });
-        } else {
-            try {
-                console.log(`[ROUTE LOG] Attempting to deploy PropertyEscrow contract. Buyer: ${finalBuyerWallet}, Seller: ${finalSellerWallet}, Amount: ${newTransactionData.escrowAmountWei}`);
-                
-                // Derive service wallet address from deployer private key
-                const deployerWallet = new Wallet(currentDeployerKey);
-                const serviceWalletAddress = deployerWallet.address;
-                console.log(`[ROUTE LOG] Using service wallet: ${serviceWalletAddress} (derived from deployer key)`);
-                
-                const deploymentResult = await deployPropertyEscrowContract(
-                    finalSellerWallet, 
-                    finalBuyerWallet, 
-                    newTransactionData.escrowAmountWei,
-                    currentDeployerKey, // Use dynamically read key
-                    currentRpcUrl,      // Use dynamically read URL
-                    serviceWalletAddress // Service wallet for 2% fee
-                );
-                
-                deployedContractAddress = deploymentResult.contractAddress;
-                newTransactionData.smartContractAddress = deployedContractAddress;
-                newTransactionData.timeline.push({ 
-                    event: `PropertyEscrow smart contract deployed at ${deployedContractAddress} with 2% service fee to ${serviceWalletAddress}.`, 
-                    timestamp: Timestamp.now(), 
-                    system: true 
-                });
-                console.log(`[ROUTE LOG] Smart contract deployed: ${deployedContractAddress} with service wallet: ${serviceWalletAddress}`);
-            } catch (deployError) {
-                console.error('[ROUTE ERROR] Smart contract deployment failed:', deployError.message, deployError.stack);
-                newTransactionData.timeline.push({ event: `Smart contract deployment FAILED: ${deployError.message}. Proceeding as off-chain.`, timestamp: Timestamp.now(), system: true });
+        try {
+            if (initiatorEmail.toLowerCase() === normalizedOtherPartyEmail) {
+                return res.status(400).json({ error: 'Cannot create a transaction with yourself.' });
             }
+
+            const otherPartyQuery = await db.collection('users').where('email', '==', normalizedOtherPartyEmail).limit(1).get();
+            if (otherPartyQuery.empty) {
+                return res.status(404).json({ error: `User with email ${otherPartyEmail} not found.` });
+            }
+            const otherPartyId = otherPartyQuery.docs[0].id;
+            const otherPartyData = otherPartyQuery.docs[0].data();
+
+            let buyerIdFs, sellerIdFs, status;
+            const finalBuyerWallet = getAddress(buyerWalletAddress);
+            const finalSellerWallet = getAddress(sellerWalletAddress);
+
+            if (finalBuyerWallet === finalSellerWallet) {
+                return res.status(400).json({ error: 'Buyer and Seller wallet addresses cannot be the same.' });
+            }
+
+            if (initiatedBy === 'SELLER') {
+                sellerIdFs = initiatorId; buyerIdFs = otherPartyId; status = 'PENDING_BUYER_REVIEW';
+            } else {
+                buyerIdFs = initiatorId; sellerIdFs = otherPartyId; status = 'PENDING_SELLER_REVIEW';
+            }
+
+            const now = Timestamp.now();
+            const newTransactionData = {
+                propertyAddress: propertyAddress.trim(), amount: Number(amount), escrowAmountWei: escrowAmountWeiString,
+                sellerId: sellerIdFs, buyerId: buyerIdFs, buyerWalletAddress: finalBuyerWallet, sellerWalletAddress: finalSellerWallet,
+                participants: [sellerIdFs, buyerIdFs], status, createdAt: now, updatedAt: now, initiatedBy,
+                otherPartyEmail: normalizedOtherPartyEmail, initiatorEmail: initiatorEmail.toLowerCase(),
+                conditions: (initialConditions || []).map(cond => ({
+                    id: cond.id.trim(), type: cond.type.trim() || 'CUSTOM', description: String(cond.description).trim(),
+                    status: 'PENDING_BUYER_ACTION', documents: [], createdBy: initiatorId, createdAt: now, updatedAt: now,
+                })),
+                documents: [],
+                timeline: [{ event: `Transaction initiated by ${initiatedBy.toLowerCase()} (${initiatorEmail}). Other party: ${otherPartyData.email}.`, timestamp: now, userId: initiatorId }],
+                smartContractAddress: null, fundsDepositedByBuyer: false, fundsReleasedToSeller: false,
+                finalApprovalDeadlineBackend: null, disputeResolutionDeadlineBackend: null,
+            };
+            if (initialConditions && initialConditions.length > 0) {
+                 newTransactionData.timeline.push({ event: `${initiatedBy.toLowerCase()} specified ${initialConditions.length} initial condition(s) for review.`, timestamp: now, userId: initiatorId });
+            }
+
+            let deployedContractAddress = null;
+
+            // Dynamically read env vars for deployment
+            const currentDeployerKey = process.env.DEPLOYER_PRIVATE_KEY;
+            const currentRpcUrl = process.env.RPC_URL || process.env.SEPOLIA_RPC_URL;
+
+            if (!currentDeployerKey || !currentRpcUrl) {
+                console.warn("[ROUTE WARN] Deployment skipped: DEPLOYER_PRIVATE_KEY or RPC_URL not set in .env. Transaction will be off-chain only.");
+                newTransactionData.timeline.push({ event: `Smart contract deployment SKIPPED (off-chain only mode).`, timestamp: Timestamp.now(), system: true });
+            } else {
+                try {
+                    console.log(`[ROUTE LOG] Attempting to deploy PropertyEscrow contract. Buyer: ${finalBuyerWallet}, Seller: ${finalSellerWallet}, Amount: ${newTransactionData.escrowAmountWei}`);
+                    
+                    // Derive service wallet address from deployer private key
+                    const deployerWallet = new Wallet(currentDeployerKey);
+                    const serviceWalletAddress = deployerWallet.address;
+                    console.log(`[ROUTE LOG] Using service wallet: ${serviceWalletAddress} (derived from deployer key)`);
+                    
+                    const deploymentResult = await deployPropertyEscrowContract(
+                        finalSellerWallet, 
+                        finalBuyerWallet, 
+                        newTransactionData.escrowAmountWei,
+                        currentDeployerKey, // Use dynamically read key
+                        currentRpcUrl,      // Use dynamically read URL
+                        serviceWalletAddress // Service wallet for 2% fee
+                    );
+                    
+                    deployedContractAddress = deploymentResult.contractAddress;
+                    newTransactionData.smartContractAddress = deployedContractAddress;
+                    newTransactionData.timeline.push({ 
+                        event: `PropertyEscrow smart contract deployed at ${deployedContractAddress} with 2% service fee to ${serviceWalletAddress}.`, 
+                        timestamp: Timestamp.now(), 
+                        system: true 
+                    });
+                    console.log(`[ROUTE LOG] Smart contract deployed: ${deployedContractAddress} with service wallet: ${serviceWalletAddress}`);
+                } catch (deployError) {
+                    console.error('[ROUTE ERROR] Smart contract deployment failed:', deployError.message, deployError.stack);
+                    newTransactionData.timeline.push({ event: `Smart contract deployment FAILED: ${deployError.message}. Proceeding as off-chain.`, timestamp: Timestamp.now(), system: true });
+                }
+            }
+
+            const transactionRef = await db.collection('deals').add(newTransactionData);
+            console.log(`[ROUTE LOG] Transaction stored in Firestore: ${transactionRef.id}. Status: ${newTransactionData.status}. SC: ${newTransactionData.smartContractAddress || 'None'}`);
+
+            const responsePayload = {
+                message: 'Transaction initiated successfully.', transactionId: transactionRef.id,
+                status: newTransactionData.status, smartContractAddress: newTransactionData.smartContractAddress,
+            };
+            if (deployedContractAddress === null && currentDeployerKey && currentRpcUrl) {
+                responsePayload.deploymentWarning = "Smart contract deployment was attempted but failed. The transaction has been created for off-chain tracking.";
+            }
+            res.status(201).json(responsePayload);
+
+        } catch (error) {
+            console.error('[ROUTE ERROR] Error in /create transaction route:', error.message, error.stack);
+            res.status(500).json({ error: 'Internal server error during transaction creation.' });
         }
-
-        const transactionRef = await db.collection('deals').add(newTransactionData);
-        console.log(`[ROUTE LOG] Transaction stored in Firestore: ${transactionRef.id}. Status: ${newTransactionData.status}. SC: ${newTransactionData.smartContractAddress || 'None'}`);
-
-        const responsePayload = {
-            message: 'Transaction initiated successfully.', transactionId: transactionRef.id,
-            status: newTransactionData.status, smartContractAddress: newTransactionData.smartContractAddress,
-        };
-        if (deployedContractAddress === null && currentDeployerKey && currentRpcUrl) {
-            responsePayload.deploymentWarning = "Smart contract deployment was attempted but failed. The transaction has been created for off-chain tracking.";
-        }
-        res.status(201).json(responsePayload);
-
     } catch (error) {
         console.error('[ROUTE ERROR] Error in /create transaction route:', error.message, error.stack);
         res.status(500).json({ error: 'Internal server error during transaction creation.' });
@@ -194,6 +207,7 @@ router.get('/:transactionId', authenticateToken, async (req, res) => {
     const { transactionId } = req.params;
     const userId = req.userId;
     try {
+        const { db } = await getFirebaseServices();
         const doc = await db.collection('deals').doc(transactionId).get();
         if (!doc.exists) {
             return res.status(404).json({ error: 'Transaction not found.' });
@@ -223,6 +237,7 @@ router.get('/', authenticateToken, async (req, res) => {
     const userId = req.userId;
     const { limit = 10, startAfter, orderBy = 'createdAt', orderDirection = 'desc' } = req.query;
     try {
+        const { db } = await getFirebaseServices();
         let query = db.collection('deals')
             .where('participants', 'array-contains', userId)
             .orderBy(orderBy, orderDirection.toLowerCase() === 'asc' ? 'asc' : 'desc')
@@ -288,6 +303,7 @@ router.put('/:transactionId/conditions/:conditionId/buyer-review', authenticateT
     // console.log(`[ROUTE LOG] Buyer (UID: ${userId}) updating backend status for condition ${conditionId} in TX ${transactionId} to ${newBackendStatus}`);
 
     try {
+        const { db } = await getFirebaseServices();
         const transactionRef = db.collection('deals').doc(transactionId);
         const now = Timestamp.now();
 
@@ -353,6 +369,7 @@ router.put('/:transactionId/sync-status', authenticateToken, async (req, res) =>
     // console.log(`[ROUTE LOG] Syncing/Updating backend status for TX ID: ${transactionId} to SC State "${newSCStatus}" by UID: ${userId}`);
 
     try {
+        const { db } = await getFirebaseServices();
         const transactionRef = db.collection('deals').doc(transactionId);
         const now = Timestamp.now();
 
@@ -419,6 +436,7 @@ router.post('/:transactionId/sc/start-final-approval', authenticateToken, async 
     }
 
     try {
+        const { db } = await getFirebaseServices();
         const transactionRef = db.collection('deals').doc(transactionId);
         const now = Timestamp.now();
         let finalApprovalTimestamp;
@@ -468,6 +486,7 @@ router.post('/:transactionId/sc/raise-dispute', authenticateToken, async (req, r
     }
 
     try {
+        const { db } = await getFirebaseServices();
         const transactionRef = db.collection('deals').doc(transactionId);
         const now = Timestamp.now();
         let disputeDeadlineTimestamp;

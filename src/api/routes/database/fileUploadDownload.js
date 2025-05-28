@@ -5,7 +5,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { getStorage as getAdminStorage } from 'firebase-admin/storage';
 import { ethEscrowApp } from '../auth/authIndex.js';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
-import { adminApp } from '../auth/admin.js';
+import { getAdminApp } from '../auth/admin.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
@@ -16,7 +16,16 @@ const __dirname = path.dirname(__filename);
 
 const router = express.Router();
 const storage = getStorage(ethEscrowApp);
-const db = getFirestore(adminApp);
+
+// Helper function to get Firebase services
+async function getFirebaseServices() {
+  const adminApp = await getAdminApp();
+  return {
+    db: getFirestore(adminApp),
+    auth: getAdminAuth(adminApp),
+    adminStorage: getAdminStorage(adminApp)
+  };
+}
 
 // Authentication middleware
 async function authenticateToken(req, res, next) {
@@ -24,7 +33,7 @@ async function authenticateToken(req, res, next) {
   const token = authHeader && authHeader.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token provided' });
   try {
-    const auth = getAdminAuth(adminApp);
+    const { auth } = await getFirebaseServices();
     const decodedToken = await auth.verifyIdToken(token);
     req.userId = decodedToken.uid;
     next();
@@ -153,6 +162,7 @@ router.post('/upload', authenticateToken, upload.single('file'), handleMulterErr
     }
 
     // Check if deal exists and user has permission
+    const { db } = await getFirebaseServices();
     const dealRef = db.collection('deals').doc(dealId);
     const dealDoc = await dealRef.get();
     if (!dealDoc.exists) {
@@ -221,6 +231,7 @@ router.get('/my-deals', authenticateToken, async (req, res) => {
     const userId = req.userId;
 
     // Query deals where the user is a participant
+    const { db } = await getFirebaseServices();
     const dealsQuery = await db.collection('deals')
       .where('participants', 'array-contains', userId)
       .get();
@@ -270,6 +281,7 @@ router.get('/download/:dealId/:fileId', authenticateToken, async (req, res) => {
     const userId = req.userId;
 
     // Verify deal exists and user is a participant
+    const { db } = await getFirebaseServices();
     const dealDoc = await db.collection('deals').doc(dealId).get();
     if (!dealDoc.exists) {
       return res.status(404).json({ error: 'Deal not found' });
@@ -287,7 +299,7 @@ router.get('/download/:dealId/:fileId', authenticateToken, async (req, res) => {
     const fileData = fileDoc.data();
 
     // Access file from Firebase Storage using admin SDK
-    const adminStorage = getAdminStorage(adminApp);
+    const { adminStorage } = await getFirebaseServices();
     const bucket = adminStorage.bucket();
     const file = bucket.file(fileData.storagePath);
 
