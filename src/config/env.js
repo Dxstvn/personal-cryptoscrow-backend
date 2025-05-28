@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import awsSecretsManager from './awsSecretsManager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,6 +18,40 @@ dotenv.config({
   override: true   // Override existing values
 });
 
+// Load secrets from AWS Secrets Manager in production
+async function loadAWSSecrets() {
+  if (awsSecretsManager.isAWSEnvironment()) {
+    try {
+      console.log('🔐 Loading secrets from AWS Secrets Manager...');
+      
+      // Load application secrets
+      const appSecrets = await awsSecretsManager.getAppSecrets();
+      Object.keys(appSecrets).forEach(key => {
+        if (!process.env[key]) { // Don't override existing env vars
+          process.env[key] = appSecrets[key];
+        }
+      });
+      
+      // Load blockchain secrets
+      const blockchainSecrets = await awsSecretsManager.getBlockchainSecrets();
+      Object.keys(blockchainSecrets).forEach(key => {
+        if (!process.env[key]) { // Don't override existing env vars
+          process.env[key] = blockchainSecrets[key];
+        }
+      });
+      
+      console.log('✅ AWS Secrets Manager integration successful');
+    } catch (error) {
+      console.error('❌ Failed to load secrets from AWS Secrets Manager:', error.message);
+      // In production, we might want to exit the process if secrets can't be loaded
+      if (process.env.NODE_ENV === 'production') {
+        console.error('🚨 Cannot start application without required secrets in production');
+        process.exit(1);
+      }
+    }
+  }
+}
+
 // Export a function to validate required environment variables
 export function validateEnvVars(requiredVars = []) {
   const missing = requiredVars.filter(varName => !process.env[varName]);
@@ -31,6 +66,10 @@ export const config = {
   NODE_ENV: process.env.NODE_ENV || 'development',
   PORT: process.env.PORT || 3000,
   FRONTEND_URL: process.env.FRONTEND_URL,
+  
+  // AWS Configuration
+  AWS_REGION: process.env.AWS_REGION || 'us-east-1',
+  USE_AWS_SECRETS: process.env.USE_AWS_SECRETS || 'false',
   
   // Firebase config
   FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID,
@@ -82,7 +121,12 @@ export const config = {
   ALCHEMY_API_KEY: process.env.ALCHEMY_API_KEY,
 };
 
+// Initialize AWS secrets loading
+await loadAWSSecrets();
+
 // Log environment loading status (only in development)
 if (config.NODE_ENV === 'development') {
   console.log('🔧 Environment variables loaded from .env and .env.local');
+} else if (config.NODE_ENV === 'production') {
+  console.log('🔧 Production environment variables loaded');
 } 
