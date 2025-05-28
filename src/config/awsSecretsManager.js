@@ -45,6 +45,10 @@ class AWSSecretsManager {
     return await this.getSecret('CryptoEscrow/Blockchain/Keys');
   }
 
+  async getFirebaseServiceAccount() {
+    return await this.getSecret('CryptoEscrow/Firebase/ServiceAccount');
+  }
+
   // Method to clear cache (useful for testing or forced refresh)
   clearCache() {
     this.cache.clear();

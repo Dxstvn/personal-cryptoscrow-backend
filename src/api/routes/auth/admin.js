@@ -2,13 +2,14 @@ import { initializeApp, cert, getApp, getApps, deleteApp } from 'firebase-admin/
 import { getAuth } from 'firebase-admin/auth';
 import '../../../config/env.js';
 import fs from 'fs';
+import awsSecretsManager from '../../../config/awsSecretsManager.js';
 
 const isTest = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test';
 const isProduction = process.env.NODE_ENV === 'production';
 const appName = "adminApp";
 
 // Function to initialize or get the admin app
-function initializeAdmin() {
+async function initializeAdmin() {
   console.log(`Initializing Admin SDK. NODE_ENV='${process.env.NODE_ENV}', isTest=${isTest}, isProduction=${isProduction}`);
 
   if (isTest) {
@@ -34,44 +35,22 @@ function initializeAdmin() {
   } else if (isProduction && process.env.USE_AWS_SECRETS === 'true') {
     console.log("Using Production configuration for Admin SDK with AWS Secrets Manager.");
     
-    // In production with AWS Secrets Manager, use individual environment variables
-    // These should be loaded from AWS Secrets Manager by env.js
-    const requiredVars = {
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-    };
-    
-    // Check if all required variables are present
-    const missingVars = Object.entries(requiredVars)
-      .filter(([key, value]) => !value)
-      .map(([key]) => key);
-    
-    if (missingVars.length > 0) {
-      throw new Error(`Missing Firebase configuration from AWS Secrets Manager: ${missingVars.join(', ')}`);
-    }
-    
+    // In production with AWS Secrets Manager, get Firebase service account
     try {
-      // Create service account object from individual environment variables
-      const serviceAccount = {
-        type: "service_account",
-        project_id: requiredVars.projectId,
-        private_key: requiredVars.privateKey.replace(/\\n/g, '\n'), // Handle escaped newlines
-        client_email: requiredVars.clientEmail,
-        // Add other fields if needed
-        auth_uri: "https://accounts.google.com/o/oauth2/auth",
-        token_uri: "https://oauth2.googleapis.com/token",
-      };
+      const firebaseServiceAccount = await awsSecretsManager.getFirebaseServiceAccount();
+      
+      if (!firebaseServiceAccount || !firebaseServiceAccount.project_id || !firebaseServiceAccount.private_key || !firebaseServiceAccount.client_email) {
+        throw new Error('Firebase service account is missing required fields from AWS Secrets Manager');
+      }
       
       options = {
-        credential: cert(serviceAccount),
-        projectId: requiredVars.projectId,
-        storageBucket: requiredVars.storageBucket
+        credential: cert(firebaseServiceAccount),
+        projectId: firebaseServiceAccount.project_id,
+        storageBucket: process.env.FIREBASE_STORAGE_BUCKET || firebaseServiceAccount.project_id + '.appspot.com'
       };
-      console.log("Firebase Admin SDK initialized with credentials from AWS Secrets Manager.");
+      console.log("Firebase Admin SDK initialized with service account from AWS Secrets Manager.");
     } catch (e) {
-      throw new Error(`Failed to initialize Firebase Admin SDK with AWS credentials: ${e.message}`);
+      throw new Error(`Failed to initialize Firebase Admin SDK with AWS Secrets Manager: ${e.message}`);
     }
   } else {
     console.log("Using Development configuration for Admin SDK with local service account file.");
@@ -96,7 +75,51 @@ function initializeAdmin() {
   return initializeApp(options, appName);
 }
 
-export const adminApp = initializeAdmin();
+// Lazy initialization cache
+let adminAppPromise = null;
+
+// Async function to get admin app
+async function getAdminApp() {
+  if (!adminAppPromise) {
+    adminAppPromise = initializeAdmin();
+  }
+  return await adminAppPromise;
+}
+
+// For backward compatibility, export a synchronous version for non-production environments
+let adminApp;
+if (isTest || (!isProduction || process.env.USE_AWS_SECRETS !== 'true')) {
+  // For test or development environments, initialize synchronously using the old approach
+  console.log("Using synchronous initialization for development/test environment.");
+  try {
+    // Use the synchronous version for development
+    if (isTest) {
+      adminApp = initializeApp({
+        projectId: "demo-test",
+        storageBucket: "demo-test.appspot.com"
+      }, appName);
+    } else {
+      const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+      if (serviceAccountPath && fs.existsSync(serviceAccountPath)) {
+        const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
+        adminApp = initializeApp({
+          credential: cert(serviceAccount),
+          projectId: serviceAccount.project_id,
+          storageBucket: process.env.FIREBASE_STORAGE_BUCKET
+        }, appName);
+      } else {
+        console.warn("GOOGLE_APPLICATION_CREDENTIALS not found. Will initialize when first accessed.");
+      }
+    }
+  } catch (error) {
+    console.warn('Warning: Synchronous admin app initialization failed:', error.message);
+    console.log('Admin app will be initialized asynchronously when first accessed.');
+  }
+} else {
+  console.log("Production mode detected. Admin app will be initialized asynchronously when first accessed.");
+}
+
+export { adminApp, getAdminApp };
 
 // Optional: Function to clean up the admin app
 export async function deleteAdminApp() {
