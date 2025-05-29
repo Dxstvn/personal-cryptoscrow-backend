@@ -6,6 +6,8 @@ module.exports = {
     exec_mode: 'fork', // Fork mode instead of cluster
     watch: false,
     max_memory_restart: '1G',
+    // Add node arguments for ESM support
+    node_args: '--no-warnings',
     env: {
       NODE_ENV: 'development',
       PORT: 3000
