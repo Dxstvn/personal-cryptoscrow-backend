@@ -1,0 +1,100 @@
+#!/bin/bash
+
+# CryptoEscrow Backend - Complete Fix Script v4
+# This script fixes Node.js version compatibility with Amazon Linux 2
+
+set -e
+
+echo "🔧 CryptoEscrow Backend - Complete Fix v4 (Amazon Linux 2 Compatible)"
+echo "======================================================================"
+
+# Stop PM2 processes
+echo "Stopping PM2 processes..."
+pm2 delete all || true
+pm2 kill || true
+
+# Clean up stale files
+echo "Cleaning up stale files..."
+cd /home/ec2-user/cryptoescrow-backend
+rm -f start-server.js server.js || true
+
+# Update repository
+echo "Updating repository..."
+git fetch origin
+git reset --hard origin/main
+git clean -fd
+
+# Remove old Node.js (if any) and install Node.js 18 (compatible with Amazon Linux 2)
+echo "Upgrading Node.js to version 18 (Amazon Linux 2 compatible)..."
+sudo yum remove -y nodejs npm || true
+
+# Clean up any previous NodeSource repositories
+sudo rm -f /etc/yum.repos.d/nodesource*.repo || true
+
+# Install Node.js 18 via NodeSource repository (compatible with Amazon Linux 2)
+curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo bash -
+sudo yum install -y nodejs
+
+# Verify Node.js version
+echo "New Node.js version:"
+node --version
+npm --version
+
+# Global PM2 installation
+echo "Installing PM2 globally..."
+sudo npm install -g pm2
+
+# Clear npm cache and node_modules
+echo "Clearing npm cache and dependencies..."
+rm -rf node_modules package-lock.json
+npm cache clean --force
+
+# Install dependencies
+echo "Installing dependencies..."
+npm install --production
+
+# Verify critical dependencies
+echo "Verifying critical dependencies..."
+npm list firebase-admin || npm install firebase-admin@13.4.0
+npm list @aws-sdk/client-secrets-manager || npm install @aws-sdk/client-secrets-manager
+npm list node-fetch || npm install node-fetch@3.3.2
+
+# Create logs directory
+mkdir -p logs
+
+# Check if .env file exists
+if [ ! -f ".env" ]; then
+    echo "Creating .env file from template..."
+    cp aws-deployment/env.production.template .env
+    echo "⚠️  Please review and update .env file with your configuration"
+fi
+
+# Start PM2 with the fixed configuration
+echo "Starting PM2..."
+pm2 start ecosystem.config.cjs --env production
+
+# Save PM2 configuration
+pm2 save
+pm2 startup
+
+# Wait for application to stabilize
+echo "Waiting for application to stabilize..."
+sleep 10
+
+# Display status
+echo "Deployment status:"
+pm2 list
+echo ""
+echo "Recent logs:"
+pm2 logs --lines 10
+
+# Test health endpoint
+echo "Testing health endpoint..."
+if curl -f http://localhost:3000/health > /dev/null 2>&1; then
+    echo "✅ Health check passed!"
+else
+    echo "⚠️  Health check failed - check logs"
+fi
+
+echo "🎉 Fix completed! Node.js 18 installed (compatible with Amazon Linux 2)"
+echo "This resolves the engine compatibility warnings while maintaining system compatibility." 
