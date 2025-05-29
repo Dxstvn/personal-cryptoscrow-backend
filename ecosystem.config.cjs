@@ -2,8 +2,8 @@ module.exports = {
   apps: [{
     name: 'cryptoescrow-backend',
     script: 'src/server.js',
-    instances: 'max', // Use all available CPU cores
-    exec_mode: 'cluster',
+    instances: 1, // Single instance only
+    exec_mode: 'fork', // Fork mode instead of cluster
     watch: false,
     max_memory_restart: '1G',
     env: {

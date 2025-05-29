@@ -1,0 +1,58 @@
+# 🚨 IMMEDIATE FIX COMMANDS FOR AWS EC2 - V2
+# Updated to fix PM2 multiple instances and missing Firebase packages
+
+# 1. SSH to your EC2 instance first:
+# ssh -i your-key.pem ec2-user@44.202.141.56
+
+# 2. Stop ALL PM2 processes (including the 2 cluster instances)
+pm2 delete all || true
+pm2 kill || true
+
+# 3. Navigate to app directory and clean up
+cd /home/ec2-user/cryptoescrow-backend
+rm -f start-server.js server.js || true
+git clean -fd
+
+# 4. Pull latest changes (includes PM2 single instance + Firebase dependencies fix)
+git fetch origin
+git reset --hard origin/main
+
+# 5. Complete fresh dependency installation
+rm -rf node_modules package-lock.json
+npm install --production
+
+# 6. Verify critical dependencies are installed
+npm list firebase || echo "Firebase missing - installing..."
+npm list firebase-admin || echo "Firebase-admin missing - installing..."
+npm list express || echo "Express missing - installing..."
+npm list node-fetch || echo "Node-fetch missing - installing..."
+
+# 7. Install any missing production dependencies explicitly
+npm install firebase@11.6.1 firebase-admin@13.3.0 express@4.19.2 node-fetch@3.3.2 --save
+
+# 8. Create environment file if missing
+if [ ! -f ".env" ]; then
+    cp aws-deployment/env.production.template .env
+    echo "⚠️  Please review and update .env file with your configuration"
+fi
+
+# 9. Create logs directory
+mkdir -p logs
+
+# 10. Start PM2 with NEW single-instance configuration
+pm2 start ecosystem.config.cjs --env production
+
+# 11. Save PM2 configuration
+pm2 save
+
+# 12. Check status (should show only 1 instance now)
+pm2 status
+
+# 13. Check logs for any remaining errors
+pm2 logs cryptoescrow-backend --lines 30
+
+# 14. Test health endpoint
+curl -f http://localhost:3000/health || echo "Health check failed - check logs above"
+
+echo "✅ V2 Fix process completed!"
+echo "🔍 Verify only 1 instance is running and no Firebase errors in logs" 
