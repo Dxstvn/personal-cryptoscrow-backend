@@ -1,0 +1,379 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CryptoEscrow Backend Infrastructure - GLIBC Compatible Version'
+
+Parameters:
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair to enable SSH access
+  
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+    Description: EC2 instance type (t3.small recommended for Node.js apps)
+  
+  AllowedSSHCIDR:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR block allowed for SSH access (restrict this for production)
+  
+  DomainName:
+    Type: String
+    Default: ""
+    Description: Optional domain name for the application
+
+Mappings:
+  # Latest Amazon Linux 2023 AMIs by region (updated December 2024)
+  RegionMap:
+    us-east-1:
+      AMI: ami-0e2c8caa4b6378d8c
+    us-east-2:
+      AMI: ami-036841078a4b68e14
+    us-west-1:
+      AMI: ami-0d5ae5525eb033d0a
+    us-west-2:
+      AMI: ami-0c94855ba95b798c7
+    eu-west-1:
+      AMI: ami-0c1c30571d2dae5c9
+    eu-central-1:
+      AMI: ami-0745b7d4092315796
+    ap-southeast-1:
+      AMI: ami-0df7a207adb9748c7
+    ap-northeast-1:
+      AMI: ami-0d52744d6551d851e
+
+Resources:
+  # VPC and Networking
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: CryptoEscrow-VPC
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: CryptoEscrow-IGW
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: CryptoEscrow-Public-Subnet
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: CryptoEscrow-Public-RT
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+
+  # Security Groups
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: CryptoEscrow-WebServer-SG
+      GroupDescription: Security group for CryptoEscrow web server
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedSSHCIDR
+          Description: SSH access
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP access
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS access
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+          Description: Node.js application port
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: CryptoEscrow-WebServer-SG
+
+  # IAM Role for EC2 to access Secrets Manager
+  EC2SecretsManagerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CryptoEscrow-EC2-SecretsManager-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: 
+                  - !Ref CryptoEscrowSecrets
+                  - !Ref BlockchainSecrets
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                  - logs:DescribeLogGroups
+                Resource: '*'
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: CryptoEscrow-EC2-Profile
+      Roles:
+        - !Ref EC2SecretsManagerRole
+
+  # Secrets Manager
+  CryptoEscrowSecrets:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: CryptoEscrow/App/Config
+      Description: Application configuration secrets for CryptoEscrow
+      SecretString: !Sub |
+        {
+          "JWT_SECRET": "REPLACE_WITH_ACTUAL_JWT_SECRET",
+          "ENCRYPTION_KEY": "REPLACE_WITH_ACTUAL_ENCRYPTION_KEY",
+          "DATABASE_ENCRYPTION_KEY": "REPLACE_WITH_ACTUAL_DB_ENCRYPTION_KEY",
+          "SMTP_HOST": "smtp.gmail.com",
+          "SMTP_PORT": "587",
+          "SMTP_USER": "REPLACE_WITH_ACTUAL_EMAIL",
+          "SMTP_PASS": "REPLACE_WITH_ACTUAL_PASSWORD",
+          "INFURA_API_KEY": "REPLACE_WITH_ACTUAL_INFURA_KEY",
+          "ALCHEMY_API_KEY": "REPLACE_WITH_ACTUAL_ALCHEMY_KEY"
+        }
+
+  BlockchainSecrets:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: CryptoEscrow/Blockchain/Keys
+      Description: Blockchain private keys for CryptoEscrow
+      SecretString: !Sub |
+        {
+          "DEPLOYER_PRIVATE_KEY": "REPLACE_WITH_ACTUAL_DEPLOYER_KEY",
+          "BACKEND_WALLET_PRIVATE_KEY": "REPLACE_WITH_ACTUAL_BACKEND_WALLET_KEY"
+        }
+
+  # CloudWatch Log Group
+  ApplicationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/ec2/cryptoescrow
+      RetentionInDays: 7
+
+  # EC2 Instance
+  WebServerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !FindInMap [RegionMap, !Ref AWS::Region, AMI]
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SecurityGroupIds:
+        - !Ref WebServerSecurityGroup
+      SubnetId: !Ref PublicSubnet
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+          
+          echo "Starting CryptoEscrow backend setup..."
+          
+          # Update system
+          dnf update -y
+          
+          # Install basic utilities
+          dnf install -y git curl wget tar xz gcc-c++ make nginx
+          
+          # Install Node.js using dnf (most compatible with Amazon Linux 2023)
+          dnf install -y nodejs npm
+          
+          # Verify Node.js installation
+          node_version=$(node --version 2>/dev/null || echo "FAILED")
+          if [ "$node_version" = "FAILED" ]; then
+              echo "Node.js installation via dnf failed, trying alternative..."
+              
+              # Fallback: Install Node.js 16 from binary (better GLIBC compatibility)
+              cd /tmp
+              wget https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz
+              tar -xf node-v16.20.2-linux-x64.tar.xz
+              
+              # Install to /opt/nodejs
+              mkdir -p /opt/nodejs
+              cp -r node-v16.20.2-linux-x64/* /opt/nodejs/
+              
+              # Create symlinks
+              ln -sf /opt/nodejs/bin/node /usr/local/bin/node
+              ln -sf /opt/nodejs/bin/npm /usr/local/bin/npm
+              ln -sf /opt/nodejs/bin/npx /usr/local/bin/npx
+              
+              # Update PATH globally
+              echo 'export PATH="/opt/nodejs/bin:$PATH"' >> /etc/bashrc
+              export PATH="/opt/nodejs/bin:$PATH"
+          fi
+          
+          # Install PM2 globally
+          npm install -g pm2
+          
+          # Create application directory
+          mkdir -p /home/ec2-user/cryptoescrow-backend
+          chown -R ec2-user:ec2-user /home/ec2-user/cryptoescrow-backend
+          
+          # Install AWS CLI v2 if not present
+          if ! command -v aws &> /dev/null; then
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              unzip awscliv2.zip
+              ./aws/install
+              rm -rf aws awscliv2.zip
+          fi
+          
+          # Install CloudWatch agent
+          wget https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
+          rpm -U ./amazon-cloudwatch-agent.rpm || true
+          
+          # Create a script for ec2-user to complete deployment
+          cat > /home/ec2-user/complete-deployment.sh << 'DEPLOY_SCRIPT'
+          #!/bin/bash
+          cd /home/ec2-user/cryptoescrow-backend
+          
+          # Clone repository
+          git clone https://github.com/Dxstvn/personal-cryptoscrow-backend.git .
+          
+          # Copy environment template
+          cp aws-deployment/env.production.template .env
+          
+          # Install dependencies
+          npm install --production
+          
+          # Start with PM2
+          pm2 start ecosystem.config.cjs --env production
+          pm2 save
+          pm2 startup systemd -u ec2-user --hp /home/ec2-user
+          DEPLOY_SCRIPT
+          
+          chmod +x /home/ec2-user/complete-deployment.sh
+          chown ec2-user:ec2-user /home/ec2-user/complete-deployment.sh
+          
+          # Enable and start nginx
+          systemctl enable nginx
+          systemctl start nginx
+          
+          # Signal success
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WebServerInstance --region ${AWS::Region}
+          
+          echo "Instance setup completed. Run /home/ec2-user/complete-deployment.sh as ec2-user to finish deployment."
+      Tags:
+        - Key: Name
+          Value: CryptoEscrow-WebServer
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT20M
+
+Outputs:
+  PublicIP:
+    Description: Public IP address of the web server
+    Value: !GetAtt WebServerInstance.PublicIp
+    Export:
+      Name: !Sub ${AWS::StackName}-PublicIP
+  
+  PublicDNS:
+    Description: Public DNS name of the web server
+    Value: !GetAtt WebServerInstance.PublicDnsName
+    Export:
+      Name: !Sub ${AWS::StackName}-PublicDNS
+  
+  SSHCommand:
+    Description: SSH command to connect to the instance
+    Value: !Sub 'ssh -i your-key.pem ec2-user@${WebServerInstance.PublicIp}'
+  
+  HealthCheckURL:
+    Description: Health check URL
+    Value: !Sub 'http://${WebServerInstance.PublicIp}:3000/health'
+  
+  DeploymentCommand:
+    Description: Command to complete deployment on the instance
+    Value: '/home/ec2-user/complete-deployment.sh'
+  
+  SecretsManagerAppConfig:
+    Description: ARN of the application secrets
+    Value: !Ref CryptoEscrowSecrets
+    Export:
+      Name: !Sub ${AWS::StackName}-AppSecrets
+  
+  SecretsManagerBlockchainKeys:
+    Description: ARN of the blockchain secrets
+    Value: !Ref BlockchainSecrets
+    Export:
+      Name: !Sub ${AWS::StackName}-BlockchainSecrets
+  
+  SecurityGroupId:
+    Description: Security Group ID for the web server
+    Value: !Ref WebServerSecurityGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-SecurityGroup
+  
+  LogGroup:
+    Description: CloudWatch Log Group for application logs
+    Value: !Ref ApplicationLogGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-LogGroup 
