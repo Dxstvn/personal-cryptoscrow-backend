@@ -1,18 +1,24 @@
 // src/config/polyfills.js
-// Polyfills for Node.js environments
+// Polyfills for Node.js environments - MUST run synchronously before any Firebase imports
 
-// Add fetch polyfill if not available (for Node.js < 18)
+import fetch, { Headers, Request, Response } from 'node-fetch';
+
+// Setup fetch polyfill for Node.js < 18 (required by Firebase Auth)
 if (typeof globalThis.fetch === 'undefined') {
+  globalThis.fetch = fetch;
+  globalThis.Headers = Headers;
+  globalThis.Request = Request;
+  globalThis.Response = Response;
+  console.log('📦 Fetch polyfill loaded for Node.js compatibility');
+}
+
+// Additional polyfills for Firebase compatibility
+if (typeof globalThis.AbortController === 'undefined') {
   try {
-    // Try to import node-fetch
-    const fetch = (await import('node-fetch')).default;
-    globalThis.fetch = fetch;
-    globalThis.Headers = (await import('node-fetch')).Headers;
-    globalThis.Request = (await import('node-fetch')).Request;
-    globalThis.Response = (await import('node-fetch')).Response;
-    console.log('📦 Fetch polyfill loaded for Node.js compatibility');
+    const { AbortController } = await import('node-abort-controller');
+    globalThis.AbortController = AbortController;
   } catch (error) {
-    console.warn('⚠️  Could not load fetch polyfill:', error.message);
+    console.warn('⚠️  AbortController polyfill not available:', error.message);
   }
 }
 
