@@ -106,4 +106,4 @@ aws-deployment/instance_ip.txt
 instance_ip.txt
 immediate-fix-commands*.txt
 *immediate-fix*
-aws-deployment
+aws-deployment/
