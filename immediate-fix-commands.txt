@@ -1,0 +1,44 @@
+# 🚨 IMMEDIATE FIX COMMANDS FOR AWS EC2
+# Copy and run these commands on your EC2 instance
+
+# 1. SSH to your EC2 instance first:
+# ssh -i your-key.pem ec2-user@44.202.141.56
+
+# 2. Stop PM2 and clean up
+pm2 delete all || true
+pm2 kill || true
+
+# 3. Navigate to app directory and clean up stale files
+cd /home/ec2-user/cryptoescrow-backend
+rm -f start-server.js server.js || true
+git clean -fd
+
+# 4. Pull latest changes (includes node-fetch fix)
+git fetch origin
+git reset --hard origin/main
+
+# 5. Fresh dependency installation
+rm -rf node_modules package-lock.json
+npm install --production
+
+# 6. Verify node-fetch is installed
+npm list node-fetch
+
+# 7. Create environment file if missing
+if [ ! -f ".env" ]; then
+    cp aws-deployment/env.production.template .env
+    echo "⚠️  Please review and update .env file with your configuration"
+fi
+
+# 8. Start PM2 with fresh configuration
+pm2 start ecosystem.config.cjs --env production
+pm2 save
+
+# 9. Check status
+pm2 status
+pm2 logs cryptoescrow-backend --lines 20
+
+# 10. Test health endpoint
+curl -f http://localhost:3000/health || echo "Health check failed"
+
+echo "✅ Fix process completed!" 

@@ -1,5 +1,6 @@
 import { adminAuth, adminFirestore } from '../jest.emulator.setup.js'; // Use test setup
-import fetch from 'node-fetch';
+// Use built-in fetch (Node.js 18+) or fallback to node-fetch
+const fetchFn = globalThis.fetch || (await import('node-fetch')).default;
 import { Timestamp } from 'firebase-admin/firestore'; // Import Timestamp
 
 const AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
@@ -50,7 +51,7 @@ export async function createTestUser(email, profileData = {}) {
     const signInUrl = `http://${AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${DUMMY_API_KEY}`;
     let response;
     try {
-        response = await fetch(signInUrl, {
+        response = await fetchFn(signInUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, password: 'testpass', returnSecureToken: true }),
