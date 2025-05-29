@@ -46,7 +46,14 @@ class AWSSecretsManager {
   }
 
   async getFirebaseServiceAccount() {
-    return await this.getSecret('CryptoEscrow/Firebase/ServiceAccount');
+    const serviceAccount = await this.getSecret('CryptoEscrow/Firebase/ServiceAccount');
+    
+    // Fix the private key formatting - unescape the newlines
+    if (serviceAccount && serviceAccount.private_key) {
+      serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+    }
+    
+    return serviceAccount;
   }
 
   // Method to clear cache (useful for testing or forced refresh)
