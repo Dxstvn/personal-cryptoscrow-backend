@@ -94,3 +94,15 @@ docker-compose.override.yml
 # Kubernetes secrets
 *-secret.yaml
 *-secret.yml
+
+
+# CRITICAL SECURITY ADDITIONS
+production.env
+create-firebase-json*.sh
+firebase-service-account.json
+aws-deployment/secrets_backup_*/
+aws-deployment/instance_ip.txt
+*secrets_backup*/
+instance_ip.txt
+immediate-fix-commands*.txt
+*immediate-fix*
