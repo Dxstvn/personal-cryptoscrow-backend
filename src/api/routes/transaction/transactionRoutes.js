@@ -5,6 +5,15 @@ import { getAdminApp } from '../auth/admin.js';
 import { deployPropertyEscrowContract } from '../../../services/contractDeployer.js';
 import { isAddress, getAddress, parseUnits } from 'ethers'; // This is the import we are interested in
 import { Wallet } from 'ethers';
+// Import cross-chain services
+import { 
+  areNetworksEVMCompatible,
+  getBridgeInfo,
+  estimateTransactionFees,
+  prepareCrossChainTransaction,
+  executeCrossChainStep,
+  getCrossChainTransactionStatus
+} from '../../../services/crossChainService.js';
 
 const router = express.Router();
 
@@ -19,6 +28,47 @@ async function getFirebaseServices() {
 
 // const DEPLOYER_PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY; // REMOVE
 // const RPC_URL = process.env.RPC_URL || process.env.SEPOLIA_RPC_URL; // REMOVE
+
+// Helper function to detect network from wallet address
+function detectNetworkFromAddress(address) {
+  // EVM addresses (Ethereum, Polygon, BSC, etc.)
+  if (address.startsWith('0x') && address.length === 42) {
+    return 'ethereum'; // Default to ethereum for EVM addresses
+  }
+  
+  // Bitcoin addresses (check before Solana since bc1 addresses can match Solana regex)
+  if (/^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,59}$/.test(address)) {
+    return 'bitcoin';
+  }
+  
+  // Solana addresses (base58, 32-44 characters)
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
+    return 'solana';
+  }
+  
+  // Default to ethereum for EVM-compatible addresses
+  return 'ethereum';
+}
+
+// Helper function to validate cross-chain wallet address
+function validateCrossChainAddress(address) {
+  // EVM addresses
+  if (address.startsWith('0x')) {
+    return isAddress(address);
+  }
+  
+  // Solana addresses
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
+    return true;
+  }
+  
+  // Bitcoin addresses
+  if (/^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,59}$/.test(address)) {
+    return true;
+  }
+  
+  return false;
+}
 
 async function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
@@ -69,11 +119,11 @@ router.post('/create', authenticateToken, async (req, res) => {
             return res.status(400).json({ error: 'Valid other party email is required.' });
         }
 
-        // Wallet address validation
-        if (!buyerWalletAddress || !isAddress(buyerWalletAddress)) {
+        // Enhanced wallet address validation for cross-chain support
+        if (!buyerWalletAddress || !validateCrossChainAddress(buyerWalletAddress)) {
             return res.status(400).json({ error: 'Valid buyer wallet address is required.' });
         }
-        if (!sellerWalletAddress || !isAddress(sellerWalletAddress)) {
+        if (!sellerWalletAddress || !validateCrossChainAddress(sellerWalletAddress)) {
             return res.status(400).json({ error: 'Valid seller wallet address is required.' });
         }
 
@@ -82,6 +132,13 @@ router.post('/create', authenticateToken, async (req, res) => {
         }
 
         console.log(`[ROUTE LOG] /create - Transaction creation request by UID: ${initiatorId} (${initiatorEmail}), Role: ${initiatedBy}`);
+
+        // Detect networks from wallet addresses
+        const buyerNetwork = detectNetworkFromAddress(buyerWalletAddress);
+        const sellerNetwork = detectNetworkFromAddress(sellerWalletAddress);
+        const isCrossChain = !areNetworksEVMCompatible(buyerNetwork, sellerNetwork);
+
+        console.log(`[CROSS-CHAIN] Network detection: Buyer=${buyerNetwork}, Seller=${sellerNetwork}, CrossChain=${isCrossChain}`);
 
         let escrowAmountWeiString;
         try {
@@ -104,10 +161,12 @@ router.post('/create', authenticateToken, async (req, res) => {
             const otherPartyData = otherPartyQuery.docs[0].data();
 
             let buyerIdFs, sellerIdFs, status;
-            const finalBuyerWallet = getAddress(buyerWalletAddress);
-            const finalSellerWallet = getAddress(sellerWalletAddress);
+            // For cross-chain, we preserve the original addresses
+            const finalBuyerWallet = buyerWalletAddress;
+            const finalSellerWallet = sellerWalletAddress;
 
-            if (finalBuyerWallet === finalSellerWallet) {
+            // Ensure addresses are different
+            if (finalBuyerWallet.toLowerCase() === finalSellerWallet.toLowerCase()) {
                 return res.status(400).json({ error: 'Buyer and Seller wallet addresses cannot be the same.' });
             }
 
@@ -118,75 +177,233 @@ router.post('/create', authenticateToken, async (req, res) => {
             }
 
             const now = Timestamp.now();
+            
+            // Prepare cross-chain specific conditions if needed
+            let enhancedConditions = [...(initialConditions || [])];
+            let crossChainTransactionId = null;
+            let crossChainInfo = null;
+
+            if (isCrossChain) {
+                // Add cross-chain specific conditions
+                const crossChainConditions = [
+                    {
+                        id: 'cross_chain_network_validation',
+                        type: 'CROSS_CHAIN',
+                        description: `Network compatibility validated (${buyerNetwork} to ${sellerNetwork})`
+                    },
+                    {
+                        id: 'cross_chain_bridge_setup',
+                        type: 'CROSS_CHAIN',
+                        description: 'Cross-chain bridge connection established'
+                    },
+                    {
+                        id: 'cross_chain_funds_locked',
+                        type: 'CROSS_CHAIN',
+                        description: `Funds locked on source network (${buyerNetwork})`
+                    }
+                ];
+
+                // Add bridge-specific condition if bridge is required
+                const bridgeInfo = getBridgeInfo(buyerNetwork, sellerNetwork);
+                if (bridgeInfo) {
+                    crossChainConditions.push({
+                        id: 'cross_chain_bridge_transfer',
+                        type: 'CROSS_CHAIN',
+                        description: `Bridge transfer via ${bridgeInfo.bridge} completed`
+                    });
+                    crossChainInfo = bridgeInfo;
+                }
+
+                enhancedConditions = [...crossChainConditions, ...enhancedConditions];
+                console.log(`[CROSS-CHAIN] Added ${crossChainConditions.length} cross-chain conditions`);
+            }
+
             const newTransactionData = {
-                propertyAddress: propertyAddress.trim(), amount: Number(amount), escrowAmountWei: escrowAmountWeiString,
-                sellerId: sellerIdFs, buyerId: buyerIdFs, buyerWalletAddress: finalBuyerWallet, sellerWalletAddress: finalSellerWallet,
-                participants: [sellerIdFs, buyerIdFs], status, createdAt: now, updatedAt: now, initiatedBy,
-                otherPartyEmail: normalizedOtherPartyEmail, initiatorEmail: initiatorEmail.toLowerCase(),
-                conditions: (initialConditions || []).map(cond => ({
-                    id: cond.id.trim(), type: cond.type.trim() || 'CUSTOM', description: String(cond.description).trim(),
-                    status: 'PENDING_BUYER_ACTION', documents: [], createdBy: initiatorId, createdAt: now, updatedAt: now,
+                propertyAddress: propertyAddress.trim(), 
+                amount: Number(amount), 
+                escrowAmountWei: escrowAmountWeiString,
+                sellerId: sellerIdFs, 
+                buyerId: buyerIdFs, 
+                buyerWalletAddress: finalBuyerWallet, 
+                sellerWalletAddress: finalSellerWallet,
+                // Cross-chain specific fields
+                buyerNetwork,
+                sellerNetwork,
+                isCrossChain,
+                crossChainTransactionId,
+                crossChainInfo,
+                participants: [sellerIdFs, buyerIdFs], 
+                status, 
+                createdAt: now, 
+                updatedAt: now, 
+                initiatedBy,
+                otherPartyEmail: normalizedOtherPartyEmail, 
+                initiatorEmail: initiatorEmail.toLowerCase(),
+                conditions: enhancedConditions.map(cond => ({
+                    id: cond.id.trim(), 
+                    type: cond.type.trim() || 'CUSTOM', 
+                    description: String(cond.description).trim(),
+                    status: 'PENDING_BUYER_ACTION', 
+                    documents: [], 
+                    createdBy: initiatorId, 
+                    createdAt: now, 
+                    updatedAt: now,
                 })),
                 documents: [],
-                timeline: [{ event: `Transaction initiated by ${initiatedBy.toLowerCase()} (${initiatorEmail}). Other party: ${otherPartyData.email}.`, timestamp: now, userId: initiatorId }],
-                smartContractAddress: null, fundsDepositedByBuyer: false, fundsReleasedToSeller: false,
-                finalApprovalDeadlineBackend: null, disputeResolutionDeadlineBackend: null,
+                timeline: [
+                    { 
+                        event: `Transaction initiated by ${initiatedBy.toLowerCase()} (${initiatorEmail}). Other party: ${otherPartyData.email}.`, 
+                        timestamp: now, 
+                        userId: initiatorId 
+                    }
+                ],
+                smartContractAddress: null, 
+                fundsDepositedByBuyer: false, 
+                fundsReleasedToSeller: false,
+                finalApprovalDeadlineBackend: null, 
+                disputeResolutionDeadlineBackend: null,
             };
-            if (initialConditions && initialConditions.length > 0) {
-                 newTransactionData.timeline.push({ event: `${initiatedBy.toLowerCase()} specified ${initialConditions.length} initial condition(s) for review.`, timestamp: now, userId: initiatorId });
+
+            if (isCrossChain) {
+                newTransactionData.timeline.push({
+                    event: `Cross-chain transaction detected: ${buyerNetwork} → ${sellerNetwork}${crossChainInfo ? ` via ${crossChainInfo.bridge}` : ''}`,
+                    timestamp: now,
+                    system: true
+                });
+            }
+
+            if (enhancedConditions && enhancedConditions.length > 0) {
+                 newTransactionData.timeline.push({ 
+                     event: `${initiatedBy.toLowerCase()} specified ${enhancedConditions.length} condition(s) for review${isCrossChain ? ' (including cross-chain conditions)' : ''}.`, 
+                     timestamp: now, 
+                     userId: initiatorId 
+                 });
             }
 
             let deployedContractAddress = null;
 
-            // Dynamically read env vars for deployment
+            // Smart contract deployment (only for EVM-compatible scenarios)
             const currentDeployerKey = process.env.DEPLOYER_PRIVATE_KEY;
             const currentRpcUrl = process.env.RPC_URL || process.env.SEPOLIA_RPC_URL;
 
             if (!currentDeployerKey || !currentRpcUrl) {
                 console.warn("[ROUTE WARN] Deployment skipped: DEPLOYER_PRIVATE_KEY or RPC_URL not set in .env. Transaction will be off-chain only.");
                 newTransactionData.timeline.push({ event: `Smart contract deployment SKIPPED (off-chain only mode).`, timestamp: Timestamp.now(), system: true });
+            } else if (isCrossChain && buyerNetwork !== 'ethereum' && sellerNetwork !== 'ethereum') {
+                console.log("[ROUTE LOG] Cross-chain transaction with no EVM networks - smart contract deployment skipped");
+                newTransactionData.timeline.push({ 
+                    event: `Smart contract deployment SKIPPED for cross-chain transaction (${buyerNetwork} → ${sellerNetwork}).`, 
+                    timestamp: Timestamp.now(), 
+                    system: true 
+                });
             } else {
                 try {
                     console.log(`[ROUTE LOG] Attempting to deploy PropertyEscrow contract. Buyer: ${finalBuyerWallet}, Seller: ${finalSellerWallet}, Amount: ${newTransactionData.escrowAmountWei}`);
                     
-                    // Derive service wallet address from deployer private key
+                    // For cross-chain, use EVM-compatible addresses or convert
+                    let contractBuyerAddress = finalBuyerWallet;
+                    let contractSellerAddress = finalSellerWallet;
+                    
+                    // If cross-chain involves non-EVM, use a representative EVM address
+                    if (isCrossChain) {
+                        if (buyerNetwork !== 'ethereum' && !buyerWalletAddress.startsWith('0x')) {
+                            // Use a deterministic EVM address derived from the non-EVM address
+                            contractBuyerAddress = '0x' + '1'.repeat(40); // Placeholder - in production, use proper derivation
+                        }
+                        if (sellerNetwork !== 'ethereum' && !sellerWalletAddress.startsWith('0x')) {
+                            contractSellerAddress = '0x' + '2'.repeat(40); // Placeholder - in production, use proper derivation
+                        }
+                    }
+                    
                     const deployerWallet = new Wallet(currentDeployerKey);
                     const serviceWalletAddress = deployerWallet.address;
                     console.log(`[ROUTE LOG] Using service wallet: ${serviceWalletAddress} (derived from deployer key)`);
                     
                     const deploymentResult = await deployPropertyEscrowContract(
-                        finalSellerWallet, 
-                        finalBuyerWallet, 
+                        contractSellerAddress, 
+                        contractBuyerAddress, 
                         newTransactionData.escrowAmountWei,
-                        currentDeployerKey, // Use dynamically read key
-                        currentRpcUrl,      // Use dynamically read URL
-                        serviceWalletAddress // Service wallet for 2% fee
+                        currentDeployerKey,
+                        currentRpcUrl,
+                        serviceWalletAddress
                     );
                     
                     deployedContractAddress = deploymentResult.contractAddress;
                     newTransactionData.smartContractAddress = deployedContractAddress;
                     newTransactionData.timeline.push({ 
-                        event: `PropertyEscrow smart contract deployed at ${deployedContractAddress} with 2% service fee to ${serviceWalletAddress}.`, 
+                        event: `PropertyEscrow smart contract deployed at ${deployedContractAddress} with 2% service fee to ${serviceWalletAddress}${isCrossChain ? ' (cross-chain compatible)' : ''}.`, 
                         timestamp: Timestamp.now(), 
                         system: true 
                     });
                     console.log(`[ROUTE LOG] Smart contract deployed: ${deployedContractAddress} with service wallet: ${serviceWalletAddress}`);
                 } catch (deployError) {
                     console.error('[ROUTE ERROR] Smart contract deployment failed:', deployError.message, deployError.stack);
-                    newTransactionData.timeline.push({ event: `Smart contract deployment FAILED: ${deployError.message}. Proceeding as off-chain.`, timestamp: Timestamp.now(), system: true });
+                    newTransactionData.timeline.push({ 
+                        event: `Smart contract deployment FAILED: ${deployError.message}. Proceeding as off-chain.`, 
+                        timestamp: Timestamp.now(), 
+                        system: true 
+                    });
                 }
             }
 
+            // Store the deal first
             const transactionRef = await db.collection('deals').add(newTransactionData);
             console.log(`[ROUTE LOG] Transaction stored in Firestore: ${transactionRef.id}. Status: ${newTransactionData.status}. SC: ${newTransactionData.smartContractAddress || 'None'}`);
 
+            // Prepare cross-chain transaction if needed
+            if (isCrossChain) {
+                try {
+                    const crossChainTx = await prepareCrossChainTransaction({
+                        fromAddress: finalBuyerWallet,
+                        toAddress: finalSellerWallet,
+                        amount: String(amount),
+                        sourceNetwork: buyerNetwork,
+                        targetNetwork: sellerNetwork,
+                        dealId: transactionRef.id,
+                        userId: initiatorId
+                    });
+
+                    // Update the deal with cross-chain transaction ID
+                    await transactionRef.update({
+                        crossChainTransactionId: crossChainTx.id,
+                        timeline: FieldValue.arrayUnion({
+                            event: `Cross-chain transaction prepared: ${crossChainTx.id}. Bridge required: ${crossChainTx.needsBridge}`,
+                            timestamp: Timestamp.now(),
+                            system: true
+                        })
+                    });
+
+                    console.log(`[CROSS-CHAIN] Prepared cross-chain transaction: ${crossChainTx.id} for deal: ${transactionRef.id}`);
+                } catch (crossChainError) {
+                    console.error('[CROSS-CHAIN] Error preparing cross-chain transaction:', crossChainError);
+                    await transactionRef.update({
+                        timeline: FieldValue.arrayUnion({
+                            event: `Cross-chain transaction preparation FAILED: ${crossChainError.message}`,
+                            timestamp: Timestamp.now(),
+                            system: true
+                        })
+                    });
+                }
+            }
+
             const responsePayload = {
-                message: 'Transaction initiated successfully.', transactionId: transactionRef.id,
-                status: newTransactionData.status, smartContractAddress: newTransactionData.smartContractAddress,
+                message: 'Transaction initiated successfully.', 
+                transactionId: transactionRef.id,
+                status: newTransactionData.status, 
+                smartContractAddress: newTransactionData.smartContractAddress,
+                isCrossChain,
+                crossChainInfo: isCrossChain ? {
+                    buyerNetwork,
+                    sellerNetwork,
+                    bridgeInfo: crossChainInfo,
+                    crossChainTransactionId: newTransactionData.crossChainTransactionId
+                } : null
             };
+            
             if (deployedContractAddress === null && currentDeployerKey && currentRpcUrl) {
                 responsePayload.deploymentWarning = "Smart contract deployment was attempted but failed. The transaction has been created for off-chain tracking.";
             }
+            
             res.status(201).json(responsePayload);
 
         } catch (error) {
@@ -292,59 +509,134 @@ router.get('/', authenticateToken, async (req, res) => {
     }
 });
 
-router.put('/:transactionId/conditions/:conditionId/buyer-review', authenticateToken, async (req, res) => {
-    const { transactionId, conditionId } = req.params;
-    const { newBackendStatus, reviewComment } = req.body;
+router.patch('/conditions/:conditionId/buyer-review', authenticateToken, async (req, res) => {
+    const { conditionId } = req.params;
+    const { 
+        transactionId, 
+        status, 
+        dealId, 
+        notes,
+        // Cross-chain specific fields
+        crossChainTxHash,
+        crossChainStepNumber
+    } = req.body;
     const userId = req.userId;
-
-    if (!newBackendStatus || !['FULFILLED_BY_BUYER', 'PENDING_BUYER_ACTION', 'ACTION_WITHDRAWN_BY_BUYER'].includes(newBackendStatus)) {
-        return res.status(400).json({ error: 'Invalid newBackendStatus for condition. Must be FULFILLED_BY_BUYER, PENDING_BUYER_ACTION, or ACTION_WITHDRAWN_BY_BUYER.' });
-    }
-    // console.log(`[ROUTE LOG] Buyer (UID: ${userId}) updating backend status for condition ${conditionId} in TX ${transactionId} to ${newBackendStatus}`);
 
     try {
         const { db } = await getFirebaseServices();
-        const transactionRef = db.collection('deals').doc(transactionId);
-        const now = Timestamp.now();
 
-        await db.runTransaction(async (t) => {
-            const doc = await t.get(transactionRef);
-            if (!doc.exists) throw { status: 404, message: 'Transaction not found.' };
-            let txData = doc.data();
+        // Validate status
+        const validStatuses = ['FULFILLED_BY_BUYER', 'ACTION_WITHDRAWN_BY_BUYER'];
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({ error: 'Invalid status. Must be "FULFILLED_BY_BUYER" or "ACTION_WITHDRAWN_BY_BUYER".' });
+        }
 
-            if (userId !== txData.buyerId) throw { status: 403, message: 'Only the buyer can update this condition status.' };
+        // Determine collection and ID
+        const collectionName = dealId ? 'deals' : 'transactions';
+        const documentId = dealId || transactionId;
 
-            const conditionIndex = (txData.conditions || []).findIndex(c => c.id === conditionId);
-            if (conditionIndex === -1) throw { status: 404, message: 'Condition not found within the transaction.' };
+        if (!documentId) {
+            return res.status(400).json({ error: 'Either dealId or transactionId is required.' });
+        }
 
-            const updatedConditions = JSON.parse(JSON.stringify(txData.conditions || []));
-            const oldConditionStatus = updatedConditions[conditionIndex].status;
+        // Get the document
+        const docRef = db.collection(collectionName).doc(documentId);
+        const docSnapshot = await docRef.get();
 
-            updatedConditions[conditionIndex].status = newBackendStatus;
-            updatedConditions[conditionIndex].updatedAt = now;
-            if (reviewComment !== undefined) {
-                updatedConditions[conditionIndex].reviewComment = reviewComment;
-            } else {
-                delete updatedConditions[conditionIndex].reviewComment;
+        if (!docSnapshot.exists) {
+            return res.status(404).json({ error: `${dealId ? 'Deal' : 'Transaction'} not found.` });
+        }
+
+        const docData = docSnapshot.data();
+
+        // Check if user is authorized
+        if (!docData.participants.includes(userId)) {
+            return res.status(403).json({ error: 'Access denied. User is not a participant in this transaction.' });
+        }
+
+        // Find and update the condition
+        const conditions = [...docData.conditions];
+        const conditionIndex = conditions.findIndex(c => c.id === conditionId);
+
+        if (conditionIndex === -1) {
+            return res.status(404).json({ error: 'Condition not found.' });
+        }
+
+        const condition = conditions[conditionIndex];
+
+        // Handle cross-chain conditions differently
+        const isCrossChainCondition = condition.type === 'CROSS_CHAIN';
+        
+        if (isCrossChainCondition && docData.isCrossChain) {
+            // For cross-chain conditions, also update the cross-chain transaction if provided
+            if (crossChainTxHash && crossChainStepNumber && docData.crossChainTransactionId) {
+                try {
+                    await executeCrossChainStep(docData.crossChainTransactionId, crossChainStepNumber, crossChainTxHash);
+                    console.log(`[CROSS-CHAIN] Updated step ${crossChainStepNumber} for condition ${conditionId}`);
+                } catch (crossChainError) {
+                    console.error('[CROSS-CHAIN] Error updating cross-chain step:', crossChainError);
+                    // Continue with condition update even if cross-chain step fails
+                }
             }
+        }
 
-            const timelineEvent = {
-                event: `Buyer (UID: ${userId}) updated backend status for condition "${updatedConditions[conditionIndex].description || conditionId}" from ${oldConditionStatus} to ${newBackendStatus}.`,
-                timestamp: now, userId,
-            };
-             if (reviewComment !== undefined) timelineEvent.comment = reviewComment;
+        // Update condition
+        conditions[conditionIndex] = {
+            ...condition,
+            status,
+            notes: notes || condition.notes,
+            updatedAt: Timestamp.now(),
+            updatedBy: userId,
+            ...(isCrossChainCondition && crossChainTxHash && { crossChainTxHash }),
+            ...(isCrossChainCondition && crossChainStepNumber && { crossChainStepNumber })
+        };
 
-            const updatePayload = {
-                conditions: updatedConditions,
-                updatedAt: now,
-                timeline: FieldValue.arrayUnion(timelineEvent)
-            };
-            t.update(transactionRef, updatePayload);
+        // Prepare update data
+        const updateData = {
+            conditions,
+            updatedAt: Timestamp.now(),
+            timeline: FieldValue.arrayUnion({
+                event: `Condition "${condition.description}" updated to ${status}${isCrossChainCondition ? ' (cross-chain)' : ''}${notes ? ` with notes: ${notes}` : ''}`,
+                timestamp: Timestamp.now(),
+                userId,
+                conditionId,
+                ...(isCrossChainCondition && { crossChain: true })
+            })
+        };
+
+        // Check if all conditions are fulfilled for status progression
+        const allConditionsFulfilled = areAllBackendConditionsFulfilled(conditions);
+        
+        if (allConditionsFulfilled && docData.status === 'AWAITING_CONDITION_FULFILLMENT') {
+            updateData.status = 'READY_FOR_FINAL_APPROVAL';
+            updateData.timeline = FieldValue.arrayUnion(
+                updateData.timeline.arrayUnion[0], // Keep the condition update event
+                {
+                    event: `All conditions fulfilled${docData.isCrossChain ? ' (including cross-chain conditions)' : ''}. Deal ready for final approval.`,
+                    timestamp: Timestamp.now(),
+                    system: true,
+                    statusChange: { from: 'AWAITING_CONDITION_FULFILLMENT', to: 'READY_FOR_FINAL_APPROVAL' }
+                }
+            );
+        }
+
+        // Update the document
+        await docRef.update(updateData);
+
+        console.log(`[ROUTE LOG] Condition ${conditionId} updated to ${status} for ${collectionName} ${documentId}${isCrossChainCondition ? ' (cross-chain)' : ''}`);
+
+        res.json({ 
+            message: 'Condition updated successfully', 
+            conditionId, 
+            status,
+            isCrossChain: isCrossChainCondition,
+            allConditionsFulfilled,
+            ...(updateData.status && { newDealStatus: updateData.status })
         });
-        res.status(200).json({ message: `Backend condition status updated to: ${newBackendStatus}.` });
+
     } catch (error) {
-        console.error(`[ROUTE ERROR] Error updating backend condition for TX ${transactionId}, Cond ${conditionId}:`, error.status ? error.message : error.stack);
-        res.status(error.status || 500).json({ error: error.message || 'Internal server error.' });
+        console.error('[ROUTE ERROR] Error updating condition:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -549,5 +841,347 @@ router.post('/:transactionId/sc/raise-dispute', authenticateToken, async (req, r
         res.status(error.status || 500).json({ error: error.message || 'Internal server error.' });
     }
 });
+
+// Cross-Chain Transaction Management Endpoints
+
+// Execute cross-chain transaction step
+router.post('/cross-chain/:dealId/execute-step', authenticateToken, async (req, res) => {
+    const { dealId } = req.params;
+    const { stepNumber, txHash } = req.body;
+    const userId = req.userId;
+
+    try {
+        const { db } = await getFirebaseServices();
+        
+        // Validate input
+        if (!stepNumber || typeof stepNumber !== 'number') {
+            return res.status(400).json({ error: 'Valid step number is required.' });
+        }
+
+        // Get the deal
+        const dealDoc = await db.collection('deals').doc(dealId).get();
+        if (!dealDoc.exists) {
+            return res.status(404).json({ error: 'Deal not found.' });
+        }
+
+        const dealData = dealDoc.data();
+        
+        // Check if user is participant
+        if (!dealData.participants.includes(userId)) {
+            return res.status(403).json({ error: 'Access denied. User is not a participant in this deal.' });
+        }
+
+        // Check if this is a cross-chain transaction
+        if (!dealData.isCrossChain || !dealData.crossChainTransactionId) {
+            return res.status(400).json({ error: 'This is not a cross-chain transaction.' });
+        }
+
+        // Execute the cross-chain step
+        const result = await executeCrossChainStep(dealData.crossChainTransactionId, stepNumber, txHash);
+
+        // Update deal timeline
+        await db.collection('deals').doc(dealId).update({
+            timeline: FieldValue.arrayUnion({
+                event: `Cross-chain step ${stepNumber} executed${txHash ? ` (tx: ${txHash})` : ''}`,
+                timestamp: Timestamp.now(),
+                userId
+            }),
+            updatedAt: Timestamp.now()
+        });
+
+        // If all steps completed, update cross-chain specific conditions
+        if (result.status === 'completed') {
+            await updateCrossChainConditions(dealId, dealData);
+        }
+
+        res.json({
+            message: `Cross-chain step ${stepNumber} executed successfully`,
+            status: result.status,
+            txHash
+        });
+
+    } catch (error) {
+        console.error('[CROSS-CHAIN] Error executing step:', error);
+        res.status(500).json({ error: error.message || 'Internal server error' });
+    }
+});
+
+// Get cross-chain transaction status
+router.get('/cross-chain/:dealId/status', authenticateToken, async (req, res) => {
+    const { dealId } = req.params;
+    const userId = req.userId;
+
+    try {
+        const { db } = await getFirebaseServices();
+        
+        // Get the deal
+        const dealDoc = await db.collection('deals').doc(dealId).get();
+        if (!dealDoc.exists) {
+            return res.status(404).json({ error: 'Deal not found.' });
+        }
+
+        const dealData = dealDoc.data();
+        
+        // Check if user is participant
+        if (!dealData.participants.includes(userId)) {
+            return res.status(403).json({ error: 'Access denied. User is not a participant in this deal.' });
+        }
+
+        // Check if this is a cross-chain transaction
+        if (!dealData.isCrossChain || !dealData.crossChainTransactionId) {
+            return res.status(400).json({ error: 'This is not a cross-chain transaction.' });
+        }
+
+        // Get cross-chain transaction status
+        const crossChainStatus = await getCrossChainTransactionStatus(dealData.crossChainTransactionId);
+
+        // Get cross-chain conditions status
+        const crossChainConditions = dealData.conditions.filter(c => c.type === 'CROSS_CHAIN');
+
+        res.json({
+            dealId,
+            crossChainTransaction: crossChainStatus,
+            crossChainConditions,
+            buyerNetwork: dealData.buyerNetwork,
+            sellerNetwork: dealData.sellerNetwork,
+            bridgeInfo: dealData.crossChainInfo
+        });
+
+    } catch (error) {
+        console.error('[CROSS-CHAIN] Error getting status:', error);
+        res.status(500).json({ error: error.message || 'Internal server error' });
+    }
+});
+
+// Update cross-chain specific condition
+router.patch('/cross-chain/:dealId/conditions/:conditionId', authenticateToken, async (req, res) => {
+    const { dealId, conditionId } = req.params;
+    const { status, notes } = req.body;
+    const userId = req.userId;
+
+    try {
+        const { db } = await getFirebaseServices();
+        
+        // Validate status
+        const validStatuses = ['PENDING_BUYER_ACTION', 'FULFILLED_BY_BUYER', 'ACTION_WITHDRAWN_BY_BUYER'];
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({ error: 'Invalid status.' });
+        }
+
+        // Get the deal
+        const dealDoc = await db.collection('deals').doc(dealId).get();
+        if (!dealDoc.exists) {
+            return res.status(404).json({ error: 'Deal not found.' });
+        }
+
+        const dealData = dealDoc.data();
+        
+        // Check if user is participant
+        if (!dealData.participants.includes(userId)) {
+            return res.status(403).json({ error: 'Access denied. User is not a participant in this deal.' });
+        }
+
+        // Check if this is a cross-chain transaction
+        if (!dealData.isCrossChain) {
+            return res.status(400).json({ error: 'This is not a cross-chain transaction.' });
+        }
+
+        // Find and update the condition
+        const conditions = [...dealData.conditions];
+        const conditionIndex = conditions.findIndex(c => c.id === conditionId);
+        
+        if (conditionIndex === -1) {
+            return res.status(404).json({ error: 'Condition not found.' });
+        }
+
+        const condition = conditions[conditionIndex];
+        
+        // Verify this is a cross-chain condition
+        if (condition.type !== 'CROSS_CHAIN') {
+            return res.status(400).json({ error: 'This is not a cross-chain condition.' });
+        }
+
+        // Update condition
+        conditions[conditionIndex] = {
+            ...condition,
+            status,
+            notes: notes || condition.notes,
+            updatedAt: Timestamp.now(),
+            updatedBy: userId
+        };
+
+        // Update deal
+        await db.collection('deals').doc(dealId).update({
+            conditions,
+            timeline: FieldValue.arrayUnion({
+                event: `Cross-chain condition "${condition.description}" updated to ${status}${notes ? ` with notes: ${notes}` : ''}`,
+                timestamp: Timestamp.now(),
+                userId
+            }),
+            updatedAt: Timestamp.now()
+        });
+
+        res.json({
+            message: 'Cross-chain condition updated successfully',
+            condition: conditions[conditionIndex]
+        });
+
+    } catch (error) {
+        console.error('[CROSS-CHAIN] Error updating condition:', error);
+        res.status(500).json({ error: error.message || 'Internal server error' });
+    }
+});
+
+// Execute cross-chain fund transfer
+router.post('/cross-chain/:dealId/transfer', authenticateToken, async (req, res) => {
+    const { dealId } = req.params;
+    const { fromTxHash, bridgeTxHash } = req.body;
+    const userId = req.userId;
+
+    try {
+        const { db } = await getFirebaseServices();
+        
+        // Get the deal
+        const dealDoc = await db.collection('deals').doc(dealId).get();
+        if (!dealDoc.exists) {
+            return res.status(404).json({ error: 'Deal not found.' });
+        }
+
+        const dealData = dealDoc.data();
+        
+        // Check if user is participant
+        if (!dealData.participants.includes(userId)) {
+            return res.status(403).json({ error: 'Access denied. User is not a participant in this deal.' });
+        }
+
+        // Check if this is a cross-chain transaction
+        if (!dealData.isCrossChain || !dealData.crossChainTransactionId) {
+            return res.status(400).json({ error: 'This is not a cross-chain transaction.' });
+        }
+
+        // Check if all conditions are fulfilled
+        if (!areAllBackendConditionsFulfilled(dealData.conditions)) {
+            return res.status(400).json({ error: 'All conditions must be fulfilled before executing transfer.' });
+        }
+
+        // Get cross-chain transaction status
+        const crossChainTx = await getCrossChainTransactionStatus(dealData.crossChainTransactionId);
+        
+        if (crossChainTx.needsBridge) {
+            // Execute multi-step bridge transfer
+            let currentStep = 1;
+            
+            // Step 1: Lock funds on source network
+            if (fromTxHash) {
+                await executeCrossChainStep(dealData.crossChainTransactionId, currentStep, fromTxHash);
+                currentStep++;
+            }
+            
+            // Step 2: Bridge transfer
+            if (bridgeTxHash) {
+                await executeCrossChainStep(dealData.crossChainTransactionId, currentStep, bridgeTxHash);
+                currentStep++;
+            }
+            
+            // Step 3: Release funds on target network (this would be handled by the bridge/target network)
+            // For now, we mark it as pending external confirmation
+            await db.collection('deals').doc(dealId).update({
+                timeline: FieldValue.arrayUnion({
+                    event: `Cross-chain bridge transfer initiated. Awaiting release on ${dealData.sellerNetwork}`,
+                    timestamp: Timestamp.now(),
+                    userId
+                }),
+                updatedAt: Timestamp.now()
+            });
+        } else {
+            // Direct EVM-to-EVM transfer
+            if (fromTxHash) {
+                await executeCrossChainStep(dealData.crossChainTransactionId, 1, fromTxHash);
+                
+                await db.collection('deals').doc(dealId).update({
+                    fundsDepositedByBuyer: true,
+                    timeline: FieldValue.arrayUnion({
+                        event: `Direct cross-chain transfer completed (tx: ${fromTxHash})`,
+                        timestamp: Timestamp.now(),
+                        userId
+                    }),
+                    updatedAt: Timestamp.now()
+                });
+            }
+        }
+
+        res.json({
+            message: 'Cross-chain transfer initiated successfully',
+            dealId,
+            fromTxHash,
+            bridgeTxHash,
+            requiresBridge: crossChainTx.needsBridge
+        });
+
+    } catch (error) {
+        console.error('[CROSS-CHAIN] Error executing transfer:', error);
+        res.status(500).json({ error: error.message || 'Internal server error' });
+    }
+});
+
+// Estimate cross-chain transaction fees
+router.get('/cross-chain/estimate-fees', authenticateToken, async (req, res) => {
+    const { sourceNetwork, targetNetwork, amount } = req.query;
+
+    try {
+        if (!sourceNetwork || !targetNetwork || !amount) {
+            return res.status(400).json({ error: 'sourceNetwork, targetNetwork, and amount are required.' });
+        }
+
+        const feeEstimate = await estimateTransactionFees(sourceNetwork, targetNetwork, amount);
+        const bridgeInfo = getBridgeInfo(sourceNetwork, targetNetwork);
+        const isEVMCompatible = areNetworksEVMCompatible(sourceNetwork, targetNetwork);
+
+        res.json({
+            sourceNetwork,
+            targetNetwork,
+            amount,
+            isEVMCompatible,
+            bridgeInfo,
+            feeEstimate
+        });
+
+    } catch (error) {
+        console.error('[CROSS-CHAIN] Error estimating fees:', error);
+        res.status(500).json({ error: error.message || 'Internal server error' });
+    }
+});
+
+// Helper function to update cross-chain conditions when transaction completes
+async function updateCrossChainConditions(dealId, dealData) {
+    const { db } = await getFirebaseServices();
+    
+    const conditions = [...dealData.conditions];
+    let updated = false;
+
+    // Auto-fulfill cross-chain conditions when transaction is completed
+    const crossChainConditionIds = ['cross_chain_network_validation', 'cross_chain_bridge_setup', 'cross_chain_funds_locked', 'cross_chain_bridge_transfer'];
+    
+    conditions.forEach(condition => {
+        if (crossChainConditionIds.includes(condition.id) && condition.status === 'PENDING_BUYER_ACTION') {
+            condition.status = 'FULFILLED_BY_BUYER';
+            condition.updatedAt = Timestamp.now();
+            condition.autoFulfilledAt = Timestamp.now();
+            updated = true;
+        }
+    });
+
+    if (updated) {
+        await db.collection('deals').doc(dealId).update({
+            conditions,
+            timeline: FieldValue.arrayUnion({
+                event: 'Cross-chain conditions auto-fulfilled upon transaction completion',
+                timestamp: Timestamp.now(),
+                system: true
+            }),
+            updatedAt: Timestamp.now()
+        });
+    }
+}
 
 export default router;

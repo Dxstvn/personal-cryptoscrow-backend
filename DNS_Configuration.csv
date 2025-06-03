@@ -1,0 +1,4 @@
+﻿Domain name,CNAME name,Type,CNAME value
+clearhold.app,_cd0d1a09d4764863e8284780924cb3cb.clearhold.app.,CNAME,_1994422fa0a62b24446dbd501fa7fab8.xlfgrmvvlj.acm-validations.aws.
+api.clearhold.app,_6d16a410cd419420a0c1a3333c99aedb.api.clearhold.app.,CNAME,_b7936c1daf1c4e7979a188cc2eb3774a.xlfgrmvvlj.acm-validations.aws.
+www.clearhold.app,_75da1d6b7ac08e3dff07b1eacd2fb7c6.www.clearhold.app.,CNAME,_2af02d64bbb24b52fd1e9e0f55d14d74.xlfgrmvvlj.acm-validations.aws.

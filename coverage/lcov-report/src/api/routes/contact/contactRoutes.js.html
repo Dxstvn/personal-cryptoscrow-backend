@@ -25,7 +25,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/115</span>
+                <span class='fraction'>0/119</span>
             </div>
         
             
@@ -39,14 +39,14 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>0/9</span>
+                <span class='fraction'>0/10</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/113</span>
+                <span class='fraction'>0/117</span>
             </div>
         
             
@@ -375,16 +375,35 @@
 <a name='L310'></a><a href='#L310'>310</a>
 <a name='L311'></a><a href='#L311'>311</a>
 <a name='L312'></a><a href='#L312'>312</a>
-<a name='L313'></a><a href='#L313'>313</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L313'></a><a href='#L313'>313</a>
+<a name='L314'></a><a href='#L314'>314</a>
+<a name='L315'></a><a href='#L315'>315</a>
+<a name='L316'></a><a href='#L316'>316</a>
+<a name='L317'></a><a href='#L317'>317</a>
+<a name='L318'></a><a href='#L318'>318</a>
+<a name='L319'></a><a href='#L319'>319</a>
+<a name='L320'></a><a href='#L320'>320</a>
+<a name='L321'></a><a href='#L321'>321</a>
+<a name='L322'></a><a href='#L322'>322</a>
+<a name='L323'></a><a href='#L323'>323</a>
+<a name='L324'></a><a href='#L324'>324</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -420,6 +439,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -632,6 +652,7 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -670,6 +691,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -690,10 +712,18 @@
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import express from 'express';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore'; // Import FieldValue
 import { getAuth } from 'firebase-admin/auth';
-import { adminApp } from '../auth/admin.js'; // Assuming this path is correct
+import { getAdminApp } from '../auth/admin.js'; // Use async getAdminApp
 &nbsp;
 const router = <span class="cstat-no" title="statement not covered" >express.Router();</span>
-const db = <span class="cstat-no" title="statement not covered" >getFirestore(adminApp);</span>
+&nbsp;
+// Helper function to get Firebase services
+async function <span class="fstat-no" title="function not covered" >getFirebaseServices(</span>) {
+  const adminApp = <span class="cstat-no" title="statement not covered" >await getAdminApp();</span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    db: getFirestore(adminApp),
+    auth: getAuth(adminApp)
+  };
+}
 &nbsp;
 // Authentication middleware (keep as is)
 async function <span class="fstat-no" title="function not covered" >authenticateToken(</span>req, res, next) {
@@ -701,7 +731,7 @@ async function <span class="fstat-no" title="function not covered" >authenticate
   const token = <span class="cstat-no" title="statement not covered" >authHeader &amp;&amp; authHeader.split(' ')[1];</span>
 <span class="cstat-no" title="statement not covered" >  if (!token) <span class="cstat-no" title="statement not covered" >return res.status(401).json({ error: 'No token provided' });</span></span>
 <span class="cstat-no" title="statement not covered" >  try {</span>
-    const auth = <span class="cstat-no" title="statement not covered" >getAuth(adminApp);</span>
+    const { auth } = <span class="cstat-no" title="statement not covered" >await getFirebaseServices();</span>
     const decodedToken = <span class="cstat-no" title="statement not covered" >await auth.verifyIdToken(token);</span>
 <span class="cstat-no" title="statement not covered" >    req.userId = decodedToken.uid;</span>
 <span class="cstat-no" title="statement not covered" >    next();</span>
@@ -730,6 +760,7 @@ async function <span class="fstat-no" title="function not covered" >authenticate
 &nbsp;
 &nbsp;
     // Get sender's information
+    const { db } = <span class="cstat-no" title="statement not covered" >await getFirebaseServices();</span>
     const userDoc = <span class="cstat-no" title="statement not covered" >await db.collection('users').doc(userId).get();</span>
     const userData = <span class="cstat-no" title="statement not covered" >userDoc.data();</span>
 &nbsp;
@@ -943,6 +974,7 @@ async function <span class="fstat-no" title="function not covered" >authenticate
 <span class="cstat-no" title="statement not covered" >  try {</span>
     const userId = <span class="cstat-no" title="statement not covered" >req.userId;</span>
 &nbsp;
+    const { db } = <span class="cstat-no" title="statement not covered" >await getFirebaseServices();</span>
     const contactsRef = <span class="cstat-no" title="statement not covered" >db.collection('users').doc(userId).collection('contacts');</span>
     // Only retrieve contacts marked as accepted
     const contactsSnapshot = <span class="cstat-no" title="statement not covered" >await contactsRef.where('accepted', '==', true).get();</span>
@@ -982,6 +1014,7 @@ async function <span class="fstat-no" title="function not covered" >authenticate
     }
 &nbsp;
     // Use a batch write to delete the contact from both users' contact lists
+    const { db } = <span class="cstat-no" title="statement not covered" >await getFirebaseServices();</span>
     const batch = <span class="cstat-no" title="statement not covered" >db.batch();</span>
 &nbsp;
     const userContactRef = <span class="cstat-no" title="statement not covered" >db.collection('users').doc(userId).collection('contacts').doc(contactId);</span>
@@ -1006,7 +1039,7 @@ export default router;</pre></td></tr></table></pre>
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-05-27T21:37:01.648Z
+                at 2025-06-03T22:18:11.001Z
             </div>
         <script src="../../../../prettify.js"></script>
         <script>

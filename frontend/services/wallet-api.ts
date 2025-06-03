@@ -46,7 +46,7 @@ export class WalletApiService {
 
       const headers = await this.getAuthHeaders()
       
-      const response = await fetch(`${API_BASE_URL}/api/wallets/register`, {
+      const response = await fetch(`${API_BASE_URL}/wallet/register`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -100,7 +100,7 @@ export class WalletApiService {
 
       const headers = await this.getAuthHeaders()
       
-      const response = await fetch(`${API_BASE_URL}/api/auth/profile`, {
+      const response = await fetch(`${API_BASE_URL}/auth/profile`, {
         method: 'PUT',
         headers,
         body: JSON.stringify(updates)
@@ -140,7 +140,7 @@ export class WalletApiService {
 
       const headers = await this.getAuthHeaders()
       
-      const response = await fetch(`${API_BASE_URL}/api/wallets`, {
+      const response = await fetch(`${API_BASE_URL}/wallet`, {
         method: 'GET',
         headers
       })
@@ -176,7 +176,7 @@ export class WalletApiService {
 
       const headers = await this.getAuthHeaders()
       
-      const response = await fetch(`${API_BASE_URL}/api/wallets/${address}`, {
+      const response = await fetch(`${API_BASE_URL}/wallet/${address}`, {
         method: 'DELETE',
         headers,
         body: JSON.stringify({ network })
@@ -216,7 +216,7 @@ export class WalletApiService {
 
       const headers = await this.getAuthHeaders()
       
-      const response = await fetch(`${API_BASE_URL}/api/wallets/primary`, {
+      const response = await fetch(`${API_BASE_URL}/wallet/primary`, {
         method: 'PUT',
         headers,
         body: JSON.stringify({ address, network })
@@ -254,7 +254,7 @@ export class WalletApiService {
     try {
       const headers = await this.getAuthHeaders()
       
-      const response = await fetch(`${API_BASE_URL}/api/wallets/balance`, {
+      const response = await fetch(`${API_BASE_URL}/wallet/balance`, {
         method: 'PUT',
         headers,
         body: JSON.stringify({ address, network, balance })
@@ -282,7 +282,7 @@ export class WalletApiService {
     try {
       const headers = await this.getAuthHeaders()
       
-      const response = await fetch(`${API_BASE_URL}/api/wallets/preferences`, {
+      const response = await fetch(`${API_BASE_URL}/wallet/preferences`, {
         method: 'GET',
         headers
       })
@@ -296,6 +296,54 @@ export class WalletApiService {
     } catch (error) {
       console.warn('Error fetching wallet preferences:', error)
       return {}
+    }
+  }
+
+  /**
+   * Send comprehensive wallet detection data to backend
+   */
+  async sendWalletDetection(detectedWallets: {
+    evmWallets: any[]
+    solanaWallets: any[]
+    bitcoinWallets: any[]
+  }): Promise<{ success: boolean; message?: string }> {
+    try {
+      console.log('Sending wallet detection data to backend:', {
+        evm: detectedWallets.evmWallets.length,
+        solana: detectedWallets.solanaWallets.length,
+        bitcoin: detectedWallets.bitcoinWallets.length
+      })
+
+      const headers = await this.getAuthHeaders()
+      
+      const response = await fetch(`${API_BASE_URL}/wallet/detection`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ detectedWallets })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      const data = await response.json()
+      console.log('✅ Wallet detection data sent successfully:', data)
+      
+      return { success: true, message: data.message }
+    } catch (error) {
+      console.error('❌ Error sending wallet detection data:', error)
+      
+      // In development mode, don't fail completely
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('🔧 Development mode: Simulating successful detection data send')
+        return { success: true, message: 'Detection data sent (development mode)' }
+      }
+      
+      return { 
+        success: false, 
+        message: (error as Error).message || 'Failed to send wallet detection data to backend' 
+      }
     }
   }
 }

@@ -148,6 +148,14 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       const detected = await walletDetectionService.detectAllWallets()
       setDetectedWallets(detected)
       console.log("✅ Wallet detection complete:", detected)
+
+      // Send detection data to backend
+      try {
+        await walletApi.sendWalletDetection(detected)
+        console.log("✅ Wallet detection data sent to backend")
+      } catch (backendError) {
+        console.warn("Could not send wallet detection data to backend:", backendError)
+      }
     } catch (err) {
       console.error("Error detecting wallets:", err)
       setError("Failed to detect wallets")

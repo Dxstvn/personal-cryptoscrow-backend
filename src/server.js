@@ -19,6 +19,7 @@ import fileUploadRouter from './api/routes/database/fileUploadDownload.js';
 import healthCheckRouter from './api/routes/health/health.js';
 import contactRouter from './api/routes/contact/contactRoutes.js';
 import transactionRouter from './api/routes/transaction/transactionRoutes.js';
+import walletRouter from './api/routes/wallet/walletRoutes.js';
 
 const app = express();
 
@@ -48,6 +49,7 @@ app.use('/auth', loginRouter);
 app.use('/files', fileUploadRouter);
 app.use('/contact', contactRouter);
 app.use('/transaction', transactionRouter);
+app.use('/wallet', walletRouter);
 
 // Default route
 app.get('/', (req, res) => {

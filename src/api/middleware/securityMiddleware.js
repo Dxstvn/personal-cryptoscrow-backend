@@ -148,13 +148,25 @@ export const corsOptions = {
       'https://clearhold.app',
       'http://www.clearhold.app',
       'https://www.clearhold.app',
+      'http://api.clearhold.app',
+      'https://api.clearhold.app',
       'https://clearhold.app:3000',
       'http://clearhold.app:3000',
+      // Add Vercel preview domains for development
+      /^https:\/\/.*\.vercel\.app$/,
       process.env.FRONTEND_URL,
       process.env.DOMAIN_URL
     ].filter(Boolean); // Remove any undefined values
 
-    if (allowedOrigins.includes(origin)) {
+    // Check if origin matches any allowed origin (including regex patterns)
+    const isAllowed = allowedOrigins.some(allowedOrigin => {
+      if (allowedOrigin instanceof RegExp) {
+        return allowedOrigin.test(origin);
+      }
+      return allowedOrigin === origin;
+    });
+
+    if (isAllowed) {
       callback(null, true);
     } else {
       console.log(`CORS blocked origin: ${origin}`);

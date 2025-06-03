@@ -1,23 +1,25 @@
+import '../../../config/env.js';
+
+// Set emulator configuration BEFORE any Firebase imports
+const isTest = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test';
+const isProduction = process.env.NODE_ENV === 'production';
+
+if (isTest) {
+  // Ensure Admin SDK uses emulators
+  process.env.FIRESTORE_EMULATOR_HOST = 'localhost:5004';
+  process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9099';
+}
+
 import { initializeApp, cert, getApp, getApps, deleteApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import '../../../config/env.js';
 import fs from 'fs';
 import awsSecretsManager from '../../../config/awsSecretsManager.js';
 
-const isTest = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test';
-const isProduction = process.env.NODE_ENV === 'production';
 const appName = "adminApp";
 
 // Function to initialize or get the admin app
 async function initializeAdmin() {
   console.log(`Initializing Admin SDK. NODE_ENV='${process.env.NODE_ENV}', isTest=${isTest}, isProduction=${isProduction}`);
-
-  if (isTest) {
-    // Ensure Admin SDK uses Firestore emulator
-    process.env.FIRESTORE_EMULATOR_HOST = 'localhost:5004'; 
-    // Optionally, you could also set FIREBASE_AUTH_EMULATOR_HOST here if needed for admin.getAuth()
-    // process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9099';
-  }
 
   if (getApps().find(app => app.name === appName)) {
     console.log(`Admin app "${appName}" already exists. Returning existing instance.`);

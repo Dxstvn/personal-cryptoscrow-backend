@@ -25,7 +25,7 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>0/155</span>
+                <span class='fraction'>0/159</span>
             </div>
         
             
@@ -39,14 +39,14 @@
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>0/12</span>
+                <span class='fraction'>0/13</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">0% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>0/150</span>
+                <span class='fraction'>0/154</span>
             </div>
         
             
@@ -422,7 +422,19 @@
 <a name='L357'></a><a href='#L357'>357</a>
 <a name='L358'></a><a href='#L358'>358</a>
 <a name='L359'></a><a href='#L359'>359</a>
-<a name='L360'></a><a href='#L360'>360</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L360'></a><a href='#L360'>360</a>
+<a name='L361'></a><a href='#L361'>361</a>
+<a name='L362'></a><a href='#L362'>362</a>
+<a name='L363'></a><a href='#L363'>363</a>
+<a name='L364'></a><a href='#L364'>364</a>
+<a name='L365'></a><a href='#L365'>365</a>
+<a name='L366'></a><a href='#L366'>366</a>
+<a name='L367'></a><a href='#L367'>367</a>
+<a name='L368'></a><a href='#L368'>368</a>
+<a name='L369'></a><a href='#L369'>369</a>
+<a name='L370'></a><a href='#L370'>370</a>
+<a name='L371'></a><a href='#L371'>371</a>
+<a name='L372'></a><a href='#L372'>372</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -440,10 +452,19 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -581,6 +602,7 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -646,6 +668,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -694,6 +717,7 @@
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -788,7 +812,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { getStorage as getAdminStorage } from 'firebase-admin/storage';
 import { ethEscrowApp } from '../auth/authIndex.js';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
-import { adminApp } from '../auth/admin.js';
+import { getAdminApp } from '../auth/admin.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
@@ -799,7 +823,16 @@ const __dirname = <span class="cstat-no" title="statement not covered" >path.dir
 &nbsp;
 const router = <span class="cstat-no" title="statement not covered" >express.Router();</span>
 const storage = <span class="cstat-no" title="statement not covered" >getStorage(ethEscrowApp);</span>
-const db = <span class="cstat-no" title="statement not covered" >getFirestore(adminApp);</span>
+&nbsp;
+// Helper function to get Firebase services
+async function <span class="fstat-no" title="function not covered" >getFirebaseServices(</span>) {
+  const adminApp = <span class="cstat-no" title="statement not covered" >await getAdminApp();</span>
+<span class="cstat-no" title="statement not covered" >  return {</span>
+    db: getFirestore(adminApp),
+    auth: getAdminAuth(adminApp),
+    adminStorage: getAdminStorage(adminApp)
+  };
+}
 &nbsp;
 // Authentication middleware
 async function <span class="fstat-no" title="function not covered" >authenticateToken(</span>req, res, next) {
@@ -807,7 +840,7 @@ async function <span class="fstat-no" title="function not covered" >authenticate
   const token = <span class="cstat-no" title="statement not covered" >authHeader &amp;&amp; authHeader.split(' ')[1];</span>
 <span class="cstat-no" title="statement not covered" >  if (!token) <span class="cstat-no" title="statement not covered" >return res.status(401).json({ error: 'No token provided' });</span></span>
 <span class="cstat-no" title="statement not covered" >  try {</span>
-    const auth = <span class="cstat-no" title="statement not covered" >getAdminAuth(adminApp);</span>
+    const { auth } = <span class="cstat-no" title="statement not covered" >await getFirebaseServices();</span>
     const decodedToken = <span class="cstat-no" title="statement not covered" >await auth.verifyIdToken(token);</span>
 <span class="cstat-no" title="statement not covered" >    req.userId = decodedToken.uid;</span>
 <span class="cstat-no" title="statement not covered" >    next();</span>
@@ -936,6 +969,7 @@ const handleMulterErrors = <span class="cstat-no" title="statement not covered" 
     }
 &nbsp;
     // Check if deal exists and user has permission
+    const { db } = <span class="cstat-no" title="statement not covered" >await getFirebaseServices();</span>
     const dealRef = <span class="cstat-no" title="statement not covered" >db.collection('deals').doc(dealId);</span>
     const dealDoc = <span class="cstat-no" title="statement not covered" >await dealRef.get();</span>
 <span class="cstat-no" title="statement not covered" >    if (!dealDoc.exists) {</span>
@@ -1004,6 +1038,7 @@ const handleMulterErrors = <span class="cstat-no" title="statement not covered" 
     const userId = <span class="cstat-no" title="statement not covered" >req.userId;</span>
 &nbsp;
     // Query deals where the user is a participant
+    const { db } = <span class="cstat-no" title="statement not covered" >await getFirebaseServices();</span>
     const dealsQuery = <span class="cstat-no" title="statement not covered" >await db.collection('deals')</span>
       .where('participants', 'array-contains', userId)
       .get();
@@ -1053,6 +1088,7 @@ const handleMulterErrors = <span class="cstat-no" title="statement not covered" 
     const userId = <span class="cstat-no" title="statement not covered" >req.userId;</span>
 &nbsp;
     // Verify deal exists and user is a participant
+    const { db } = <span class="cstat-no" title="statement not covered" >await getFirebaseServices();</span>
     const dealDoc = <span class="cstat-no" title="statement not covered" >await db.collection('deals').doc(dealId).get();</span>
 <span class="cstat-no" title="statement not covered" >    if (!dealDoc.exists) {</span>
 <span class="cstat-no" title="statement not covered" >      return res.status(404).json({ error: 'Deal not found' });</span>
@@ -1070,7 +1106,7 @@ const handleMulterErrors = <span class="cstat-no" title="statement not covered" 
     const fileData = <span class="cstat-no" title="statement not covered" >fileDoc.data();</span>
 &nbsp;
     // Access file from Firebase Storage using admin SDK
-    const adminStorage = <span class="cstat-no" title="statement not covered" >getAdminStorage(adminApp);</span>
+    const { adminStorage } = <span class="cstat-no" title="statement not covered" >await getFirebaseServices();</span>
     const bucket = <span class="cstat-no" title="statement not covered" >adminStorage.bucket();</span>
     const file = <span class="cstat-no" title="statement not covered" >bucket.file(fileData.storagePath);</span>
 &nbsp;
@@ -1147,7 +1183,7 @@ export default router;</pre></td></tr></table></pre>
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2025-05-27T21:37:01.648Z
+                at 2025-06-03T22:18:11.001Z
             </div>
         <script src="../../../../prettify.js"></script>
         <script>
