@@ -98,6 +98,20 @@ install_nginx() {
 install_certbot() {
     if ! command_exists certbot; then
         echo "🔧 Installing certbot..."
+        
+        # Check OpenSSL version for compatibility
+        OPENSSL_VERSION=$(openssl version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+        echo "🔍 Detected OpenSSL version: $OPENSSL_VERSION"
+        
+        # Compare OpenSSL version (need 1.1.1 or higher for modern certbot)
+        if printf '%s\n%s\n' "1.1.1" "$OPENSSL_VERSION" | sort -V | head -n1 | grep -q "1.1.1"; then
+            echo "✅ OpenSSL version is compatible with modern certbot"
+            USE_MODERN_CERTBOT=true
+        else
+            echo "⚠️ OpenSSL version is too old for modern certbot, using legacy method"
+            USE_MODERN_CERTBOT=false
+        fi
+        
         case $PKG_MANAGER in
             "apt")
                 sudo apt install -y snapd
@@ -106,17 +120,32 @@ install_certbot() {
                 ;;
             "yum")
                 if [[ $OS == *"Amazon Linux"* ]]; then
-                    # Try snap first, fallback to pip
-                    sudo yum install -y snapd
-                    sudo systemctl enable --now snapd.socket
-                    sudo ln -sf /var/lib/snapd/snap /snap
-                    sleep 5  # Wait for snapd to initialize
-                    if sudo snap install --classic certbot 2>/dev/null; then
-                        sudo ln -sf /snap/bin/certbot /usr/bin/certbot
+                    if [ "$USE_MODERN_CERTBOT" = true ]; then
+                        # Try snap first, fallback to pip
+                        sudo yum install -y snapd
+                        sudo systemctl enable --now snapd.socket
+                        sudo ln -sf /var/lib/snapd/snap /snap
+                        sleep 5  # Wait for snapd to initialize
+                        if sudo snap install --classic certbot 2>/dev/null; then
+                            sudo ln -sf /snap/bin/certbot /usr/bin/certbot
+                        else
+                            echo "⚠️ Snap failed, using pip method..."
+                            sudo yum install -y python3-pip
+                            sudo pip3 install certbot certbot-nginx
+                            echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.bashrc
+                        fi
                     else
-                        echo "⚠️ Snap failed, using pip method..."
-                        sudo yum install -y python3-pip
-                        sudo pip3 install certbot certbot-nginx
+                        # Use Amazon Linux Extras for older systems
+                        echo "🔧 Using Amazon Linux Extras for legacy OpenSSL compatibility..."
+                        if sudo amazon-linux-extras install -y epel 2>/dev/null; then
+                            sudo yum install -y certbot python2-certbot-nginx
+                        else
+                            # Fallback to compatible pip version
+                            echo "🔧 Using pip with compatible versions..."
+                            sudo yum install -y python3-pip
+                            sudo pip3 install 'urllib3<2.0' 'certbot<2.0' 'certbot-nginx<2.0'
+                            echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.bashrc
+                        fi
                     fi
                 else
                     # CentOS/RHEL 7
@@ -223,6 +252,12 @@ fi
 echo "🔍 Verifying certbot installation..."
 if command_exists certbot; then
     echo "✅ certbot version: $(certbot --version)"
+elif [ -f /usr/local/bin/certbot ]; then
+    echo "✅ certbot found in /usr/local/bin"
+    echo "📝 Adding /usr/local/bin to PATH..."
+    export PATH="/usr/local/bin:$PATH"
+    echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.bashrc
+    echo "✅ certbot version: $(/usr/local/bin/certbot --version 2>/dev/null || echo 'Found but may have dependency issues')"
 else
     echo "❌ certbot installation failed"
     echo "Please check SSL_SETUP_FIX.md for manual installation steps"

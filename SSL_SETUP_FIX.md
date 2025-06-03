@@ -1,5 +1,43 @@
 # SSL Certificate Setup - OS Detection and Fix
 
+## ⚠️ IMPORTANT: OpenSSL Compatibility Issue Fix
+
+If you get an error like `urllib3 v2.0 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'OpenSSL 1.0.2k-fips'`, your system has an outdated OpenSSL version. Follow these steps:
+
+### Quick Fix for Amazon Linux with Old OpenSSL
+
+```bash
+# Check your OpenSSL version
+openssl version
+
+# If you have OpenSSL 1.0.2k or older, use these commands:
+
+# Method 1: Use Amazon Linux Extras (Recommended)
+sudo amazon-linux-extras install -y epel
+sudo yum install -y certbot python2-certbot-nginx
+
+# Method 2: Install compatible certbot version
+sudo pip3 uninstall -y certbot certbot-nginx urllib3
+sudo pip3 install 'urllib3<2.0' 'certbot<2.0' 'certbot-nginx<2.0'
+
+# Method 3: Add certbot to PATH and fix dependencies
+echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+sudo pip3 install --upgrade 'urllib3<2.0'
+```
+
+### Verify Installation
+
+```bash
+# Add /usr/local/bin to PATH if needed
+export PATH="/usr/local/bin:$PATH"
+
+# Test certbot
+/usr/local/bin/certbot --version
+# or if PATH is updated:
+certbot --version
+```
+
 ## Step 1: Identify Your Operating System
 
 Run this command on your EC2 instance to identify your OS:
