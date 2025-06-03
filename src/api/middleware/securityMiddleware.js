@@ -144,17 +144,25 @@ export const corsOptions = {
       'http://localhost:3001',
       'http://44.202.141.56:3000',
       'https://44.202.141.56:3000',
-      process.env.FRONTEND_URL
+      'http://clearhold.app',
+      'https://clearhold.app',
+      'http://www.clearhold.app',
+      'https://www.clearhold.app',
+      'https://clearhold.app:3000',
+      'http://clearhold.app:3000',
+      process.env.FRONTEND_URL,
+      process.env.DOMAIN_URL
     ].filter(Boolean); // Remove any undefined values
 
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
+      console.log(`CORS blocked origin: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-forwarded-for', 'x-forwarded-proto'],
   maxAge: 86400 // 24 hours
 }; 
