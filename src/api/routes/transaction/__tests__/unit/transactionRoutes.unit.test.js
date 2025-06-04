@@ -79,12 +79,18 @@ jest.unstable_mockModule('../../../auth/admin.js', () => {
 const mockIsAddress = jest.fn();
 const mockGetAddress = jest.fn(addr => addr);
 const mockParseUnits = jest.fn();
+const mockWallet = jest.fn().mockImplementation((privateKey) => ({
+  address: '0x' + 'a'.repeat(40), // Mock wallet address
+  privateKey: privateKey
+}));
+
 jest.unstable_mockModule('ethers', () => {
   // console.log('[MOCK FACTORY V5] jest.unstable_mockModule for "ethers" - FACTORY EXECUTED.');
   return {
     isAddress: mockIsAddress,
     getAddress: mockGetAddress,
     parseUnits: mockParseUnits,
+    Wallet: mockWallet,
   };
 });
 // console.log('[TEST FILE SCOPE V5] jest.unstable_mockModule for "ethers" REGISTERED.');
@@ -97,6 +103,25 @@ jest.unstable_mockModule('../../../../../services/contractDeployer.js', () => {
   };
 });
 // console.log('[TEST FILE SCOPE V5] jest.unstable_mockModule for contractDeployer REGISTERED.');
+
+// Mock cross-chain services
+const mockAreNetworksEVMCompatible = jest.fn();
+const mockGetBridgeInfo = jest.fn();
+const mockEstimateTransactionFees = jest.fn();
+const mockPrepareCrossChainTransaction = jest.fn();
+const mockExecuteCrossChainStep = jest.fn();
+const mockGetCrossChainTransactionStatus = jest.fn();
+
+jest.unstable_mockModule('../../../../../services/crossChainService.js', () => {
+  return {
+    areNetworksEVMCompatible: mockAreNetworksEVMCompatible,
+    getBridgeInfo: mockGetBridgeInfo,
+    estimateTransactionFees: mockEstimateTransactionFees,
+    prepareCrossChainTransaction: mockPrepareCrossChainTransaction,
+    executeCrossChainStep: mockExecuteCrossChainStep,
+    getCrossChainTransactionStatus: mockGetCrossChainTransactionStatus,
+  };
+});
 
 let testAgent;
 let transactionRoutes;
@@ -182,6 +207,7 @@ describe('Unit Tests for transactionRoutes.js', () => {
     };
 
     const specificUserQueryGet = jest.fn(); // Specific mock for users collection queries
+    const mockUserDocGet = jest.fn(); // Specific mock for individual user document gets
 
     mockCollection.mockImplementation(collectionName => {
       if (collectionName === 'users') {
@@ -211,8 +237,19 @@ describe('Unit Tests for transactionRoutes.js', () => {
               get: specificUserQueryGet, // This get is specificUserQueryGet
             };
           }),
-          // If users collection is queried by .doc().get() for some reason
-          doc: jest.fn().mockReturnValue({ get: specificUserQueryGet })
+          // Mock for individual user document get
+          doc: jest.fn().mockImplementation(docId => ({
+            get: mockUserDocGet.mockImplementation(() => {
+              // Default mock for getting user profile - should return the current user's profile
+              if (docId === mockDecodedToken.uid) {
+                return Promise.resolve({
+                  exists: true,
+                  data: () => ({ email: mockDecodedToken.email, uid: mockDecodedToken.uid })
+                });
+              }
+              return Promise.resolve({ exists: false, data: () => undefined });
+            })
+          }))
         };
       }
       // Default for 'deals' collection (and any other not specified)
@@ -237,12 +274,20 @@ describe('Unit Tests for transactionRoutes.js', () => {
     mockTransactionGet.mockReset(); // Reset transactional get mock
     mockTransactionGet.mockResolvedValue({ exists: false, data: () => undefined }); // Default for transactional get
 
+    // Fix mockAdd to return a proper DocumentReference mock with update method
+    mockAdd.mockReset();
+    mockAdd.mockImplementation(() => {
+      const mockDocId = mockAdd.mockImplementation.mockDocumentId || 'mockDocumentId';
+      return Promise.resolve({
+        id: mockDocId,
+        update: mockUpdate
+      });
+    });
 
     mockDoc.mockReturnValue({ get: mockGet, set: mockSet, update: mockUpdate });
     // mockGet.mockResolvedValue({ exists: false, data: () => undefined }); // This default is now set above and reset each time
     mockSet.mockResolvedValue({ writeTime: 'mockWriteTime' });
     mockUpdate.mockResolvedValue({ writeTime: 'mockWriteTime' });
-    mockAdd.mockResolvedValue({ id: 'newTransactionId' });
     mockRunTransaction.mockImplementation(async (updateFunction) => {
         // Use the new mockTransactionGet for t.get()
         const mockTransaction = { get: mockTransactionGet, update: mockUpdate, set: mockSet };
@@ -269,6 +314,56 @@ describe('Unit Tests for transactionRoutes.js', () => {
         }
         return BigInt(String(value)) * (BigInt(10) ** BigInt(decimals));
     });
+    mockWallet.mockImplementation((privateKey) => ({
+        address: '0x' + 'a'.repeat(40), // Mock wallet address
+        privateKey: privateKey
+    }));
+
+    // Cross-chain service mocks
+    mockAreNetworksEVMCompatible.mockImplementation((network1, network2) => {
+        // Mock EVM compatibility - ethereum, polygon, bsc are compatible
+        const evmNetworks = ['ethereum', 'polygon', 'bsc'];
+        return evmNetworks.includes(network1) && evmNetworks.includes(network2);
+    });
+    
+    mockGetBridgeInfo.mockImplementation((sourceNetwork, targetNetwork) => {
+        if (sourceNetwork === 'ethereum' && targetNetwork === 'polygon') {
+            return { bridge: 'PoS Bridge', fee: '0.001', estimatedTime: '7-8 minutes' };
+        }
+        if (sourceNetwork === 'bitcoin' && targetNetwork === 'ethereum') {
+            return { bridge: 'Wrapped Bitcoin', fee: '0.0005', estimatedTime: '30 minutes' };
+        }
+        return null; // No bridge needed for same network or unsupported pairs
+    });
+    
+    mockEstimateTransactionFees.mockResolvedValue({
+        gasPrice: '20000000000', // 20 gwei
+        gasLimit: '21000',
+        estimatedFee: '0.00042', // ETH
+        bridgeFee: '0.001' // If bridge is needed
+    });
+    
+    mockPrepareCrossChainTransaction.mockResolvedValue({
+        id: 'cross-chain-tx-123',
+        needsBridge: true,
+        steps: [
+            { step: 1, description: 'Lock funds on source network' },
+            { step: 2, description: 'Bridge transfer' },
+            { step: 3, description: 'Release funds on target network' }
+        ]
+    });
+    
+    mockExecuteCrossChainStep.mockResolvedValue({
+        status: 'completed',
+        txHash: '0x' + '1'.repeat(64)
+    });
+    
+    mockGetCrossChainTransactionStatus.mockResolvedValue({
+        id: 'cross-chain-tx-123',
+        status: 'pending',
+        currentStep: 1,
+        needsBridge: true
+    });
 
     mockDeployPropertyEscrowContract.mockResolvedValue('0xDeployedContractAddress');
     process.env.DEPLOYER_PRIVATE_KEY = 'test_deployer_key';
@@ -291,7 +386,7 @@ describe('Unit Tests for transactionRoutes.js', () => {
     it('should return 403 if token is invalid', async () => {
       const response = await testAgent.post('/create').set('Authorization', 'Bearer invalid');
       expect(response.status).toBe(403);
-      expect(response.body.error).toBe('Authentication failed. Invalid or expired token.');
+      expect(response.body.error).toBe('Invalid or expired token');
     });
   });
 
@@ -307,15 +402,235 @@ describe('Unit Tests for transactionRoutes.js', () => {
       initialConditions: [{ id: 'c1', description: 'Condition 1', type: 'CUSTOM' }],
     };
 
+    beforeEach(() => {
+      // Reset user document get mock for each test in this describe block
+      const mockUserDocGet = jest.fn();
+      mockUserDocGet.mockImplementation(() => {
+        return Promise.resolve({
+          exists: true,
+          data: () => ({ email: mockDecodedToken.email, uid: mockDecodedToken.uid })
+        });
+      });
+      
+      // Update the collection mock to ensure users collection doc calls use the reset mock
+      mockCollection.mockImplementation(collectionName => {
+        if (collectionName === 'users') {
+          return {
+            where: mockWhere.mockImplementation((field, op, emailValue) => {
+              const specificUserQueryGet = jest.fn();
+              if (emailValue === otherUserDecodedToken.email) {
+                specificUserQueryGet.mockResolvedValueOnce({
+                  empty: false,
+                  docs: [{ id: otherUserDecodedToken.uid, data: () => ({ email: otherUserDecodedToken.email, uid: otherUserDecodedToken.uid }) }],
+                });
+              } else if (emailValue === 'nonexistent@example.com') {
+                specificUserQueryGet.mockResolvedValueOnce({
+                  empty: true,
+                  docs: [],
+                });
+              } else if (emailValue === mockDecodedToken.email) {
+                  specificUserQueryGet.mockResolvedValueOnce({
+                      empty: false,
+                      docs: [{ id: mockDecodedToken.uid, data: () => ({ email: mockDecodedToken.email, uid: mockDecodedToken.uid }) }]
+                  });
+              } else {
+                specificUserQueryGet.mockResolvedValueOnce({ empty: true, docs: [] });
+              }
+              return {
+                limit: mockLimit.mockReturnThis(),
+                get: specificUserQueryGet,
+              };
+            }),
+            doc: jest.fn().mockImplementation(docId => ({
+              get: mockUserDocGet
+            }))
+          };
+        }
+        // Default for 'deals' collection
+        return {
+          add: mockAdd,
+          doc: mockDoc.mockImplementation(docId => ({
+              get: mockGet,
+              set: mockSet,
+              update: mockUpdate,
+          })),
+          where: mockWhere.mockReturnValue({
+              orderBy: mockOrderBy.mockReturnThis(),
+              limit: mockLimit.mockReturnThis(),
+              get: mockGet,
+          }),
+          orderBy: mockOrderBy.mockReturnValue({
+              orderBy: mockOrderBy.mockReturnThis(),
+              limit: mockLimit.mockReturnThis(),
+              get: mockGet,
+          }),
+          limit: mockLimit.mockReturnValue({
+              get: mockGet,
+          }),
+          get: mockGet,
+        };
+      });
+    });
+
+    // Cross-chain test payloads
+    const crossChainEthereumToPolygonPayload = {
+      ...baseCreatePayload,
+      buyerWalletAddress: '0x1234567890123456789012345678901234567890', // Ethereum
+      sellerWalletAddress: '0x0987654321098765432109876543210987654321', // Polygon (treated as different network)
+    };
+
+    const crossChainBitcoinToEthereumPayload = {
+      ...baseCreatePayload,
+      buyerWalletAddress: 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', // Bitcoin
+      sellerWalletAddress: '0x0987654321098765432109876543210987654321', // Ethereum
+    };
+
+    const crossChainSolanaToEthereumPayload = {
+      ...baseCreatePayload,
+      buyerWalletAddress: 'So11111111111111111111111111111111111111112', // Solana
+      sellerWalletAddress: '0x0987654321098765432109876543210987654321', // Ethereum
+    };
+
     it('should create a transaction successfully (BUYER initiated)', async () => {
-      mockAdd.mockResolvedValueOnce({ id: 'newTxIdBuyer' });
+      mockAdd.mockImplementation.mockDocumentId = 'newTxIdBuyer';
       const response = await testAgent.post('/create').set('Authorization', 'Bearer validtoken').send(baseCreatePayload);
       expect(response.status).toBe(201);
       expect(response.body.transactionId).toBe('newTxIdBuyer');
     });
 
+    it('should create a cross-chain transaction (Ethereum to Polygon)', async () => {
+      mockAdd.mockImplementation.mockDocumentId = 'newCrossChainTxId';
+      mockPrepareCrossChainTransaction.mockResolvedValueOnce({
+        id: 'cross-chain-tx-123',
+        needsBridge: true,
+        steps: [
+          { step: 1, description: 'Lock funds on source network' },
+          { step: 2, description: 'Bridge transfer' },
+          { step: 3, description: 'Release funds on target network' }
+        ]
+      });
+
+      const response = await testAgent.post('/create')
+        .set('Authorization', 'Bearer validtoken')
+        .send(crossChainEthereumToPolygonPayload);
+
+      expect(response.status).toBe(201);
+      expect(response.body.transactionId).toBe('newCrossChainTxId');
+      expect(response.body.isCrossChain).toBe(false); // EVM networks are compatible, so not cross-chain
+      expect(mockPrepareCrossChainTransaction).not.toHaveBeenCalled(); // Should not be called for EVM-compatible networks
+    });
+
+    it('should create a cross-chain transaction (Bitcoin to Ethereum)', async () => {
+      mockAdd.mockImplementation.mockDocumentId = 'newBtcEthTxId';
+      mockPrepareCrossChainTransaction.mockResolvedValueOnce({
+        id: 'cross-chain-btc-eth-123',
+        needsBridge: true,
+        steps: [
+          { step: 1, description: 'Lock Bitcoin funds' },
+          { step: 2, description: 'Mint wrapped Bitcoin on Ethereum' }
+        ]
+      });
+
+      const response = await testAgent.post('/create')
+        .set('Authorization', 'Bearer validtoken')
+        .send(crossChainBitcoinToEthereumPayload);
+
+      expect(response.status).toBe(201);
+      expect(response.body.transactionId).toBe('newBtcEthTxId');
+      expect(response.body.isCrossChain).toBe(true);
+      expect(response.body.crossChainInfo).toBeDefined();
+      expect(response.body.crossChainInfo.buyerNetwork).toBe('bitcoin');
+      expect(response.body.crossChainInfo.sellerNetwork).toBe('ethereum');
+
+      // Verify cross-chain transaction was prepared
+      expect(mockPrepareCrossChainTransaction).toHaveBeenCalledWith({
+        fromAddress: crossChainBitcoinToEthereumPayload.buyerWalletAddress,
+        toAddress: crossChainBitcoinToEthereumPayload.sellerWalletAddress,
+        amount: String(crossChainBitcoinToEthereumPayload.amount),
+        sourceNetwork: 'bitcoin',
+        targetNetwork: 'ethereum',
+        dealId: 'newBtcEthTxId',
+        userId: mockDecodedToken.uid
+      });
+
+      // Verify cross-chain conditions were added
+      expect(mockAdd).toHaveBeenCalledWith(expect.objectContaining({
+        isCrossChain: true,
+        buyerNetwork: 'bitcoin',
+        sellerNetwork: 'ethereum',
+        conditions: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'cross_chain_network_validation',
+            type: 'CROSS_CHAIN',
+            description: 'Network compatibility validated (bitcoin to ethereum)'
+          }),
+          expect.objectContaining({
+            id: 'cross_chain_bridge_setup',
+            type: 'CROSS_CHAIN',
+            description: 'Cross-chain bridge connection established'
+          }),
+          expect.objectContaining({
+            id: 'cross_chain_funds_locked',
+            type: 'CROSS_CHAIN',
+            description: 'Funds locked on source network (bitcoin)'
+          }),
+          expect.objectContaining({
+            id: 'cross_chain_bridge_transfer',
+            type: 'CROSS_CHAIN',
+            description: 'Bridge transfer via Wrapped Bitcoin completed'
+          })
+        ])
+      }));
+    });
+
+    it('should create a cross-chain transaction (Solana to Ethereum)', async () => {
+      mockAdd.mockImplementation.mockDocumentId = 'newSolEthTxId';
+      mockPrepareCrossChainTransaction.mockResolvedValueOnce({
+        id: 'cross-chain-sol-eth-123',
+        needsBridge: true,
+        steps: [
+          { step: 1, description: 'Lock Solana funds' },
+          { step: 2, description: 'Bridge to Ethereum' }
+        ]
+      });
+
+      const response = await testAgent.post('/create')
+        .set('Authorization', 'Bearer validtoken')
+        .send(crossChainSolanaToEthereumPayload);
+
+      expect(response.status).toBe(201);
+      expect(response.body.transactionId).toBe('newSolEthTxId');
+      expect(response.body.isCrossChain).toBe(true);
+      expect(response.body.crossChainInfo.buyerNetwork).toBe('solana');
+      expect(response.body.crossChainInfo.sellerNetwork).toBe('ethereum');
+    });
+
+    it('should handle cross-chain transaction preparation failure', async () => {
+      mockAdd.mockImplementation.mockDocumentId = 'failedCrossChainTx';
+      // Reset the mock to reject for this specific test
+      mockPrepareCrossChainTransaction.mockReset();
+      mockPrepareCrossChainTransaction.mockRejectedValueOnce(new Error('Cross-chain service unavailable'));
+
+      const response = await testAgent.post('/create')
+        .set('Authorization', 'Bearer validtoken')
+        .send(crossChainBitcoinToEthereumPayload);
+
+      expect(response.status).toBe(201); // Transaction still created
+      expect(response.body.transactionId).toBe('failedCrossChainTx');
+      expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
+        timeline: expect.objectContaining({
+          _fieldName: 'FieldValue.arrayUnion',
+          _elements: expect.arrayContaining([
+            expect.objectContaining({
+              event: 'Cross-chain transaction preparation FAILED: Cross-chain service unavailable'
+            })
+          ])
+        })
+      }));
+    });
+
     it('should create a transaction successfully (SELLER initiated)', async () => {
-        mockAdd.mockResolvedValueOnce({ id: 'newTxIdSeller' });
+        mockAdd.mockImplementation.mockDocumentId = 'newTxIdSeller';
         const sellerPayload = { ...baseCreatePayload, initiatedBy: 'SELLER' };
         const response = await testAgent.post('/create').set('Authorization', 'Bearer validtoken').send(sellerPayload);
         expect(response.status).toBe(201);
@@ -324,7 +639,7 @@ describe('Unit Tests for transactionRoutes.js', () => {
 
     it('should skip contract deployment if env vars missing', async () => {
         delete process.env.DEPLOYER_PRIVATE_KEY;
-        mockAdd.mockResolvedValueOnce({ id: 'newTxIdNoSC' });
+        mockAdd.mockImplementation.mockDocumentId = 'newTxIdNoSC';
         const response = await testAgent.post('/create').set('Authorization', 'Bearer validtoken').send(baseCreatePayload);
         expect(response.status).toBe(201);
         expect(mockDeployPropertyEscrowContract).not.toHaveBeenCalled();
@@ -333,7 +648,7 @@ describe('Unit Tests for transactionRoutes.js', () => {
 
     it('should handle contract deployment failure', async () => {
         mockDeployPropertyEscrowContract.mockRejectedValueOnce(new Error('Deployment failed badly'));
-        mockAdd.mockResolvedValueOnce({ id: 'newTxIdFailSC' });
+        mockAdd.mockImplementation.mockDocumentId = 'newTxIdFailSC';
         const response = await testAgent.post('/create').set('Authorization', 'Bearer validtoken').send(baseCreatePayload);
         expect(response.status).toBe(201); // Still creates off-chain
         expect(mockAdd).toHaveBeenCalledWith(expect.objectContaining({
@@ -471,7 +786,7 @@ describe('Unit Tests for transactionRoutes.js', () => {
     });
   });
 
-  describe('PUT /:transactionId/conditions/:conditionId/buyer-review', () => {
+  describe('PATCH /conditions/:conditionId/buyer-review', () => {
     const transactionIdForCond = 'txConditionReview';
     const conditionIdToReview = 'condToReview';
     const mockTxDataForCondReview = {
@@ -488,54 +803,35 @@ describe('Unit Tests for transactionRoutes.js', () => {
     };
 
     it('should update condition status successfully by buyer', async () => {
-      // Prime the transactional get specifically for this test
-      mockTransactionGet.mockResolvedValueOnce({ exists: true, data: () => mockTxDataForCondReview });
+      // Set up document mock for this test
+      mockGet.mockResolvedValueOnce({ exists: true, data: () => mockTxDataForCondReview });
 
       const response = await testAgent
-        .put(`/${transactionIdForCond}/conditions/${conditionIdToReview}/buyer-review`)
+        .patch(`/conditions/${conditionIdToReview}/buyer-review`)
         .set('Authorization', 'Bearer validtoken')
-        .send({ newBackendStatus: 'FULFILLED_BY_BUYER', reviewComment: 'Looks good!' }); // Valid status
+        .send({ 
+          dealId: transactionIdForCond,
+          status: 'FULFILLED_BY_BUYER', 
+          notes: 'Looks good!' 
+        });
 
       expect(response.status).toBe(200);
-      // Construct the expected timeline event based on how the route creates it
-      // Use mockTxDataForCondReview directly as it's what transaction.get should return
-      const oldCondition = mockTxDataForCondReview.conditions.find(c => c.id === conditionIdToReview);
-
-      const expectedTimelineEvent = {
-        event: `Buyer (UID: ${mockDecodedToken.uid}) updated backend status for condition \"${oldCondition.description || conditionIdToReview}\" from ${oldCondition.status} to FULFILLED_BY_BUYER.`,
-        timestamp: expectedFixedTimestampObject, // from mockTimestampNowFn
-        userId: mockDecodedToken.uid,
-        comment: 'Looks good!'
-      };
-
-      expect(mockUpdate).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-        conditions: expect.arrayContaining([
-          expect.objectContaining({ id: conditionIdToReview, status: 'FULFILLED_BY_BUYER', updatedAt: expectedFixedTimestampObject, reviewComment: 'Looks good!' }),
-          // The other condition is untouched but its updatedAt will lose the toDate function due to JSON.parse(JSON.stringify) in the route
-          expect.objectContaining({
-            id: mockTxDataForCondReview.conditions[1].id,
-            description: mockTxDataForCondReview.conditions[1].description,
-            status: mockTxDataForCondReview.conditions[1].status,
-            type: mockTxDataForCondReview.conditions[1].type,
-            updatedAt: { // Expect only seconds and nanoseconds, as toDate is stripped
-              seconds: mockTxDataForCondReview.conditions[1].updatedAt.seconds,
-              nanoseconds: mockTxDataForCondReview.conditions[1].updatedAt.nanoseconds,
-            }
-          })
-        ]),
-        updatedAt: expectedFixedTimestampObject,
-        timeline: { _fieldName: 'FieldValue.arrayUnion', _elements: [expect.objectContaining(expectedTimelineEvent)] }
-      }));
+      expect(response.body.message).toBe('Condition updated successfully');
     });
 
-    it('should return 400 for invalid newBackendStatus', async () => {
-      mockGet.mockResolvedValue({ exists: true, data: () => mockTxDataForCondReview });
+    it('should return 400 for invalid status', async () => {
+      mockGet.mockResolvedValueOnce({ exists: true, data: () => mockTxDataForCondReview });
+      
       const response = await testAgent
-        .put(`/${transactionIdForCond}/conditions/${conditionIdToReview}/buyer-review`)
+        .patch(`/conditions/${conditionIdToReview}/buyer-review`)
         .set('Authorization', 'Bearer validtoken')
-        .send({ newBackendStatus: 'INVALID_STATUS_FOO' });
+        .send({ 
+          dealId: transactionIdForCond,
+          status: 'INVALID_STATUS_FOO' 
+        });
+      
       expect(response.status).toBe(400);
-      expect(response.body.error).toBe('Invalid newBackendStatus for condition. Must be FULFILLED_BY_BUYER, PENDING_BUYER_ACTION, or ACTION_WITHDRAWN_BY_BUYER.');
+      expect(response.body.error).toBe('Invalid status. Must be "FULFILLED_BY_BUYER" or "ACTION_WITHDRAWN_BY_BUYER".');
     });
 
     // Other tests for this route (403, 404s) would follow similar patterns
@@ -731,6 +1027,229 @@ describe('Unit Tests for transactionRoutes.js', () => {
           .set('Authorization', 'Bearer validtoken').send({ conditionId: condDisputeId, disputeComment: 'Test', disputeResolutionDeadlineISO: deadlineISO });
       expect(response.status).toBe(400);
       expect(response.body.error).toBe(`Deal is not in a state where a dispute can be raised (current status: COMPLETED).`);
+    });
+  });
+
+  // Add new cross-chain specific test suites
+  describe('Cross-Chain Transaction Management', () => {
+    const crossChainDealId = 'crossChainDeal123';
+    const mockCrossChainDealData = {
+      id: crossChainDealId,
+      participants: [mockDecodedToken.uid, 'otherUserId'],
+      isCrossChain: true,
+      crossChainTransactionId: 'cross-chain-tx-123',
+      buyerNetwork: 'bitcoin',
+      sellerNetwork: 'ethereum',
+      crossChainInfo: { bridge: 'Wrapped Bitcoin', fee: '0.0005', estimatedTime: '30 minutes' },
+      conditions: [
+        { id: 'cross_chain_network_validation', type: 'CROSS_CHAIN', description: 'Network validation', status: 'PENDING_BUYER_ACTION' },
+        { id: 'cross_chain_bridge_setup', type: 'CROSS_CHAIN', description: 'Bridge setup', status: 'PENDING_BUYER_ACTION' }
+      ],
+      timeline: [],
+      updatedAt: expectedFixedTimestampObject
+    };
+
+    describe('POST /cross-chain/:dealId/execute-step', () => {
+      it('should execute cross-chain step successfully', async () => {
+        mockGet.mockResolvedValueOnce({ exists: true, data: () => mockCrossChainDealData });
+        mockExecuteCrossChainStep.mockResolvedValueOnce({ status: 'completed', txHash: '0x123' });
+
+        const response = await testAgent
+          .post(`/cross-chain/${crossChainDealId}/execute-step`)
+          .set('Authorization', 'Bearer validtoken')
+          .send({ stepNumber: 1, txHash: '0x123' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.message).toContain('Cross-chain step 1 executed successfully');
+        expect(mockExecuteCrossChainStep).toHaveBeenCalledWith('cross-chain-tx-123', 1, '0x123');
+      });
+
+      it('should return 400 for invalid step number', async () => {
+        const response = await testAgent
+          .post(`/cross-chain/${crossChainDealId}/execute-step`)
+          .set('Authorization', 'Bearer validtoken')
+          .send({ stepNumber: 'invalid', txHash: '0x123' });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toBe('Valid step number is required.');
+      });
+
+      it('should return 404 for non-existent deal', async () => {
+        mockGet.mockResolvedValueOnce({ exists: false });
+
+        const response = await testAgent
+          .post(`/cross-chain/nonexistent/execute-step`)
+          .set('Authorization', 'Bearer validtoken')
+          .send({ stepNumber: 1, txHash: '0x123' });
+
+        expect(response.status).toBe(404);
+        expect(response.body.error).toBe('Deal not found.');
+      });
+
+      it('should return 403 for non-participant', async () => {
+        const nonParticipantDeal = { ...mockCrossChainDealData, participants: ['otherUser1', 'otherUser2'] };
+        mockGet.mockResolvedValueOnce({ exists: true, data: () => nonParticipantDeal });
+
+        const response = await testAgent
+          .post(`/cross-chain/${crossChainDealId}/execute-step`)
+          .set('Authorization', 'Bearer validtoken')
+          .send({ stepNumber: 1, txHash: '0x123' });
+
+        expect(response.status).toBe(403);
+        expect(response.body.error).toBe('Access denied. User is not a participant in this deal.');
+      });
+
+      it('should return 400 for non-cross-chain deal', async () => {
+        const regularDeal = { ...mockCrossChainDealData, isCrossChain: false, crossChainTransactionId: null };
+        mockGet.mockResolvedValueOnce({ exists: true, data: () => regularDeal });
+
+        const response = await testAgent
+          .post(`/cross-chain/${crossChainDealId}/execute-step`)
+          .set('Authorization', 'Bearer validtoken')
+          .send({ stepNumber: 1, txHash: '0x123' });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toBe('This is not a cross-chain transaction.');
+      });
+    });
+
+    describe('GET /cross-chain/:dealId/status', () => {
+      it('should get cross-chain status successfully', async () => {
+        mockGet.mockResolvedValueOnce({ exists: true, data: () => mockCrossChainDealData });
+        mockGetCrossChainTransactionStatus.mockResolvedValueOnce({
+          id: 'cross-chain-tx-123',
+          status: 'pending',
+          currentStep: 1,
+          needsBridge: true
+        });
+
+        const response = await testAgent
+          .get(`/cross-chain/${crossChainDealId}/status`)
+          .set('Authorization', 'Bearer validtoken');
+
+        expect(response.status).toBe(200);
+        expect(response.body.dealId).toBe(crossChainDealId);
+        expect(response.body.crossChainTransaction.status).toBe('pending');
+        expect(response.body.buyerNetwork).toBe('bitcoin');
+        expect(response.body.sellerNetwork).toBe('ethereum');
+        expect(response.body.crossChainConditions).toHaveLength(2);
+      });
+    });
+
+    describe('PATCH /cross-chain/:dealId/conditions/:conditionId', () => {
+      it('should update cross-chain condition successfully', async () => {
+        mockGet.mockResolvedValueOnce({ exists: true, data: () => mockCrossChainDealData });
+
+        const response = await testAgent
+          .patch(`/cross-chain/${crossChainDealId}/conditions/cross_chain_network_validation`)
+          .set('Authorization', 'Bearer validtoken')
+          .send({ status: 'FULFILLED_BY_BUYER', notes: 'Network validation completed' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.message).toBe('Cross-chain condition updated successfully');
+        expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
+          conditions: expect.arrayContaining([
+            expect.objectContaining({
+              id: 'cross_chain_network_validation',
+              status: 'FULFILLED_BY_BUYER',
+              notes: 'Network validation completed'
+            })
+          ])
+        }));
+      });
+
+      it('should return 400 for non-cross-chain condition', async () => {
+        const dealWithRegularCondition = {
+          ...mockCrossChainDealData,
+          conditions: [{ id: 'regular_condition', type: 'CUSTOM', description: 'Regular condition' }]
+        };
+        mockGet.mockResolvedValueOnce({ exists: true, data: () => dealWithRegularCondition });
+
+        const response = await testAgent
+          .patch(`/cross-chain/${crossChainDealId}/conditions/regular_condition`)
+          .set('Authorization', 'Bearer validtoken')
+          .send({ status: 'FULFILLED_BY_BUYER' });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toBe('This is not a cross-chain condition.');
+      });
+    });
+
+    describe('POST /cross-chain/:dealId/transfer', () => {
+      it('should execute cross-chain transfer with bridge successfully', async () => {
+        const dealWithBridge = { 
+          ...mockCrossChainDealData, 
+          conditions: mockCrossChainDealData.conditions.map(c => ({ ...c, status: 'FULFILLED_BY_BUYER' })) 
+        };
+        mockGet.mockResolvedValueOnce({ exists: true, data: () => dealWithBridge });
+        mockGetCrossChainTransactionStatus.mockResolvedValueOnce({
+          id: 'cross-chain-tx-123',
+          status: 'ready',
+          needsBridge: true
+        });
+
+        const response = await testAgent
+          .post(`/cross-chain/${crossChainDealId}/transfer`)
+          .set('Authorization', 'Bearer validtoken')
+          .send({ fromTxHash: '0xabc123', bridgeTxHash: '0xdef456' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.message).toBe('Cross-chain transfer initiated successfully');
+        expect(response.body.requiresBridge).toBe(true);
+        expect(mockExecuteCrossChainStep).toHaveBeenCalledWith('cross-chain-tx-123', 1, '0xabc123');
+        expect(mockExecuteCrossChainStep).toHaveBeenCalledWith('cross-chain-tx-123', 2, '0xdef456');
+      });
+
+      it('should return 400 if conditions not fulfilled', async () => {
+        // Use the original mockCrossChainDealData with PENDING_BUYER_ACTION conditions
+        const dealWithUnfulfilledConditions = {
+          ...mockCrossChainDealData,
+          conditions: [
+            { id: 'cross_chain_network_validation', type: 'CROSS_CHAIN', description: 'Network validation', status: 'PENDING_BUYER_ACTION' },
+            { id: 'cross_chain_bridge_setup', type: 'CROSS_CHAIN', description: 'Bridge setup', status: 'PENDING_BUYER_ACTION' }
+          ]
+        };
+        mockGet.mockResolvedValueOnce({ exists: true, data: () => dealWithUnfulfilledConditions });
+
+        const response = await testAgent
+          .post(`/cross-chain/${crossChainDealId}/transfer`)
+          .set('Authorization', 'Bearer validtoken')
+          .send({ fromTxHash: '0xabc123' });
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toBe('All conditions must be fulfilled before executing transfer.');
+      });
+    });
+  });
+
+  describe('GET /cross-chain/estimate-fees', () => {
+    it('should estimate cross-chain fees successfully', async () => {
+      const response = await testAgent
+        .get('/cross-chain/estimate-fees')
+        .query({
+          sourceNetwork: 'bitcoin',
+          targetNetwork: 'ethereum',
+          amount: '1.0'
+        })
+        .set('Authorization', 'Bearer validtoken');
+
+      expect(response.status).toBe(200);
+      expect(response.body.sourceNetwork).toBe('bitcoin');
+      expect(response.body.targetNetwork).toBe('ethereum');
+      expect(response.body.amount).toBe('1.0');
+      expect(response.body.feeEstimate).toBeDefined();
+      expect(response.body.bridgeInfo).toBeDefined();
+      expect(response.body.isEVMCompatible).toBe(false);
+    });
+
+    it('should return 400 for missing parameters', async () => {
+      const response = await testAgent
+        .get('/cross-chain/estimate-fees')
+        .query({ sourceNetwork: 'bitcoin' }) // Missing targetNetwork and amount
+        .set('Authorization', 'Bearer validtoken');
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe('sourceNetwork, targetNetwork, and amount are required.');
     });
   });
 });

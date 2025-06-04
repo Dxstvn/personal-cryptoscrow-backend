@@ -1,4 +1,4 @@
-Jun 04, 2025 10:42:21 AM com.google.cloud.datastore.emulator.firestore.websocket.WebSocketServer start
+Jun 04, 2025 12:13:39 PM com.google.cloud.datastore.emulator.firestore.websocket.WebSocketServer start
 INFO: Started WebSocket server on ws://127.0.0.1:9150
 API endpoint: http://127.0.0.1:5004
 If you are using a library that supports the FIRESTORE_EMULATOR_HOST environment variable, run:
@@ -12,11 +12,11 @@ If you are running a Firestore in Datastore Mode project, run:
 Note: Support for Datastore Mode is in preview. If you encounter any bugs please file at https://github.com/firebase/firebase-tools/issues.
 Dev App Server is now running.
 
-Jun 04, 2025 10:42:40 AM io.gapi.emulators.netty.HttpVersionRoutingHandler channelRead
+Jun 04, 2025 12:13:58 PM io.gapi.emulators.netty.HttpVersionRoutingHandler channelRead
 INFO: Detected HTTP/2 connection.
-Jun 04, 2025 10:42:54 AM io.gapi.emulators.netty.HttpVersionRoutingHandler channelRead
+Jun 04, 2025 12:14:09 PM io.gapi.emulators.netty.HttpVersionRoutingHandler channelRead
 INFO: Detected HTTP/2 connection.
-Jun 04, 2025 10:42:54 AM com.google.cloud.datastore.emulator.impl.util.WrappedStreamObserver onError
+Jun 04, 2025 12:14:09 PM com.google.cloud.datastore.emulator.impl.util.WrappedStreamObserver onError
 WARNING: Operation failed: No matching allow statements
 com.google.cloud.datastore.core.exception.DatastoreException: No matching allow statements
 	at com.google.cloud.datastore.core.exception.DatastoreException$Builder.build(DatastoreException.java:121)
@@ -45,7 +45,7 @@ com.google.cloud.datastore.core.exception.DatastoreException: No matching allow 
 	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635)
 	at java.base/java.lang.Thread.run(Thread.java:840)
 
-Jun 04, 2025 10:42:54 AM com.google.cloud.datastore.emulator.impl.util.WrappedStreamObserver onError
+Jun 04, 2025 12:14:09 PM com.google.cloud.datastore.emulator.impl.util.WrappedStreamObserver onError
 WARNING: Operation failed: No matching allow statements
 com.google.cloud.datastore.core.exception.DatastoreException: No matching allow statements
 	at com.google.cloud.datastore.core.exception.DatastoreException$Builder.build(DatastoreException.java:121)

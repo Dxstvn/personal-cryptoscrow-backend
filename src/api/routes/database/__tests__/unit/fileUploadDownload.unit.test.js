@@ -48,6 +48,10 @@ const mocks = {
       console.log('[LOG MOCK] adminStorageFileInstance.getSignedUrl called');
       return Promise.resolve(['http://fake-signed.url/default.jpg']);
     }),
+    save: jest.fn((buffer, options) => {
+      console.log('[LOG MOCK] adminStorageFileInstance.save called with buffer length:', buffer?.length, 'and options:', options);
+      return Promise.resolve();
+    }),
   },
   databaseServiceGetDealById: jest.fn(),
   databaseServiceAddFileMetadata: jest.fn(),
@@ -616,11 +620,21 @@ describe('File Upload/Download Routes (Unit)', () => {
       expect(mocks.firestoreCollectionInstance.doc).toHaveBeenCalledWith(testDealId);
       expect(mocks.firestoreDocInstance.get).toHaveBeenCalledTimes(1); // Once for deal check
 
-
-      // Check client storage mocks
-      expect(mocks.clientStorageRef).toHaveBeenCalled();
-      expect(mocks.clientUploadBytes).toHaveBeenCalled(); // Route uses uploadBytes
-      expect(mocks.clientGetDownloadURL).toHaveBeenCalled();
+      // Check admin storage mocks (implementation uses Admin SDK, not client SDK)
+      expect(mocks.adminStorageFileMock).toHaveBeenCalledWith(`deals/${testDealId}/mock-uuid-v4.jpg`);
+      expect(mocks.adminStorageFileInstance.save).toHaveBeenCalledWith(
+        mockFileBuffer,
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            contentType: mockFileMimeType,
+            metadata: expect.objectContaining({
+              uploadedBy: testUserId,
+              originalName: mockFileName,
+              dealId: testDealId
+            })
+          })
+        })
+      );
       
       // Check Firestore set for metadata (route uses dealRef.collection('files').doc(fileId).set())
       expect(mocks.firestoreDocInstance.collection).toHaveBeenCalledWith('files');
@@ -628,6 +642,9 @@ describe('File Upload/Download Routes (Unit)', () => {
         filename: mockFileName,
         uploadedBy: testUserId, // From authenticated user
         contentType: mockFileMimeType,
+        storagePath: `deals/${testDealId}/mock-uuid-v4.jpg`,
+        dealId: testDealId,
+        url: expect.stringContaining('demo-test.appspot.com'), // Test mode URL
       }));
     });
 
