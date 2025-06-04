@@ -1,8 +1,7 @@
 // src/utils/__tests__/contractDeployer.test.js
 
 import { jest } from '@jest/globals';
-import { ethers as actualEthers } from 'ethers'; 
-
+import { isAddress, parseUnits, Wallet } from 'ethers';
 
 const originalConsoleError = console.error;
 const originalConsoleLog = console.log;
@@ -26,7 +25,7 @@ jest.unstable_mockModule('ethers', () => {
     const MockJsonRpcProvider = jest.fn().mockReturnValue(mockProviderInstance);
     const MockWallet = jest.fn().mockReturnValue(mockDeployerWalletInstance);
     const MockContractFactory = jest.fn().mockReturnValue(mockContractFactoryInstance);
-    const mockIsAddressFn = jest.fn((address) => actualEthers.isAddress(address)); 
+    const mockIsAddressFn = jest.fn((address) => isAddress(address)); 
 
     return {
         __esModule: true, 
@@ -34,7 +33,7 @@ jest.unstable_mockModule('ethers', () => {
         Wallet: MockWallet,
         ContractFactory: MockContractFactory,
         isAddress: mockIsAddressFn,
-        parseUnits: actualEthers.parseUnits, 
+        parseUnits: parseUnits, 
     };
 });
 
@@ -44,9 +43,9 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
     let deployPropertyEscrowContract; 
     // serviceModuleForArtifactTest is not needed at this scope, will be defined inside the specific describe block
 
-    const validSellerAddress = actualEthers.Wallet.createRandom().address;
-    const validBuyerAddress = actualEthers.Wallet.createRandom().address;
-    const validServiceWallet = actualEthers.Wallet.createRandom().address;
+    const validSellerAddress = Wallet.createRandom().address;
+    const validBuyerAddress = Wallet.createRandom().address;
+    const validServiceWallet = Wallet.createRandom().address;
     const validEscrowAmountWei = '1000000000000000000'; 
     const validPrivateKey = '0x0123456789012345678901234567890123456789012345678901234567890123';
     const validRpcUrl = 'http://localhost:8545';
@@ -68,7 +67,7 @@ describe('Contract Deployer Service (contractDeployer.js)', () => {
         mockDeployedContractInstance.deploymentTransaction.mockClear().mockReturnValue({ hash: 'mockTxHash' });
         mockContractFactoryInstance.deploy.mockClear().mockResolvedValue(mockDeployedContractInstance);
 
-        mockedEthersModule.isAddress.mockImplementation((address) => actualEthers.isAddress(address));
+        mockedEthersModule.isAddress.mockImplementation((address) => isAddress(address));
         
         mockedEthersModule.JsonRpcProvider.mockClear().mockReturnValue(mockProviderInstance);
         mockedEthersModule.Wallet.mockClear().mockReturnValue(mockDeployerWalletInstance);

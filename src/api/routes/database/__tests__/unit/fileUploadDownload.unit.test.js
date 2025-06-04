@@ -398,11 +398,12 @@ jest.unstable_mockModule('../../../auth/authIndex.js', () => {
 });
 
 // Mocking admin.js
-// Relative path from fileUploadDownload.unit.test.js to admin.js is the same
+// Relative path from fileUploadDownload.unit.test.js to admin.js
 jest.unstable_mockModule('../../../auth/admin.js', () => {
   console.log('[LOG] unstable_mockModule factory for "../../../auth/admin.js" executing');
   return {
     adminApp: mocks.mockAdminApp, // Provide the mock admin app instance
+    getAdminApp: jest.fn().mockResolvedValue(mocks.mockAdminApp),
     // Mock deleteAdminApp if it were ever called by the router (it isn't)
     // deleteAdminApp: jest.fn(),
   };

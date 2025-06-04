@@ -12,11 +12,14 @@ dotenv.config({
   override: false  // Don't override if already set
 });
 
-// Load .env.local second (private variables, will override .env if needed)
-dotenv.config({ 
-  path: path.resolve(__dirname, '../../.env.local'),
-  override: true   // Override existing values
-});
+// Only load .env.local in non-test environments to prevent overriding test configuration
+if (process.env.NODE_ENV !== 'test') {
+  // Load .env.local second (private variables, will override .env if needed)
+  dotenv.config({ 
+    path: path.resolve(__dirname, '../../.env.local'),
+    override: true   // Override existing values
+  });
+}
 
 // Load secrets from AWS Secrets Manager in production
 async function loadAWSSecrets() {

@@ -77,7 +77,8 @@ jest.unstable_mockModule('../../authIndex.js', () => ({
   ethEscrowApp: ethEscrowAppMock, 
 }));
 jest.unstable_mockModule('../../admin.js', () => ({
-  adminApp: adminAppMock, 
+  adminApp: adminAppMock,
+  getAdminApp: jest.fn().mockResolvedValue(adminAppMock),
 }));
 
 let router;

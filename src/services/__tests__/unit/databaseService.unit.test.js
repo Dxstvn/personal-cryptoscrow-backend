@@ -40,6 +40,7 @@ jest.unstable_mockModule('firebase-admin/firestore', () => ({
 
 jest.unstable_mockModule('../../../api/routes/auth/admin.js', () => ({
   adminApp: mockAdminApp,
+  getAdminApp: jest.fn().mockResolvedValue(mockAdminApp),
 }));
 
 // Dynamically import the service functions after mocks are set up

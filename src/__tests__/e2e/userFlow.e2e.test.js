@@ -13,7 +13,7 @@ import {
   delay,
   cleanupTestData
 } from './helpers/testHelpers.js';
-import { ethers } from 'ethers';
+import { Wallet } from 'ethers';
 
 describe('E2E User Flow Tests', () => {
   let serverUrl;
@@ -55,8 +55,8 @@ describe('E2E User Flow Tests', () => {
         console.warn('   To enable blockchain tests, start Hardhat node: npx hardhat node');
         
         // Create mock wallets for testing without blockchain
-        userAWallet = { address: ethers.Wallet.createRandom().address };
-        userBWallet = { address: ethers.Wallet.createRandom().address };
+        userAWallet = { address: Wallet.createRandom().address };
+        userBWallet = { address: Wallet.createRandom().address };
         blockchainAvailable = false;
       }
     
@@ -467,7 +467,7 @@ describe('E2E User Flow Tests', () => {
         amount: 0.05,
         otherPartyEmail: 'someother@example.com',
         buyerWalletAddress: userAWallet.address,
-        sellerWalletAddress: ethers.Wallet.createRandom().address
+        sellerWalletAddress: Wallet.createRandom().address
       };
       
       const createResponse = await apiClient.post('/transaction/create', txData);

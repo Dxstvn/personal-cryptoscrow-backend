@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { ethers } from 'ethers';
+import { JsonRpcProvider, Wallet, parseEther } from 'ethers';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, doc, setDoc, deleteDoc, collection, getDocs, query, where, terminate } from 'firebase/firestore';
 import { ethEscrowApp } from '../../../api/routes/auth/authIndex.js';
@@ -18,7 +18,7 @@ let provider = null;
 export const startTestServer = async () => {
   try {
     // Import the app directly instead of spawning a process
-    const { default: testApp } = await import('../../../api/routes/auth/quicktest.js');
+    const { default: testApp } = await import('../../../server.js');
     app = testApp;
     
     // Wait for server to be ready
@@ -184,7 +184,7 @@ export const getProvider = async (retries = 5, delayMs = 1000) => {
   
   for (let i = 0; i < retries; i++) {
     try {
-      provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
+      provider = new JsonRpcProvider(process.env.RPC_URL);
       // Wait for the provider to be ready
       await provider.getNetwork();
       console.log('✅ Successfully connected to RPC_URL:', process.env.RPC_URL);
@@ -222,7 +222,7 @@ export const getWallet = async (privateKey) => {
   try {
     const provider = await getProvider();
     // ethers.Wallet expects private key without 0x prefix
-    const wallet = new ethers.Wallet(cleanPrivateKey, provider);
+    const wallet = new Wallet(cleanPrivateKey, provider);
     console.log(`✅ Created wallet with address: ${wallet.address}`);
     return wallet;
   } catch (error) {
@@ -235,13 +235,13 @@ export const fundTestAccount = async (address, amount = '10') => {
   const provider = await getProvider();
   if (!fundingWalletInstance) {
     // For Hardhat network, we can use the first default account to fund others
-    fundingWalletInstance = new ethers.Wallet('ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', provider);
+    fundingWalletInstance = new Wallet('ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', provider);
     fundingWalletNonce = await fundingWalletInstance.getNonce();
   }
   
   const tx = await fundingWalletInstance.sendTransaction({
     to: address,
-    value: ethers.parseEther(amount),
+    value: parseEther(amount),
     nonce: fundingWalletNonce
   });
   
@@ -255,7 +255,7 @@ export const generateContactData = (overrides = {}) => {
   return {
     name: `Test Contact ${Date.now()}`,
     email: `contact${Date.now()}@example.com`,
-    walletAddress: ethers.Wallet.createRandom().address,
+    walletAddress: Wallet.createRandom().address,
     ...overrides
   };
 };

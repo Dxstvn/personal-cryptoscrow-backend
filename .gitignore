@@ -107,3 +107,6 @@ instance_ip.txt
 immediate-fix-commands*.txt
 *immediate-fix*
 aws-deployment/
+# TypeScript cache
+tsconfig.tsbuildinfo
+.tscache/

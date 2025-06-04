@@ -31,9 +31,6 @@ This directory is responsible for handling user authentication within the Crypto
     -   **Significance**: This might seem counterintuitive for a backend, but it's used in `loginSignUp.js` for operations like `createUserWithEmailAndPassword` from the `firebase/auth` (client) SDK. This approach is sometimes used when the backend needs to perform actions as if it were a client app, especially if certain client SDK functionalities are preferred or if it simplifies integration with Firebase emulators.
     -   It also correctly handles connecting to the Firebase Auth and Storage emulators when `NODE_ENV === 'test'`, which is vital for isolated testing.
 
--   **`quicktest.js`**: This file appears to contain utility or test routes (e.g., `/auth/testAuthAccess`, `/auth/getUserStatus`).
-    -   **Frontend Implication**: These are likely for development and debugging purposes by the backend team and not intended for direct frontend application use in production.
-
 ## Authentication Flow for Frontend Developers
 
 1.  **Client-Side Authentication**: Use the Firebase Client SDK in your frontend application for all user-facing sign-up and sign-in processes (e.g., rendering Google Sign-In button, email/password forms).

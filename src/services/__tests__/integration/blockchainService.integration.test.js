@@ -1,5 +1,5 @@
 import { jest, describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from '@jest/globals';
-import { ethers, ContractFactory, Wallet } from 'ethers';
+import { JsonRpcProvider, ContractFactory, Wallet, parseEther, formatEther, Contract, encodeBytes32String } from 'ethers';
 import { createRequire } from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -45,14 +45,14 @@ describe('Blockchain Service - Integration Tests', () => {
   let accounts; // Store accounts from provider
 
   const dealId = 'integrationTestDeal123';
-  const escrowAmount = ethers.parseEther('0.1'); // 0.1 ETH
-  const conditionId1 = ethers.encodeBytes32String("PHOTO_VERIFIED");
+  const escrowAmount = parseEther('0.1'); // 0.1 ETH
+  const conditionId1 = encodeBytes32String("PHOTO_VERIFIED");
   const conditionIds = [conditionId1];
   const FINAL_APPROVAL_PERIOD_SECONDS = 48 * 60 * 60; // 48 hours in seconds
 
   beforeAll(async () => {
     // Provider is expected to be available and connected due to globalSetup.cjs
-    provider = new ethers.JsonRpcProvider(RPC_URL); 
+    provider = new JsonRpcProvider(RPC_URL); 
     
     // Get accounts from the Hardhat node for proper nonce management
     accounts = await provider.listAccounts();
@@ -102,9 +102,9 @@ describe('Blockchain Service - Integration Tests', () => {
     await deployedContract.waitForDeployment();
     escrowContractAddress = await deployedContract.getAddress();
     
-    escrowContractInstance = new ethers.Contract(escrowContractAddress, contractABI, deployerWallet);
-    buyerEscrowContract = new ethers.Contract(escrowContractAddress, contractABI, buyerWallet);
-    sellerEscrowContract = new ethers.Contract(escrowContractAddress, contractABI, sellerWallet);
+    escrowContractInstance = new Contract(escrowContractAddress, contractABI, deployerWallet);
+    buyerEscrowContract = new Contract(escrowContractAddress, contractABI, buyerWallet);
+    sellerEscrowContract = new Contract(escrowContractAddress, contractABI, sellerWallet);
   });
 
   afterEach(async () => {
@@ -367,7 +367,7 @@ describe('Blockchain Service - Integration Tests', () => {
         // Deploy a contract once for this suite to have a valid address,
         // as these tests focus on initialization, not contract interaction logic.
         // Wallet for deployment needs to be initialized outside the service's lifecycle.
-        tempProviderForAdvancedTests = new ethers.JsonRpcProvider(RPC_URL); // Use this provider for setup
+        tempProviderForAdvancedTests = new JsonRpcProvider(RPC_URL); // Use this provider for setup
         const tempAccounts = await tempProviderForAdvancedTests.listAccounts();
         const tempDeployerWallet = await tempProviderForAdvancedTests.getSigner(tempAccounts[4].address); // Use account #4
         const tempSellerWallet = await tempProviderForAdvancedTests.getSigner(tempAccounts[5].address);   // Use account #5
@@ -524,7 +524,7 @@ describe('Blockchain Service - Integration Tests', () => {
     
     beforeAll(async () => {
       // Create a dedicated provider for service fee tests
-      serviceFeeProvider = new ethers.JsonRpcProvider(RPC_URL);
+      serviceFeeProvider = new JsonRpcProvider(RPC_URL);
       
       // Get accounts from the Hardhat node (this uses the default mnemonic)
       const accounts = await serviceFeeProvider.listAccounts();
@@ -540,7 +540,7 @@ describe('Blockchain Service - Integration Tests', () => {
       const deployerBalance = await serviceFeeProvider.getBalance(serviceFeeDeployerWallet.address);
       const buyerBalance = await serviceFeeProvider.getBalance(serviceFeeBuyerWallet.address);
       
-      if (deployerBalance < ethers.parseEther('10') || buyerBalance < ethers.parseEther('10')) {
+      if (deployerBalance < parseEther('10') || buyerBalance < parseEther('10')) {
         console.warn('[Service Fee Tests] Warning: Test accounts may have insufficient balance');
       }
     });
@@ -569,8 +569,8 @@ describe('Blockchain Service - Integration Tests', () => {
       return {
         address: await contract.getAddress(),
         instance: contract,
-        buyerContract: new ethers.Contract(await contract.getAddress(), contractABI, serviceFeeBuyerWallet),
-        sellerContract: new ethers.Contract(await contract.getAddress(), contractABI, serviceFeeSellerWallet)
+        buyerContract: new Contract(await contract.getAddress(), contractABI, serviceFeeBuyerWallet),
+        sellerContract: new Contract(await contract.getAddress(), contractABI, serviceFeeSellerWallet)
       };
     }
 
@@ -644,7 +644,7 @@ describe('Blockchain Service - Integration Tests', () => {
 
     it('should calculate service fee correctly for different escrow amounts', async () => {
       // Test with a different escrow amount
-      const customEscrowAmount = ethers.parseEther('0.5'); // 0.5 ETH
+      const customEscrowAmount = parseEther('0.5'); // 0.5 ETH
       
       // Deploy contract with custom amount
       const currentNonce = await serviceFeeProvider.getTransactionCount(serviceFeeDeployerWallet.address, 'latest');
@@ -659,7 +659,7 @@ describe('Blockchain Service - Integration Tests', () => {
       await customContract.waitForDeployment();
       const customContractAddress = await customContract.getAddress();
       
-      const customBuyerContract = new ethers.Contract(customContractAddress, contractABI, serviceFeeBuyerWallet);
+      const customBuyerContract = new Contract(customContractAddress, contractABI, serviceFeeBuyerWallet);
       
       // Set up environment for blockchain service
       process.env.RPC_URL = RPC_URL;
@@ -699,16 +699,16 @@ describe('Blockchain Service - Integration Tests', () => {
       // Service wallet gets fee minus gas, so it should be positive but less than expected
       const serviceFeeReceivedNet = serviceBalanceAfter - serviceBalanceBefore;
       expect(serviceFeeReceivedNet).toBeLessThan(expectedServiceFee);
-      expect(serviceFeeReceivedNet).toBeGreaterThan(ethers.parseEther('0.008')); // Should be at least 0.008 ETH after gas
+      expect(serviceFeeReceivedNet).toBeGreaterThan(parseEther('0.008')); // Should be at least 0.008 ETH after gas
       
       // For 0.5 ETH, service fee should be 0.01 ETH
-      expect(expectedServiceFee).toBe(ethers.parseEther('0.01'));
-      expect(expectedSellerAmount).toBe(ethers.parseEther('0.49'));
+      expect(expectedServiceFee).toBe(parseEther('0.01'));
+      expect(expectedSellerAmount).toBe(parseEther('0.49'));
     }, 45000);
 
     it('should handle service fee calculation for small amounts without rounding errors', async () => {
       // Test with a very small amount to ensure no rounding issues
-      const smallAmount = ethers.parseEther('0.001'); // 1 finney = 0.001 ETH
+      const smallAmount = parseEther('0.001'); // 1 finney = 0.001 ETH
       
       // Deploy contract with small amount
       const currentNonce = await serviceFeeProvider.getTransactionCount(serviceFeeDeployerWallet.address, 'latest');
@@ -723,7 +723,7 @@ describe('Blockchain Service - Integration Tests', () => {
       await smallContract.waitForDeployment();
       const smallContractAddress = await smallContract.getAddress();
       
-      const smallBuyerContract = new ethers.Contract(smallContractAddress, contractABI, serviceFeeBuyerWallet);
+      const smallBuyerContract = new Contract(smallContractAddress, contractABI, serviceFeeBuyerWallet);
       
       // Set up environment for blockchain service
       process.env.RPC_URL = RPC_URL;
@@ -763,7 +763,7 @@ describe('Blockchain Service - Integration Tests', () => {
       // even if net result is negative due to gas costs
       
       // Verify the math: 2% of 0.001 ETH = 0.00002 ETH
-      expect(expectedServiceFee).toBe(ethers.parseEther('0.00002'));
+      expect(expectedServiceFee).toBe(parseEther('0.00002'));
     }, 45000);
 
     it('should properly distribute 2% service fee to service wallet and remaining 98% to seller on fund release', async () => {
@@ -778,9 +778,9 @@ describe('Blockchain Service - Integration Tests', () => {
       const serviceFeeExpected = (escrowAmount * 200n) / 10000n; // 2%
       const sellerAmountExpected = escrowAmount - serviceFeeExpected; // 98%
       
-      console.log(`[Service Fee Test] Escrow amount: ${ethers.formatEther(escrowAmount)} ETH`);
-      console.log(`[Service Fee Test] Expected service fee: ${ethers.formatEther(serviceFeeExpected)} ETH`);
-      console.log(`[Service Fee Test] Expected seller amount: ${ethers.formatEther(sellerAmountExpected)} ETH`);
+      console.log(`[Service Fee Test] Escrow amount: ${formatEther(escrowAmount)} ETH`);
+      console.log(`[Service Fee Test] Expected service fee: ${formatEther(serviceFeeExpected)} ETH`);
+      console.log(`[Service Fee Test] Expected seller amount: ${formatEther(sellerAmountExpected)} ETH`);
       
       // Trigger release
       const releaseResult = await global.currentBlockchainService.triggerReleaseAfterApproval(contracts.address, 'distributionTest');
@@ -794,15 +794,15 @@ describe('Blockchain Service - Integration Tests', () => {
       const sellerAmountReceived = sellerBalanceAfter - sellerBalanceBefore;
       const serviceFeeReceivedNet = serviceWalletBalanceAfter - serviceWalletBalanceBefore;
       
-      console.log(`[Service Fee Test] Actual seller amount received: ${ethers.formatEther(sellerAmountReceived)} ETH`);
-      console.log(`[Service Fee Test] Actual service fee received (net): ${ethers.formatEther(serviceFeeReceivedNet)} ETH`);
+      console.log(`[Service Fee Test] Actual seller amount received: ${formatEther(sellerAmountReceived)} ETH`);
+      console.log(`[Service Fee Test] Actual service fee received (net): ${formatEther(serviceFeeReceivedNet)} ETH`);
       
       // Verify seller receives exactly 98%
       expect(sellerAmountReceived).toBe(sellerAmountExpected);
       
       // Verify service wallet receives the fee minus gas costs (should be positive but less than expected due to gas)
       expect(serviceFeeReceivedNet).toBeLessThan(serviceFeeExpected);
-      expect(serviceFeeReceivedNet).toBeGreaterThan(ethers.parseEther('0.001')); // Should be at least 0.001 ETH after gas
+      expect(serviceFeeReceivedNet).toBeGreaterThan(parseEther('0.001')); // Should be at least 0.001 ETH after gas
       
       // Verify contract is empty
       expect(await serviceFeeProvider.getBalance(contracts.address)).toBe(0n);

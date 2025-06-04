@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { ethers as actualEthers } from 'ethers'; 
+import { parseEther, computeAddress, Wallet } from 'ethers';
 import { createRequire } from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -17,7 +17,7 @@ const mockProviderSingleton = {
   getNetwork: jest.fn().mockResolvedValue({ chainId: 1337, name: 'mocknet' }),
   send: jest.fn().mockResolvedValue({}),
   resolveName: jest.fn(name => Promise.resolve(name)),
-  getBalance: jest.fn().mockResolvedValue(actualEthers.parseEther('100')),
+  getBalance: jest.fn().mockResolvedValue(parseEther('100')),
   ready: Promise.resolve({ chainId: 1337, name: 'mocknet' }),
   _isProvider: true, _network: { chainId: 1337, name: 'mocknet' }, _events: [],
   _emitted: { block: -2 }, _pollingInterval: -1, _poller: null, _bootstrapPoll: jest.fn(),
@@ -73,7 +73,7 @@ jest.unstable_mockModule('ethers', () => {
   return {
     JsonRpcProvider: MockJsonRpcProviderConstructor, Contract: MockContractConstructor,
     Wallet: MockWalletConstructor, isAddress: actualEthersLib.isAddress,
-    computeAddress: actualEthersLib.computeAddress,
+    computeAddress: actualEthersLib.computeAddress, parseEther: actualEthersLib.parseEther,
   };
 });
 
@@ -95,9 +95,9 @@ try {
 
 describe('Blockchain Service - Unit Tests', () => {
   const mockDealId = 'deal-unit-test';
-  const validContractAddress = actualEthers.Wallet.createRandom().address;
+  const validContractAddress = Wallet.createRandom().address;
   const dummyUnitTestPrivateKey = '0x0123456789012345678901234567890123456789012345678901234567890123';
-  const expectedBackendWalletAddress = actualEthers.computeAddress(dummyUnitTestPrivateKey);
+  const expectedBackendWalletAddress = computeAddress(dummyUnitTestPrivateKey);
   
   let blockchainService; 
   let originalProcessEnv;

@@ -5,17 +5,24 @@
     },
     "firestore": {
       "port": 5004,
-      "rules": "firestore.rules",
-      "indexes": "firestore.indexes.json"
+      "rules": "./firestore.rules",
+      "indexes": "./firestore.indexes.json"
     },
     "storage": {
       "port": 9199,
-      "rules": "storage.rules"
+      "rules": "./storage.rules"
     },
     "ui": {
-      "enabled": true
+      "enabled": true,
+      "port": 4000
     },
-    "singleProjectMode": true,
-    "projectId": "demo-test"
+    "singleProjectMode": true
+  },
+  "firestore": {
+    "rules": "./firestore.rules",
+    "indexes": "./firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "./storage.rules"
   }
 }

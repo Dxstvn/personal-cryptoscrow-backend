@@ -5,9 +5,16 @@ const isTest = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_
 const isProduction = process.env.NODE_ENV === 'production';
 
 if (isTest) {
-  // Ensure Admin SDK uses emulators
-  process.env.FIRESTORE_EMULATOR_HOST = 'localhost:5004';
-  process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9099';
+  // Ensure Admin SDK uses emulators - set environment variables BEFORE any Firebase imports
+  process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || 'localhost:5004';
+  process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
+  process.env.FIREBASE_STORAGE_EMULATOR_HOST = process.env.FIREBASE_STORAGE_EMULATOR_HOST || 'localhost:9199';
+  
+  // For test mode, ensure we have consistent project configuration
+  process.env.FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'demo-test';
+  process.env.FIREBASE_STORAGE_BUCKET = process.env.FIREBASE_STORAGE_BUCKET || 'demo-test.appspot.com';
+  
+  console.log(`🧪 Admin SDK connecting to emulators - Auth: ${process.env.FIREBASE_AUTH_EMULATOR_HOST}, Firestore: ${process.env.FIRESTORE_EMULATOR_HOST}, Storage: ${process.env.FIREBASE_STORAGE_EMULATOR_HOST}`);
 }
 
 import { initializeApp, cert, getApp, getApps, deleteApp } from 'firebase-admin/app';
@@ -34,6 +41,7 @@ async function initializeAdmin() {
       projectId: "demo-test",
       storageBucket: "demo-test.appspot.com"
     };
+    console.log(`🧪 Admin SDK will use project: ${options.projectId}, storage: ${options.storageBucket}`);
   } else if (isProduction && process.env.USE_AWS_SECRETS === 'true') {
     console.log("Using Production configuration for Admin SDK with AWS Secrets Manager.");
     
@@ -104,7 +112,14 @@ async function initializeAdmin() {
   }
 
   console.log(`Initializing admin app "${appName}" with project ID:`, options.projectId);
-  return initializeApp(options, appName);
+  const app = initializeApp(options, appName);
+  
+  // Log emulator connection status in test mode
+  if (isTest) {
+    console.log(`✅ Admin app "${appName}" initialized for testing with emulators`);
+  }
+  
+  return app;
 }
 
 // Lazy initialization cache
@@ -130,6 +145,7 @@ if (isTest || (!isProduction || process.env.USE_AWS_SECRETS !== 'true')) {
         projectId: "demo-test",
         storageBucket: "demo-test.appspot.com"
       }, appName);
+      console.log(`🧪 Synchronous admin app initialized for testing with project: demo-test`);
     } else {
       const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
       if (serviceAccountPath && fs.existsSync(serviceAccountPath)) {
@@ -159,6 +175,8 @@ export async function deleteAdminApp() {
         const appToDelete = getApp(appName);
         await deleteApp(appToDelete);
         console.log(`Admin app "${appName}" deleted.`);
+        // Reset the promise cache
+        adminAppPromise = null;
     } catch (error) {
         if (!error.message.includes("No Firebase App") && !error.message.includes("already deleted")) {
             console.warn(`Could not delete admin app "${appName}": ${error.message}`);

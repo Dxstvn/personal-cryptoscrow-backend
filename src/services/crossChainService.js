@@ -1,4 +1,3 @@
-import { ethers } from 'ethers';
 import { getAdminApp } from '../api/routes/auth/admin.js';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 

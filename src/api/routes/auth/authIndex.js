@@ -1,4 +1,4 @@
-import { initializeApp } from "firebase/app";
+import { initializeApp, getApps, deleteApp } from "firebase/app";
 import { getAuth, connectAuthEmulator } from "firebase/auth"; // Import connectAuthEmulator
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
 import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
@@ -6,6 +6,17 @@ import '../../../config/env.js';
 
 // Use test configuration if we're in a test environment
 const isTest = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test';
+
+// In test mode, delete any existing default apps to prevent conflicts
+if (isTest) {
+  const existingApps = getApps();
+  for (const app of existingApps) {
+    if (app.name === '[DEFAULT]') {
+      console.log('🧪 Deleting existing default Firebase app to prevent conflicts');
+      await deleteApp(app);
+    }
+  }
+}
 
 // When using the Firebase Auth Emulator, API key validation is bypassed
 // So we can use any value for the apiKey in test mode
@@ -26,7 +37,10 @@ const firebaseConfig = isTest ? {
   measurementId: process.env.FIREBASE_MEASUREMENT_ID
 };
 
-// Initialize Firebase app
+// Log the configuration being used for debugging
+console.log(`🔧 Firebase Client SDK Config - isTest: ${isTest}, projectId: ${firebaseConfig.projectId}`);
+
+// Initialize Firebase app with a specific name to avoid default app conflicts
 export const ethEscrowApp = initializeApp(firebaseConfig, "ethEscrowApp");
 
 // Connect to Auth emulator in test environment

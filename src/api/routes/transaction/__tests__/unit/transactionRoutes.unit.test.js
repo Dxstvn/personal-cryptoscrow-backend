@@ -69,7 +69,10 @@ jest.unstable_mockModule('firebase-admin/firestore', () => {
 const mockAdminApp = { name: 'mockAdminApp' };
 jest.unstable_mockModule('../../../auth/admin.js', () => {
   // console.log('[MOCK FACTORY V5] jest.unstable_mockModule for "../../../auth/admin.js" - FACTORY EXECUTED.');
-  return { adminApp: mockAdminApp };
+  return { 
+    adminApp: mockAdminApp,
+    getAdminApp: jest.fn().mockResolvedValue(mockAdminApp),
+  };
 });
 // console.log('[TEST FILE SCOPE V5] jest.unstable_mockModule for "../../../auth/admin.js" REGISTERED.');
 

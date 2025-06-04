@@ -30,6 +30,7 @@ jest.unstable_mockModule('firebase-admin/auth', () => ({
 
 jest.unstable_mockModule('../../../auth/admin.js', () => ({
   adminApp: mockAdminApp,
+  getAdminApp: jest.fn().mockResolvedValue(mockAdminApp),
 }));
 
 // Cache for collection mocks

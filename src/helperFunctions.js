@@ -1,10 +1,11 @@
-import { adminAuth, adminFirestore } from '../jest.emulator.setup.js'; // Use test setup
+import { adminAuth, adminFirestore, PROJECT_ID } from '../jest.emulator.setup.js'; // Use test setup
 // Use built-in fetch (Node.js 18+) or fallback to node-fetch
 const fetchFn = globalThis.fetch || (await import('node-fetch')).default;
 import { Timestamp } from 'firebase-admin/firestore'; // Import Timestamp
 
 const AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
 const DUMMY_API_KEY = 'demo-api-key'; // Standard for emulators
+const TEST_PROJECT_ID = PROJECT_ID || 'demo-test'; // Use project ID from test setup
 
 // Helper to generate a syntactically valid, but mock, Ethereum address
 const generateMockAddress = (prefix = '00') => {
@@ -48,28 +49,36 @@ export async function createTestUser(email, profileData = {}) {
         throw error;
     }
 
-    const signInUrl = `http://${AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${DUMMY_API_KEY}`;
-    let response;
     try {
-        response = await fetchFn(signInUrl, {
+        // Use Admin SDK to create a custom token
+        const customToken = await adminAuth.createCustomToken(userRecord.uid);
+        
+        // Exchange custom token for ID token using the Firebase Auth REST API
+        const signInUrl = `http://${AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${DUMMY_API_KEY}`;
+        const signInResponse = await fetchFn(signInUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password: 'testpass', returnSecureToken: true }),
+            body: JSON.stringify({ 
+                token: customToken, 
+                returnSecureToken: true 
+            })
         });
-        const data = await response.json();
-
-        if (!response.ok || !data.idToken) {
-            console.error(`HELPER: Failed Test User Sign-In for ${email}:`, { status: response.status, body: data });
-            throw new Error(`HELPER: Failed to get token for ${email}. Status: ${response.status}, Body: ${JSON.stringify(data)}`);
+        
+        const signInData = await signInResponse.json();
+        
+        if (!signInResponse.ok || !signInData.idToken) {
+            console.error(`HELPER: Failed to exchange custom token for ID token for ${email}:`, { status: signInResponse.status, body: signInData });
+            throw new Error(`HELPER: Failed to get ID token for ${email}. Status: ${signInResponse.status}, Body: ${JSON.stringify(signInData)}`);
         }
+        
         return {
             uid: userRecord.uid,
-            token: data.idToken,
+            token: signInData.idToken, // Use ID token instead of custom token
             email: email.toLowerCase(),
             wallets: userWallets
         };
     } catch (error) {
-        console.error(`HELPER: Error obtaining token for user ${email}:`, error);
+        console.error(`HELPER: Error creating token for user ${email}:`, error);
         await adminAuth.deleteUser(userRecord.uid).catch(delErr => console.error('HELPER: Failed to clean up auth user after token error', delErr));
         await adminFirestore.collection('users').doc(userRecord.uid).delete().catch(delErr => console.error('HELPER: Failed to clean up Firestore profile after token error', delErr));
         throw error;

@@ -6,7 +6,7 @@ import {
   cleanupTestData,
   delay
 } from './helpers/testHelpers.js';
-import { ethers } from 'ethers';
+import { Wallet } from 'ethers';
 
 describe('E2E Security and Edge Case Tests', () => {
   let serverUrl;
@@ -23,7 +23,7 @@ describe('E2E Security and Edge Case Tests', () => {
     // Create test users via API
     const userAWallet = getWallet(process.env.TEST_USER_A_PK);
     const userBWallet = getWallet(process.env.TEST_USER_B_PK);
-    const maliciousWallet = ethers.Wallet.createRandom();
+    const maliciousWallet = Wallet.createRandom();
     
     // Sign up User A
     let response = await apiClient.post('/auth/signUpEmailPass', {

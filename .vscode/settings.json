@@ -1,3 +1,13 @@
 {
-    "terminal.integrated.scrollback": 10000
+    "terminal.integrated.scrollback": 10000,
+    "files.exclude": {
+        "**/frontend/**": true,
+        "frontend": true
+    },
+    "search.exclude": {
+        "**/frontend/**": true,
+        "frontend": true
+    },
+    "typescript.preferences.includePackageJsonAutoImports": "off",
+    "typescript.suggest.includeAutomaticOptionalChainCompletions": false
 }

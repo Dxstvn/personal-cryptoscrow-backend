@@ -16,7 +16,7 @@ console.log('PORT:', process.env.PORT);
 async function testRoutes() {
   try {
     // Import the app
-    const { default: app } = await import('./src/api/routes/auth/quicktest.js');
+    const { default: app } = await import('./src/server.js');
     console.log('✅ App imported successfully');
     
     // Test health endpoint
