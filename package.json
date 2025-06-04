@@ -45,7 +45,8 @@
     "_run-jest-user-e2e-delayed": "sleep 20 && NODE_ENV=e2e_test NODE_OPTIONS=--experimental-vm-modules FIRESTORE_EMULATOR_HOST=localhost:5004 FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 RPC_URL=http://localhost:8545 node node_modules/jest/bin/jest.js --config jest.e2e.config.js src/__tests__/e2e/userFlow.e2e.test.js --runInBand --detectOpenHandles --forceExit",
     "test:e2e:user-full": "npm run kill-ports && concurrently -k --names \"HARDHAT,EMULATOR,TESTS\" --success first \"npm:start-hardhat-e2e\" \"npm:start-emulators-e2e\" \"npm:_run-jest-user-e2e-delayed\" && npm run kill-ports",
     "test:e2e:user": "npm run kill-ports && concurrently -k --names \"HARDHAT,EMULATOR,TESTS\" --success first \"npm:start-hardhat-e2e\" \"npm:start-emulators-e2e\" \"npm:_run-jest-user-e2e-delayed\" && npm run kill-ports",
-    "test:e2e:security": "npm run kill-ports && concurrently -k --names \"HARDHAT,EMULATOR,TESTS\" --success first \"npm:start-hardhat-e2e\" \"npm:start-emulators-e2e\" \"npm:_run-jest-security-e2e-delayed\" && npm run kill-ports"
+    "test:e2e:security": "npm run kill-ports && concurrently -k --names \"HARDHAT,EMULATOR,TESTS\" --success first \"npm:start-hardhat-e2e\" \"npm:start-emulators-e2e\" \"npm:_run-jest-security-e2e-delayed\" && npm run kill-ports",
+    "test:aws-secrets": "NODE_ENV=production NODE_OPTIONS=--experimental-vm-modules node test-aws-secrets.js"
   },
   "repository": {
     "type": "git",
