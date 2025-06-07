@@ -10,14 +10,16 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  * Includes a 2% service fee that goes to the service wallet.
  */
 contract PropertyEscrow is ReentrancyGuard {
-    address public seller;
-    address public buyer;
-    address public serviceWallet;
-    uint256 public escrowAmount;
+    address public immutable seller;
+    address public immutable buyer;
+    address public immutable serviceWallet;
+    uint256 public immutable escrowAmount;
 
     uint256 public constant FINAL_APPROVAL_PERIOD = 48 hours;
     uint256 public constant DISPUTE_RESOLUTION_PERIOD = 7 days;
     uint256 public constant SERVICE_FEE_PERCENTAGE = 200; // 2% = 200 basis points out of 10000
+    uint256 private constant MIN_BLOCK_TIME = 1_000_000_000; // Minimum reasonable timestamp (Sept 2001)
+    uint256 private constant MAX_FUTURE_TIME = 365 days; // Maximum reasonable future time
 
     enum State {
         AWAITING_CONDITION_SETUP,   // Initial: buyer needs to set conditions
@@ -83,21 +85,22 @@ contract PropertyEscrow is ReentrancyGuard {
         emit EscrowCreated(_seller, _buyer, _escrowAmount);
     }
 
-    function setConditions(bytes32[] memory _conditionIds)
+    function setConditions(bytes32[] memory conditionIds)
         external
         onlyBuyer
         inState(State.AWAITING_CONDITION_SETUP)
     {
-        require(_conditionIds.length > 0, "At least one condition must be set.");
+        require(conditionIds.length > 0, "At least one condition must be set.");
         require(requiredConditionIds.length == 0, "Conditions already set.");
 
-        for (uint i = 0; i < _conditionIds.length; i++) {
-            require(_conditionIds[i] != bytes32(0), "Condition ID cannot be zero");
-            requiredConditionIds.push(_conditionIds[i]);
-            conditionsFulfilledByBuyer[_conditionIds[i]] = false;
+        uint256 length = conditionIds.length;
+        for (uint256 i = 0; i < length; i++) {
+            require(conditionIds[i] != bytes32(0), "Condition ID cannot be zero");
+            requiredConditionIds.push(conditionIds[i]);
+            conditionsFulfilledByBuyer[conditionIds[i]] = false;
         }
         currentState = State.AWAITING_DEPOSIT;
-        emit ConditionsSet(_conditionIds);
+        emit ConditionsSet(conditionIds);
     }
 
     function depositFunds()
@@ -113,16 +116,16 @@ contract PropertyEscrow is ReentrancyGuard {
         emit FundsDeposited(msg.sender, msg.value);
     }
 
-    function buyerMarksConditionFulfilled(bytes32 _conditionId)
+    function buyerMarksConditionFulfilled(bytes32 conditionId)
         external
         onlyBuyer
         inState(State.AWAITING_FULFILLMENT)
     {
-        require(isConditionRequired(_conditionId), "Condition ID not part of this escrow.");
-        require(!conditionsFulfilledByBuyer[_conditionId], "Condition already marked as fulfilled.");
+        require(isConditionRequired(conditionId), "Condition ID not part of this escrow.");
+        require(!conditionsFulfilledByBuyer[conditionId], "Condition already marked as fulfilled.");
 
-        conditionsFulfilledByBuyer[_conditionId] = true;
-        emit ConditionMarkedFulfilled(msg.sender, _conditionId);
+        conditionsFulfilledByBuyer[conditionId] = true;
+        emit ConditionMarkedFulfilled(msg.sender, conditionId);
 
         if (areAllConditionsMet()) {
             currentState = State.READY_FOR_FINAL_APPROVAL;
@@ -136,6 +139,8 @@ contract PropertyEscrow is ReentrancyGuard {
     {
         require(fundsDeposited, "Funds not deposited.");
         require(areAllConditionsMet(), "Not all conditions met.");
+        require(block.timestamp >= MIN_BLOCK_TIME, "Invalid block timestamp");
+        require(block.timestamp + FINAL_APPROVAL_PERIOD <= block.timestamp + MAX_FUTURE_TIME, "Deadline too far in future");
 
         currentState = State.IN_FINAL_APPROVAL;
         finalApprovalDeadline = block.timestamp + FINAL_APPROVAL_PERIOD;
@@ -146,19 +151,20 @@ contract PropertyEscrow is ReentrancyGuard {
      * @dev Buyer raises a dispute by indicating a previously fulfilled condition is no longer met.
      * This can only be done during the IN_FINAL_APPROVAL state.
      */
-    function raiseDisputeByUnfulfillingCondition(bytes32 _conditionId)
+    function raiseDisputeByUnfulfillingCondition(bytes32 conditionId)
         external
         onlyBuyer
         inState(State.IN_FINAL_APPROVAL)
     {
-        require(isConditionRequired(_conditionId), "Condition ID not part of this escrow.");
-        require(conditionsFulfilledByBuyer[_conditionId], "Condition was not marked fulfilled to unfulfill.");
+        require(isConditionRequired(conditionId), "Condition ID not part of this escrow.");
+        require(conditionsFulfilledByBuyer[conditionId], "Condition was not marked fulfilled to unfulfill.");
+        require(block.timestamp >= MIN_BLOCK_TIME, "Invalid block timestamp");
         require(block.timestamp < finalApprovalDeadline, "Final approval period has ended.");
 
-        conditionsFulfilledByBuyer[_conditionId] = false; // Mark as unfulfilled
+        conditionsFulfilledByBuyer[conditionId] = false; // Mark as unfulfilled
         currentState = State.IN_DISPUTE;
         disputeResolutionDeadline = block.timestamp + DISPUTE_RESOLUTION_PERIOD;
-        emit DisputeRaised(msg.sender, _conditionId, disputeResolutionDeadline);
+        emit DisputeRaised(msg.sender, conditionId, disputeResolutionDeadline);
     }
 
     /**
@@ -166,18 +172,19 @@ contract PropertyEscrow is ReentrancyGuard {
      * If all conditions become met again, the dispute is resolved, and the process
      * moves back to READY_FOR_FINAL_APPROVAL to restart the final approval period.
      */
-    function buyerReMarksConditionFulfilledInDispute(bytes32 _conditionId)
+    function buyerReMarksConditionFulfilledInDispute(bytes32 conditionId)
         external
         onlyBuyer
         inState(State.IN_DISPUTE)
     {
-        require(isConditionRequired(_conditionId), "Condition ID not part of this escrow.");
-        require(!conditionsFulfilledByBuyer[_conditionId], "Condition already marked as fulfilled.");
+        require(isConditionRequired(conditionId), "Condition ID not part of this escrow.");
+        require(!conditionsFulfilledByBuyer[conditionId], "Condition already marked as fulfilled.");
+        require(block.timestamp >= MIN_BLOCK_TIME, "Invalid block timestamp");
         require(block.timestamp < disputeResolutionDeadline, "Dispute resolution period has ended.");
 
 
-        conditionsFulfilledByBuyer[_conditionId] = true;
-        emit DisputeConditionReFulfilled(msg.sender, _conditionId);
+        conditionsFulfilledByBuyer[conditionId] = true;
+        emit DisputeConditionReFulfilled(msg.sender, conditionId);
 
         if (areAllConditionsMet()) {
             currentState = State.READY_FOR_FINAL_APPROVAL; // Dispute resolved by buyer action
@@ -194,6 +201,7 @@ contract PropertyEscrow is ReentrancyGuard {
         nonReentrant
         inState(State.IN_FINAL_APPROVAL)
     {
+        require(block.timestamp >= MIN_BLOCK_TIME, "Invalid block timestamp");
         require(block.timestamp >= finalApprovalDeadline, "Final approval period has not ended yet.");
         // Implicitly, if we are in IN_FINAL_APPROVAL and deadline passed, no dispute was raised.
         require(fundsDeposited, "Funds not deposited.");
@@ -203,6 +211,11 @@ contract PropertyEscrow is ReentrancyGuard {
     }
 
     function _releaseFundsToSeller() internal {
+        // Validate recipients are non-zero and as expected (immutable values)
+        require(seller != address(0), "Invalid seller address");
+        require(serviceWallet != address(0), "Invalid service wallet address");
+        require(buyer != address(0), "Invalid buyer address");
+        
         currentState = State.COMPLETED;
         uint256 balance = address(this).balance;
         require(balance >= escrowAmount, "Insufficient balance for release");
@@ -210,13 +223,22 @@ contract PropertyEscrow is ReentrancyGuard {
         uint256 serviceFee = (escrowAmount * SERVICE_FEE_PERCENTAGE) / 10000;
         uint256 remainingAmount = escrowAmount - serviceFee;
         
-        payable(seller).transfer(remainingAmount);
-        payable(serviceWallet).transfer(serviceFee);
+        // Emit events BEFORE external calls (CEI pattern)
         emit FundsReleasedToSeller(seller, remainingAmount);
         emit ServiceFeeTransferred(serviceWallet, serviceFee);
+        
+        // External calls after state changes and events
+        (bool success1, ) = payable(seller).call{value: remainingAmount}("");
+        require(success1, "Transfer to seller failed");
+        
+        (bool success2, ) = payable(serviceWallet).call{value: serviceFee}("");
+        require(success2, "Transfer to service wallet failed");
 
-        if (address(this).balance > 0) {
-            payable(buyer).transfer(address(this).balance); // Return any excess
+        // Return any excess to buyer
+        uint256 remainingBalance = address(this).balance;
+        if (remainingBalance > 0) {
+            (bool success3, ) = payable(buyer).call{value: remainingBalance}("");
+            require(success3, "Transfer of excess to buyer failed");
         }
     }
 
@@ -231,14 +253,17 @@ contract PropertyEscrow is ReentrancyGuard {
         if (currentState == State.IN_DISPUTE && block.timestamp >= disputeResolutionDeadline) {
             // Dispute period ended, and dispute not resolved by buyer re-fulfilling conditions.
             // Funds are returned to buyer automatically.
+            require(buyer != address(0), "Invalid buyer address");
             canCancel = true;
             currentState = State.CANCELLED; // Set state before transfer
             if (fundsDeposited) {
                 uint256 refundAmount = address(this).balance;
-                if (refundAmount > 0) {
-                    payable(buyer).transfer(refundAmount);
-                }
+                // Emit event BEFORE external call (CEI pattern)
                 emit EscrowCancelledBySystem("Dispute resolution deadline passed", buyer, refundAmount);
+                if (refundAmount > 0) {
+                    (bool success, ) = payable(buyer).call{value: refundAmount}("");
+                    require(success, "Refund to buyer failed");
+                }
             } else {
                 emit EscrowCancelledBySystem("Dispute resolution deadline passed, no funds to refund", buyer, 0);
             }
@@ -250,16 +275,19 @@ contract PropertyEscrow is ReentrancyGuard {
                 (currentState == State.IN_FINAL_APPROVAL && block.timestamp < finalApprovalDeadline) || // Can cancel before approval deadline
                 (currentState == State.IN_DISPUTE && block.timestamp < disputeResolutionDeadline) // Can cancel during dispute resolution period
             ) {
+                require(buyer != address(0), "Invalid buyer address");
                 canCancel = true;
                 currentState = State.CANCELLED; // Set state before transfer
                 uint256 refundAmount = 0;
                 if (fundsDeposited) {
                     refundAmount = address(this).balance;
-                    if (refundAmount > 0) {
-                        payable(buyer).transfer(refundAmount);
-                    }
                 }
+                // Emit event BEFORE external call (CEI pattern)
                 emit EscrowCancelledByUser(msg.sender, buyer, refundAmount);
+                if (fundsDeposited && refundAmount > 0) {
+                    (bool success, ) = payable(buyer).call{value: refundAmount}("");
+                    require(success, "Refund to buyer failed");
+                }
             }
         }
         
@@ -269,9 +297,10 @@ contract PropertyEscrow is ReentrancyGuard {
 
     // --- View Functions ---
 
-    function isConditionRequired(bytes32 _conditionId) internal view returns (bool) {
-        for (uint i = 0; i < requiredConditionIds.length; i++) {
-            if (requiredConditionIds[i] == _conditionId) {
+    function isConditionRequired(bytes32 conditionId) internal view returns (bool) {
+        uint256 length = requiredConditionIds.length;
+        for (uint256 i = 0; i < length; i++) {
+            if (requiredConditionIds[i] == conditionId) {
                 return true;
             }
         }
@@ -282,7 +311,8 @@ contract PropertyEscrow is ReentrancyGuard {
         if (currentState == State.AWAITING_CONDITION_SETUP || requiredConditionIds.length == 0) {
             return false; 
         }
-        for (uint i = 0; i < requiredConditionIds.length; i++) {
+        uint256 length = requiredConditionIds.length;
+        for (uint256 i = 0; i < length; i++) {
             if (!conditionsFulfilledByBuyer[requiredConditionIds[i]]) {
                 return false;
             }
@@ -291,15 +321,16 @@ contract PropertyEscrow is ReentrancyGuard {
     }
 
     function getUnfulfilledConditionIdsByBuyer() public view returns (bytes32[] memory) {
-        uint unfulfilledCount = 0;
-        for (uint i = 0; i < requiredConditionIds.length; i++) {
+        uint256 length = requiredConditionIds.length;
+        uint256 unfulfilledCount = 0;
+        for (uint256 i = 0; i < length; i++) {
             if (!conditionsFulfilledByBuyer[requiredConditionIds[i]]) {
                 unfulfilledCount++;
             }
         }
         bytes32[] memory unfulfilled = new bytes32[](unfulfilledCount);
-        uint currentIndex = 0;
-        for (uint i = 0; i < requiredConditionIds.length; i++) {
+        uint256 currentIndex = 0;
+        for (uint256 i = 0; i < length; i++) {
             if (!conditionsFulfilledByBuyer[requiredConditionIds[i]]) {
                 unfulfilled[currentIndex] = requiredConditionIds[i];
                 currentIndex++;

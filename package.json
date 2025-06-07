@@ -48,7 +48,12 @@
     "kill-ports": "kill-port 8545 || echo 'Port 8545 not in use' && kill-port 5004 || echo 'Port 5004 not in use' && kill-port 9099 || echo 'Port 9099 not in use' && kill-port 9199 || echo 'Port 9199 not in use' && kill-port 3001 || echo 'Port 3001 not in use'",
     "start-hardhat-e2e": "cd src/contract && npx hardhat node --port 8545",
     "start-emulators-e2e": "firebase emulators:start --only firestore,auth,storage --project demo-test --config firebase.json",
-    "test:aws-secrets": "NODE_ENV=production NODE_OPTIONS=--experimental-vm-modules node test-aws-secrets.js"
+    "test:aws-secrets": "NODE_ENV=production NODE_OPTIONS=--experimental-vm-modules node test-aws-secrets.js",
+    "audit:smart-contracts": "cd src/contract && slither .",
+    "audit:smart-contracts:high": "cd src/contract && slither . --exclude-optimization --exclude-informational --exclude-low",
+    "audit:smart-contracts:report": "cd src/contract && slither . --json ../../../reports/slither-report.json",
+    "audit:api:basic": "echo 'ZAP CLI scan - start your server first with npm start'",
+    "audit:full": "npm run audit:smart-contracts && echo 'Smart contract audit complete. Run OWASP ZAP manually for API scanning.'"
   },
   "repository": {
     "type": "git",

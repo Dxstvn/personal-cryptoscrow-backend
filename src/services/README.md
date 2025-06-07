@@ -2,48 +2,207 @@
 
 ## Overview
 
-This directory is a critical part of the backend, containing service modules that implement the core business logic of the CryptoEscrow application. These services act as a bridge between the API route handlers (`src/api/routes`) and the underlying data sources (Firestore) or external systems (Ethereum blockchain).
+This directory contains the core business logic services of the CryptoEscrow backend. These services act as a bridge between the API route handlers and external systems (Firestore, Ethereum blockchain, cross-chain bridges), implementing the complex business rules and workflows that power the escrow platform.
 
-**Frontend Relevance**: While the frontend doesn't call these services directly, they dictate the data transformations, business rule enforcement, and interactions that ultimately affect what data and statuses are presented to the user. Understanding their roles helps in comprehending the end-to-end flow of operations initiated from the frontend.
+**Frontend Relevance**: While frontend developers don't call these services directly, understanding their roles helps comprehend the end-to-end flow of operations, data transformations, and automated processes that affect the user experience.
 
-## Key Service Modules
+## Service Modules
 
--   **`databaseService.js`**:
-    -   **Purpose**: This service is currently focused on specialized database operations, primarily for the `scheduledJobs.js`. It fetches deals that meet specific criteria (e.g., deals past their `finalApprovalDeadlineBackend` or `disputeResolutionDeadlineBackend`) and updates deal statuses in Firestore following automated on-chain actions.
-    -   **Key Interactions**: Firestore (via Firebase Admin SDK) - specifically the `deals` collection.
-    -   **Used By**: Primarily `scheduledJobs.js`.
-    -   **Frontend Implication**: The updates made by this service (e.g., changing a deal status to `COMPLETED` or `CANCELLED` after an automated process) are what the frontend will see via its Firestore real-time listeners. It explains *how* a deal status can change automatically.
+### **`blockchainService.js`** - Ethereum Integration
+**Purpose**: Primary interface for all Ethereum blockchain interactions and smart contract operations.
 
--   **`blockchainService.js`**:
-    -   **Purpose**: This is the sole gateway for all interactions with the Ethereum blockchain and the deployed `PropertyEscrow` smart contracts. Its responsibilities include:
-        -   Initializing the Ethers.js provider and signer (using environment variables for RPC URL and backend wallet private key).
-        -   Loading the `PropertyEscrow.sol` contract ABI (from `src/contract/artifacts`).
-        -   Providing functions to call specific read-only (`view`/`pure`) methods on the smart contract (e.g., `getContractState`, `getDealDetailsFromChain`).
-        -   Providing functions to execute state-changing (transactional) methods on the smart contract (e.g., `triggerReleaseAfterApproval`, `triggerCancelAfterDisputeDeadline`, `raiseDispute`). These functions handle transaction signing, sending, and potentially waiting for receipts.
-    -   **Key Interactions**: Ethers.js library, `PropertyEscrow.sol` ABI, Ethereum node (via RPC URL), backend wallet.
-    -   **Used By**: `scheduledJobs.js` (for automated on-chain actions), `contractDeployer.js` (for wallet/provider access), and API route handlers in `src/api/routes/transaction/` that need to perform on-chain queries or trigger user-initiated on-chain transactions.
-    -   **Frontend Implication**: When a user action on the frontend is intended to cause an on-chain change (e.g., buyer deposits funds, seller initiates final approval), the API endpoint called by the frontend will use this service. The success/failure and transaction hash of these operations, logged by the backend, are critical for the frontend to display.
+**Key Functions**:
+- Smart contract interaction (read/write operations)
+- Transaction signing and broadcasting
+- Gas estimation and optimization
+- Contract state monitoring
+- Deadline enforcement (automated fund release/cancellation)
 
--   **`scheduledJobs.js`**:
-    -   **Purpose**: Manages automated, time-based tasks using `node-cron`. Its primary function is to periodically:
-        1.  Query the database (via `databaseService.js`) for deals that are in states like `IN_FINAL_APPROVAL` or `IN_DISPUTE` and whose relevant deadlines have passed.
-        2.  For each such deal, call `blockchainService.js` to trigger the appropriate smart contract function (e.g., release funds if final approval period ended without dispute, or cancel/refund if dispute period ended without resolution).
-        3.  Update the deal's status and timeline in Firestore (via `databaseService.js`) to reflect the outcome of the automated on-chain action.
-    -   **Key Interactions**: `node-cron` library, `databaseService.js`, `blockchainService.js`.
-    -   **Frontend Implication**: This service is responsible for many of the "automatic" state changes a user might observe in a deal. The frontend needs to use real-time listeners on Firestore to reflect these changes promptly and accurately. Explaining that deadlines are enforced by automated backend jobs can be helpful for user understanding.
+**Used By**: API routes (`/transaction`), `scheduledJobs.js`, `contractDeployer.js`
 
--   **`contractDeployer.js`**:
-    -   **Purpose**: Responsible for deploying new instances of the `PropertyEscrow.sol` smart contract. This is typically invoked when a new deal is created through the API, and the system is configured to give each deal its own unique contract instance.
-    -   **Key Interactions**: Ethers.js library, `PropertyEscrow.sol` ABI and bytecode (from `src/contract/artifacts`), `blockchainService.js` (for provider/signer access), environment variables (for deployer wallet).
-    -   **Used By**: API route handlers in `src/api/routes/transaction/transactionRoutes.js` (specifically the deal creation endpoint).
-    -   **Frontend Implication**: The successful deployment of a contract (or failure) during deal creation is a key piece of feedback the frontend needs. The `smartContractAddress` returned by the deal creation API originates from this service's work.
+**Frontend Impact**: 
+- Determines smart contract deployment success/failure during deal creation
+- Handles automated fund releases and cancellations that users see via real-time updates
+- Provides transaction hashes for blockchain explorers
 
-## General Principles & Frontend Considerations
+### **`contractDeployer.js`** - Smart Contract Deployment
+**Purpose**: Handles deployment of new `PropertyEscrow.sol` contract instances for each escrow deal.
 
--   **Abstraction**: These services abstract complex operations (like blockchain transactions or specific database queries) from the API route handlers. This keeps the route handlers focused on HTTP request/response management and input validation.
--   **Data Flow**: Frontend -> API Route Handler -> Service(s) -> Database/Blockchain.
-    -   The results of service operations (data fetched, success/failure of an action) are returned to the route handler, which then formats the HTTP response for the frontend.
-    -   For changes in data state (especially in Firestore), the frontend primarily relies on its real-time listeners rather than explicit data pushes in API responses for these changes.
--   **Error Handling**: Services are responsible for handling errors from their interactions (e.g., blockchain transaction reverted, database query failed) and either resolving them or propagating them in a structured way for the API layer to translate into appropriate HTTP error responses.
-    -   **Frontend**: Should be prepared to handle various error responses originating from service-layer failures, displaying user-friendly messages.
--   **Testability**: The modular nature of these services, coupled with their focused responsibilities, enhances testability. The `__tests__` subdirectory within `src/services` contains unit and integration tests for these modules. 
+**Key Functions**:
+- Contract compilation and deployment
+- Constructor parameter management
+- Deployment verification and error handling
+- Gas optimization for deployments
+
+**Used By**: API routes (`/transaction/create`)
+
+**Frontend Impact**:
+- Success/failure affects deal creation flow
+- Provides smart contract addresses for user reference
+- Deployment errors require user notification and potential retry mechanisms
+
+### **`crossChainService.js`** - Cross-Chain Operations
+**Purpose**: Manages cross-chain transaction preparation, monitoring, and execution across multiple blockchain networks.
+
+**Key Functions**:
+- Multi-network wallet address validation
+- Bridge route discovery and optimization
+- Cross-chain fee estimation
+- Transaction status tracking across networks
+- Network compatibility checking
+
+**Supported Networks**:
+- **Ethereum** (full integration)
+- **Solana** (address validation, preparation)
+- **Bitcoin** (address validation, preparation)
+- **Polygon** (EVM-compatible)
+- **BSC** (EVM-compatible)
+
+**Used By**: API routes (`/wallet`, `/transaction`), `scheduledJobs.js`
+
+**Frontend Impact**:
+- Enables multi-network wallet support in UI
+- Provides cross-chain fee estimates for user decision-making
+- Powers network selection and compatibility warnings
+- Drives multi-step transaction progress indicators
+
+### **`databaseService.js`** - Firestore Operations
+**Purpose**: Specialized database operations for complex queries and batch updates, primarily supporting automated processes.
+
+**Key Functions**:
+- Deal deadline monitoring queries
+- Batch status updates
+- Transaction history management
+- Data validation and sanitization
+
+**Used By**: `scheduledJobs.js`, API routes for complex queries
+
+**Frontend Impact**:
+- Ensures data consistency for real-time listeners
+- Supports complex filtering and pagination in deal lists
+- Maintains audit trails visible to users
+
+### **`scheduledJobs.js`** - Automated Processes
+**Purpose**: Manages time-based automated tasks using `node-cron` for deadline enforcement and system maintenance.
+
+**Automated Tasks**:
+- **Final Approval Deadline**: Automatically releases funds after 48-hour approval period
+- **Dispute Resolution**: Cancels deals after 7-day dispute period without resolution
+- **Cross-Chain Monitoring**: Tracks pending cross-chain transactions
+- **System Health Checks**: Monitors blockchain connectivity and system status
+
+**Schedule**: Runs every 10 minutes (configurable via `CRON_SCHEDULE_DEADLINE_CHECKS`)
+
+**Frontend Impact**:
+- **Critical**: Users see automatic status changes via Firestore real-time listeners
+- Timeline events show automated actions
+- Deadline countdowns in UI reflect these automated processes
+- Users need clear explanations of what happens when deadlines pass
+
+## Service Integration Patterns
+
+### **Service Call Chain**
+```
+Frontend → API Route → Service → External System
+                   ↓
+            Firestore Update → Real-time Listener → UI Update
+```
+
+### **Automated Process Flow**
+```
+scheduledJobs.js → databaseService.js (query) → blockchainService.js (action) → Firestore update → Frontend update
+```
+
+### **Cross-Chain Transaction Flow**
+```
+Frontend → /transaction/create → crossChainService.js → Multiple Network APIs → Status tracking → Real-time updates
+```
+
+## Error Handling & Resilience
+
+### **Service-Level Error Handling**
+- **Blockchain**: Automatic retry for network issues, gas estimation failures
+- **Cross-Chain**: Fallback bridge providers, timeout handling
+- **Database**: Transaction rollback, data consistency checks
+- **Contracts**: Deployment verification, error categorization
+
+### **Frontend Error Communication**
+- Services return structured errors with user-friendly messages
+- API routes translate service errors to appropriate HTTP status codes
+- Real-time updates include error states for user notification
+
+## Performance Considerations
+
+### **Optimization Strategies**
+- **Caching**: Blockchain data caching to reduce RPC calls
+- **Batching**: Database operations batched for efficiency
+- **Rate Limiting**: Built-in protection against external API limits
+- **Connection Pooling**: Efficient resource management
+
+### **Frontend Performance Impact**
+- Fast response times for real-time user actions
+- Efficient pagination for large deal lists
+- Optimized cross-chain fee calculations
+- Background processing for heavy operations
+
+## Testing Coverage
+
+Each service includes comprehensive test suites:
+
+### **Unit Tests** (`__tests__/unit/`)
+- Individual function testing
+- Mock external dependencies
+- Edge case coverage
+- Error condition testing
+
+### **Integration Tests** (`__tests__/integration/`)
+- End-to-end service workflows
+- Real blockchain/database interactions
+- Cross-service communication testing
+- Performance benchmarking
+
+## Development Guidelines
+
+### **Service Design Principles**
+- **Single Responsibility**: Each service handles one domain
+- **Dependency Injection**: Services are loosely coupled
+- **Error Propagation**: Structured error handling throughout
+- **Logging**: Comprehensive logging for debugging and monitoring
+
+### **Frontend Integration Best Practices**
+- **Real-time First**: Services update Firestore for real-time sync
+- **Idempotency**: Safe to retry operations
+- **Status Transparency**: Clear status communication for user feedback
+- **Error Recovery**: Graceful error handling with user guidance
+
+## Monitoring & Observability
+
+### **Service Metrics**
+- Transaction success/failure rates
+- Cross-chain operation timing
+- Blockchain connectivity status
+- Database query performance
+
+### **Frontend Monitoring Integration**
+- Health check endpoints for service status
+- Error reporting for user-facing issues
+- Performance metrics for user experience optimization
+- Real-time status indicators
+
+## Future Enhancements
+
+### **Planned Service Improvements**
+- Additional blockchain network integrations
+- Enhanced cross-chain bridge support
+- Advanced analytics and reporting services
+- Machine learning for transaction optimization
+
+### **Frontend Integration Roadmap**
+- WebSocket integration for instant updates
+- Advanced error recovery mechanisms
+- Predictive user experience features
+- Enhanced cross-chain user guidance
+
+---
+
+**Note**: Services are designed to abstract complex backend operations while providing clear, predictable interfaces for frontend integration. The modular architecture ensures that frontend developers can focus on user experience while services handle the complexity of blockchain, database, and cross-chain operations. 
