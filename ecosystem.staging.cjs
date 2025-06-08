@@ -13,14 +13,14 @@ module.exports = {
       AWS_REGION: 'us-east-1',
       PORT: 3001, // Different port from production
       
-      // Firebase staging project (create separate staging project)
-      FIREBASE_PROJECT_ID: 'ethescrow-staging-377c6',
-      FIREBASE_STORAGE_BUCKET: 'ethescrow-staging-377c6.firebasestorage.app',
-      FIREBASE_API_KEY: 'staging-api-key',
-      FIREBASE_AUTH_DOMAIN: 'ethescrow-staging-377c6.firebaseapp.com',
-      FIREBASE_MESSAGING_SENDER_ID: '103629169564',
-      FIREBASE_APP_ID: 'staging-app-id',
-      FIREBASE_MEASUREMENT_ID: 'G-STAGING',
+      // Firebase staging project
+      FIREBASE_PROJECT_ID: 'jaspirev4-2f12a',
+      FIREBASE_STORAGE_BUCKET: 'jaspirev4-2f12a.appspot.com',
+      FIREBASE_API_KEY: 'staging-api-key-from-secrets',
+      FIREBASE_AUTH_DOMAIN: 'jaspirev4-2f12a.firebaseapp.com',
+      FIREBASE_MESSAGING_SENDER_ID: 'staging-sender-from-secrets',
+      FIREBASE_APP_ID: 'staging-app-id-from-secrets',
+      FIREBASE_MEASUREMENT_ID: 'staging-measurement-from-secrets',
       
       // Blockchain - use testnet for staging
       CHAIN_ID: '11155111', // Sepolia testnet

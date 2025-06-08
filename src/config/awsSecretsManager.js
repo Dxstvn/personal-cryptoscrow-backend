@@ -38,11 +38,19 @@ class AWSSecretsManager {
   }
 
   async getAppSecrets() {
-    return await this.getSecret('CryptoEscrow/App/Config');
+    const environment = process.env.NODE_ENV || 'development';
+    const secretName = environment === 'staging' 
+      ? 'CryptoEscrow/Staging/App/Config'
+      : 'CryptoEscrow/App/Config';
+    return await this.getSecret(secretName);
   }
 
   async getBlockchainSecrets() {
-    return await this.getSecret('CryptoEscrow/Blockchain/Keys');
+    const environment = process.env.NODE_ENV || 'development';
+    const secretName = environment === 'staging' 
+      ? 'CryptoEscrow/Staging/Blockchain/Keys'
+      : 'CryptoEscrow/Blockchain/Keys';
+    return await this.getSecret(secretName);
   }
 
   async getFirebaseServiceAccount() {
@@ -63,7 +71,9 @@ class AWSSecretsManager {
 
   // Method to check if running in AWS environment
   isAWSEnvironment() {
-    return process.env.NODE_ENV === 'production' || process.env.USE_AWS_SECRETS === 'true';
+    return process.env.NODE_ENV === 'production' || 
+           process.env.NODE_ENV === 'staging' || 
+           process.env.USE_AWS_SECRETS === 'true';
   }
 }
 

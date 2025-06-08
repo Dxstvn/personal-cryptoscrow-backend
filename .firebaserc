@@ -1,5 +1,9 @@
 {
   "projects": {
-    "default": "demo-test"
-  }
+    "default": "jaspirev4-2f12a",
+    "staging": "jaspirev4-2f12a",
+    "production": "ethescrow-377c6"
+  },
+  "targets": {},
+  "etags": {}
 }
