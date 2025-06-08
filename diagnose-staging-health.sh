@@ -101,23 +101,23 @@ echo "🎯 DIAGNOSIS SUMMARY"
 echo "==================="
 
 # Check if main issues are present
-STAGING_RUNNING=$(pm2 list | grep -c "cryptoescrow-backend-staging" || echo "0")
+STAGING_RUNNING=$(pm2 list | grep -c "cryptoescrow-backend-staging" 2>/dev/null || echo "0")
 PORT_LISTENING=$(lsof -i :3001 >/dev/null 2>&1 && echo "1" || echo "0")
 HEALTH_WORKING=$(curl -s http://localhost:3001/health >/dev/null 2>&1 && echo "1" || echo "0")
 
-if [ "$STAGING_RUNNING" -gt 0 ]; then
+if [ "${STAGING_RUNNING:-0}" -gt 0 ]; then
     log_success "Staging process is running in PM2"
 else
     log_error "Staging process not running in PM2"
 fi
 
-if [ "$PORT_LISTENING" -eq 1 ]; then
+if [ "${PORT_LISTENING:-0}" -eq 1 ]; then
     log_success "Port 3001 is listening"
 else
     log_error "Port 3001 is not listening"
 fi
 
-if [ "$HEALTH_WORKING" -eq 1 ]; then
+if [ "${HEALTH_WORKING:-0}" -eq 1 ]; then
     log_success "Health endpoint is responding"
 else
     log_error "Health endpoint is not responding"
@@ -126,9 +126,9 @@ fi
 echo ""
 log_info "NEXT ACTIONS:"
 
-if [ "$STAGING_RUNNING" -eq 0 ]; then
+if [ "${STAGING_RUNNING:-0}" -eq 0 ]; then
     echo "1. Start staging process: pm2 start ecosystem.staging.cjs --env staging"
-elif [ "$HEALTH_WORKING" -eq 0 ]; then
+elif [ "${HEALTH_WORKING:-0}" -eq 0 ]; then
     echo "1. Check logs for errors: pm2 logs cryptoescrow-backend-staging"
     echo "2. Restart staging process: pm2 restart cryptoescrow-backend-staging"
     echo "3. Fix Firebase private key format in AWS Secrets Manager"
