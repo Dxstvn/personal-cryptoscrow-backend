@@ -255,6 +255,43 @@ fi
 log_info "Waiting 15 seconds for application startup..."
 sleep 15
 
+# Quick health check to see if it's already working
+log_info "Quick health check to see if staging is already responding..."
+if curl -f -s http://localhost:3001/health >/dev/null; then
+    HEALTH_RESPONSE=$(curl -s http://localhost:3001/health)
+    log_success "Staging already responding! Health check: $HEALTH_RESPONSE"
+    INITIAL_HEALTH_SUCCESS=true
+else
+    log_info "Staging not responding yet, will proceed with fixes..."
+    INITIAL_HEALTH_SUCCESS=false
+fi
+
+# Fix PM2 naming issue if needed
+log_info "Checking for PM2 naming issues..."
+if pm2 list | grep -q "ecosystem.staging.*online" && [[ "$INITIAL_HEALTH_SUCCESS" != "true" ]]; then
+    log_warning "PM2 is using filename instead of configured name"
+    log_info "Attempting to fix PM2 naming issue..."
+    
+    # Stop the incorrectly named process
+    pm2 stop ecosystem.staging 2>/dev/null || true
+    pm2 delete ecosystem.staging 2>/dev/null || true
+    
+    # Start with explicit naming
+    pm2 start src/server.js \
+        --name "cryptoescrow-backend-staging" \
+        --env NODE_ENV=staging \
+        --env PORT=3001 \
+        --env USE_AWS_SECRETS=true \
+        --env AWS_REGION=us-east-1 \
+        --env CHAIN_ID=11155111 \
+        --env RPC_URL="https://sepolia.infura.io/v3/4af9a8307a914da58937e8da53c602f9" \
+        --env FRONTEND_URL="https://staging.clearhold.app"
+    
+    log_info "Restarted with correct name, waiting 10 more seconds..."
+    sleep 10
+    METHOD_USED="direct-fixed"
+fi
+
 # ==========================================
 # STEP 7: COMPREHENSIVE VERIFICATION
 # ==========================================
@@ -266,13 +303,19 @@ echo "----------------------------------"
 log_info "PM2 Status:"
 pm2 list
 
-# Check if staging process is running
+# Check if staging process is running (check both possible names)
+STAGING_PROCESS_NAME=""
 if pm2 list | grep -q "cryptoescrow-backend-staging.*online"; then
-    log_success "Staging process is running in PM2"
+    STAGING_PROCESS_NAME="cryptoescrow-backend-staging"
+    log_success "Staging process is running in PM2 as: $STAGING_PROCESS_NAME"
+elif pm2 list | grep -q "ecosystem.staging.*online"; then
+    STAGING_PROCESS_NAME="ecosystem.staging"
+    log_warning "Staging process is running but with filename as name: $STAGING_PROCESS_NAME"
+    log_info "This is a PM2 naming issue, but the process should still work"
 else
-    log_error "Staging process not running in PM2"
+    log_error "No staging process found running in PM2"
     log_info "PM2 logs:"
-    pm2 logs cryptoescrow-backend-staging --lines 20 || true
+    pm2 logs cryptoescrow-backend-staging --lines 20 2>/dev/null || pm2 logs ecosystem.staging --lines 20 2>/dev/null || log_warning "No logs found"
     exit 1
 fi
 
@@ -298,7 +341,7 @@ done
 if [[ "$HEALTH_SUCCESS" != "true" ]]; then
     log_error "Health endpoint failed after $HEALTH_TEST_ATTEMPTS attempts"
     log_info "Checking logs for errors..."
-    pm2 logs cryptoescrow-backend-staging --lines 30
+    pm2 logs "$STAGING_PROCESS_NAME" --lines 30 2>/dev/null || log_warning "Could not retrieve logs"
     exit 1
 fi
 
@@ -372,7 +415,7 @@ echo "# Check PM2 status:"
 echo "pm2 list"
 echo ""
 echo "# Check logs:"
-echo "pm2 logs cryptoescrow-backend-staging"
+echo "pm2 logs $STAGING_PROCESS_NAME"
 echo ""
 echo "# AWS load balancer test (once DNS is configured):"
 echo "curl -i https://staging.clearhold.app/health"
