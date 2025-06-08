@@ -1,8 +1,9 @@
 {
   "projects": {
-    "default": "escrowstaging",
+    "default": "ethescrow-377c6",
     "staging": "escrowstaging",
-    "production": "ethescrow-377c6"
+    "production": "ethescrow-377c6",
+    "test": "demo-test"
   },
   "targets": {},
   "etags": {}
