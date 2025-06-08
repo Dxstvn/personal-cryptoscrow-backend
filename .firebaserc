@@ -1,7 +1,7 @@
 {
   "projects": {
-    "default": "jaspirev4-2f12a",
-    "staging": "jaspirev4-2f12a",
+    "default": "escrowstaging",
+    "staging": "escrowstaging",
     "production": "ethescrow-377c6"
   },
   "targets": {},

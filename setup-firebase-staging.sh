@@ -50,14 +50,14 @@ firebase projects:list
 
 echo ""
 log_info "Based on your .firebaserc, you have these projects configured:"
-echo "• Staging: jaspirev4-2f12a"
+echo "• Staging: escrowstaging"
 echo "• Production: ethescrow-377c6"
 
 echo ""
 log_warning "TO GET FIREBASE SERVICE ACCOUNT FOR STAGING:"
 echo "=============================================="
 echo "1. Go to Firebase Console: https://console.firebase.google.com/"
-echo "2. Select your staging project: jaspirev4-2f12a"
+echo "2. Select your staging project: escrowstaging"
 echo "3. Click on Project Settings (gear icon)"
 echo "4. Go to 'Service Accounts' tab"
 echo "5. Click 'Generate new private key'"
@@ -77,15 +77,15 @@ log_info "Example of what the service account JSON looks like:"
 cat << 'EOF'
 {
   "type": "service_account",
-  "project_id": "jaspirev4-2f12a",
+  "project_id": "escrowstaging",
   "private_key_id": "abc123...",
   "private_key": "-----BEGIN PRIVATE KEY-----\nYOUR_PRIVATE_KEY_HERE\n-----END PRIVATE KEY-----\n",
-  "client_email": "firebase-adminsdk-xxxxx@jaspirev4-2f12a.iam.gserviceaccount.com",
+  "client_email": "firebase-adminsdk-xxxxx@escrowstaging.iam.gserviceaccount.com",
   "client_id": "123456789...",
   "auth_uri": "https://accounts.google.com/o/oauth2/auth",
   "token_uri": "https://oauth2.googleapis.com/token",
   "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-xxxxx%40jaspirev4-2f12a.iam.gserviceaccount.com"
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-xxxxx%40escrowstaging.iam.gserviceaccount.com"
 }
 EOF
 

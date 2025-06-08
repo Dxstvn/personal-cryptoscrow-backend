@@ -1,41 +1,41 @@
 module.exports = {
   apps: [{
-    name: 'cryptoescrow-backend-',
+    name: 'cryptoescrow-backend-staging',
     script: 'src/server.js',
     instances: 1,
     exec_mode: 'fork',
     autorestart: true,
     watch: false,
     max_memory_restart: '1G',
-    env_: {
-      NODE_ENV: '',
+    env_staging: {
+      NODE_ENV: 'production', // Use production mode to trigger AWS secrets
       USE_AWS_SECRETS: 'true',
       AWS_REGION: 'us-east-1',
-      PORT: 3001, // Different port from production
+      PORT: 3001,
       
-      // Firebase  project
-      FIREBASE_PROJECT_ID: 'jaspirev4-2f12a',
-      FIREBASE_STORAGE_BUCKET: 'jaspirev4-2f12a.appspot.com',
-      FIREBASE_API_KEY: '-api-key-from-secrets',
-      FIREBASE_AUTH_DOMAIN: 'jaspirev4-2f12a.firebaseapp.com',
-      FIREBASE_MESSAGING_SENDER_ID: '-sender-from-secrets',
-      FIREBASE_APP_ID: '-app-id-from-secrets',
-      FIREBASE_MEASUREMENT_ID: '-measurement-from-secrets',
+      // Firebase staging project (updated to match AWS Secrets Manager)
+      FIREBASE_PROJECT_ID: 'escrowstaging',
+      FIREBASE_STORAGE_BUCKET: 'escrowstaging.appspot.com',
+      FIREBASE_API_KEY: 'AIzaSyAEnTHpQpcgzWvDfiusF90-beSGCz5pva8',
+      FIREBASE_AUTH_DOMAIN: 'escrowstaging.firebaseapp.com',
+      FIREBASE_MESSAGING_SENDER_ID: '960491714548',
+      FIREBASE_APP_ID: '1:960491714548:web:f1b418ffaddd0ba2cc2ba',
+      FIREBASE_MEASUREMENT_ID: 'G-07NYQBYP9N',
       
-      // Blockchain - use testnet for 
+      // Blockchain - use testnet for staging
       CHAIN_ID: '11155111', // Sepolia testnet
-      RPC_URL: 'https://sepolia.infura.io/v3/your--infura-key',
+      RPC_URL: 'https://sepolia.infura.io/v3/4af9a8307a914da58937e8da53c602f9',
       
-      // Frontend  URL
-      FRONTEND_URL: 'https://.clearhold.app',
+      // Frontend staging URL
+      FRONTEND_URL: 'https://staging.clearhold.app',
       
-      // Enable additional logging for 
+      // Enable additional logging for staging
       DEBUG: 'cryptoescrow:*',
       LOG_LEVEL: 'debug'
     },
-    error_file: './logs/-err.log',
-    out_file: './logs/-out.log',
-    log_file: './logs/-combined.log',
+    error_file: './logs/staging-err.log',
+    out_file: './logs/staging-out.log',
+    log_file: './logs/staging-combined.log',
     time: true,
     merge_logs: true,
     max_restarts: 10,

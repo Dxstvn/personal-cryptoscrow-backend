@@ -61,14 +61,14 @@ module.exports = {
       AWS_REGION: 'us-east-1',
       PORT: 3001,
       
-      // Firebase staging project
-      FIREBASE_PROJECT_ID: 'jaspirev4-2f12a',
-      FIREBASE_STORAGE_BUCKET: 'jaspirev4-2f12a.appspot.com',
+      // Firebase staging project (updated to match AWS Secrets Manager)
+      FIREBASE_PROJECT_ID: 'escrowstaging',
+      FIREBASE_STORAGE_BUCKET: 'escrowstaging.appspot.com',
       FIREBASE_API_KEY: 'AIzaSyAEnTHpQpcgzWvDfiusF90-beSGCz5pva8',
-      FIREBASE_AUTH_DOMAIN: 'jaspirev4-2f12a.firebaseapp.com',
+      FIREBASE_AUTH_DOMAIN: 'escrowstaging.firebaseapp.com',
       FIREBASE_MESSAGING_SENDER_ID: '960491714548',
       FIREBASE_APP_ID: '1:960491714548:web:f1b418ffaddd0ba2cc2ba',
-      FIREBASE_MEASUREMENT_ID: "G-07NYQBYP9N"
+      FIREBASE_MEASUREMENT_ID: 'G-07NYQBYP9N'
       
       // Blockchain - use testnet for staging
       CHAIN_ID: '11155111', // Sepolia testnet
@@ -105,7 +105,7 @@ else
     aws secretsmanager create-secret \
         --name "CryptoEscrow/Staging/Firebase" \
         --description "Firebase service account for staging environment" \
-        --secret-string '{"type":"service_account","project_id":"jaspirev4-2f12a","private_key_id":"PLACEHOLDER","private_key":"PLACEHOLDER","client_email":"PLACEHOLDER","client_id":"PLACEHOLDER","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_x509_cert_url":"PLACEHOLDER"}' \
+        --secret-string '{"type":"service_account","project_id":"escrowstaging","private_key_id":"PLACEHOLDER","private_key":"PLACEHOLDER","client_email":"PLACEHOLDER","client_id":"PLACEHOLDER","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_x509_cert_url":"PLACEHOLDER"}' \
         --region us-east-1 2>/dev/null || true
 fi
 
