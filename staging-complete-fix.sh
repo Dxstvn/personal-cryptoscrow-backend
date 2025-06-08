@@ -237,15 +237,10 @@ else
     
     # Method 2: Direct start with environment variables
     log_info "Method 2: Direct PM2 start..."
-    pm2 start src/server.js \
+    NODE_ENV=staging PORT=3001 USE_AWS_SECRETS=true AWS_REGION=us-east-1 pm2 start src/server.js \
         --name "cryptoescrow-backend-staging" \
-        --env NODE_ENV=staging \
-        --env PORT=3001 \
-        --env USE_AWS_SECRETS=true \
-        --env AWS_REGION=us-east-1 \
-        --env CHAIN_ID=11155111 \
-        --env RPC_URL="https://sepolia.infura.io/v3/4af9a8307a914da58937e8da53c602f9" \
-        --env FRONTEND_URL="https://staging.clearhold.app"
+        -- \
+        --staging
     
     METHOD_USED="direct"
     log_success "Direct PM2 start successful"
@@ -276,16 +271,11 @@ if pm2 list | grep -q "ecosystem.staging.*online" && [[ "$INITIAL_HEALTH_SUCCESS
     pm2 stop ecosystem.staging 2>/dev/null || true
     pm2 delete ecosystem.staging 2>/dev/null || true
     
-    # Start with explicit naming
-    pm2 start src/server.js \
+    # Start with explicit environment variables (use -- to pass to Node.js process)
+    NODE_ENV=staging PORT=3001 USE_AWS_SECRETS=true AWS_REGION=us-east-1 pm2 start src/server.js \
         --name "cryptoescrow-backend-staging" \
-        --env NODE_ENV=staging \
-        --env PORT=3001 \
-        --env USE_AWS_SECRETS=true \
-        --env AWS_REGION=us-east-1 \
-        --env CHAIN_ID=11155111 \
-        --env RPC_URL="https://sepolia.infura.io/v3/4af9a8307a914da58937e8da53c602f9" \
-        --env FRONTEND_URL="https://staging.clearhold.app"
+        -- \
+        --staging
     
     log_info "Restarted with correct name, waiting 10 more seconds..."
     sleep 10
@@ -383,10 +373,49 @@ echo "4. Health check should use HTTP protocol"
 
 # Test if AWS CLI is available
 if command -v aws >/dev/null 2>&1; then
-    log_info "AWS CLI is available. Checking target groups..."
+    log_info "AWS CLI is available. Checking AWS configuration..."
+    
+    # Check target groups
     aws elbv2 describe-target-groups --query 'TargetGroups[?contains(TargetGroupName, `staging`)].{Name:TargetGroupName,Port:Port,HealthCheckPath:HealthCheckPath}' --output table 2>/dev/null || log_warning "Could not retrieve target group info"
+    
+    # Check security groups for port 3001
+    log_info "Checking security groups for port 3001 access..."
+    SECURITY_GROUPS=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].SecurityGroups[].GroupId' --output text 2>/dev/null || echo "")
+    
+    if [[ -n "$SECURITY_GROUPS" ]]; then
+        log_info "Instance security groups: $SECURITY_GROUPS"
+        
+        # Check if port 3001 is open in any security group
+        PORT_3001_OPEN=false
+        for sg in $SECURITY_GROUPS; do
+            if aws ec2 describe-security-groups --group-ids $sg --query "SecurityGroups[0].IpPermissions[?FromPort<=\`3001\` && ToPort>=\`3001\`]" --output text 2>/dev/null | grep -q .; then
+                PORT_3001_OPEN=true
+                break
+            fi
+        done
+        
+        if [[ "$PORT_3001_OPEN" = "true" ]]; then
+            log_success "Port 3001 is accessible through security groups"
+        else
+            log_error "❌ CRITICAL: Port 3001 is NOT accessible through security groups!"
+            log_info "🔧 AWS Security Group Fix Commands:"
+            echo ""
+            echo "# Add port 3001 to your security group (replace sg-xxxxx with your security group ID):"
+            for sg in $SECURITY_GROUPS; do
+                echo "aws ec2 authorize-security-group-ingress \\"
+                echo "    --group-id $sg \\"
+                echo "    --protocol tcp \\"
+                echo "    --port 3001 \\"
+                echo "    --source-group $sg \\"
+                echo "    --description 'Allow ALB to access staging on port 3001'"
+                echo ""
+            done
+        fi
+    else
+        log_warning "Could not retrieve security group information"
+    fi
 else
-    log_warning "AWS CLI not available for target group verification"
+    log_warning "AWS CLI not available for security group verification"
 fi
 
 # ==========================================
