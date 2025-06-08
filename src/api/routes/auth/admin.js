@@ -3,6 +3,7 @@ import '../../../config/env.js';
 // Set emulator configuration BEFORE any Firebase imports
 const isTest = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test';
 const isProduction = process.env.NODE_ENV === 'production';
+const isStaging = process.env.NODE_ENV === 'staging';
 
 if (isTest) {
   // Ensure Admin SDK uses emulators - set environment variables BEFORE any Firebase imports
@@ -24,9 +25,38 @@ import awsSecretsManager from '../../../config/awsSecretsManager.js';
 
 const appName = "adminApp";
 
+// Function to get Firebase service account from AWS Secrets Manager
+async function getFirebaseServiceAccountFromAWS() {
+  try {
+    const secretName = isStaging 
+      ? 'CryptoEscrow/Staging/Firebase' 
+      : 'CryptoEscrow/Production/Firebase';
+    
+    console.log(`Getting Firebase service account from AWS Secrets Manager: ${secretName}`);
+    const secret = await awsSecretsManager.getSecret(secretName);
+    
+    if (!secret || typeof secret !== 'object') {
+      throw new Error(`Firebase service account not found in AWS Secrets Manager: ${secretName}`);
+    }
+    
+    // Ensure required fields are present
+    const requiredFields = ['type', 'project_id', 'private_key', 'client_email'];
+    for (const field of requiredFields) {
+      if (!secret[field] || secret[field] === 'PLACEHOLDER') {
+        throw new Error(`Firebase service account missing or placeholder value for field: ${field}`);
+      }
+    }
+    
+    return secret;
+  } catch (error) {
+    console.error('Failed to get Firebase service account from AWS Secrets Manager:', error.message);
+    throw error;
+  }
+}
+
 // Function to initialize or get the admin app
 async function initializeAdmin() {
-  console.log(`Initializing Admin SDK. NODE_ENV='${process.env.NODE_ENV}', isTest=${isTest}, isProduction=${isProduction}`);
+  console.log(`Initializing Admin SDK. NODE_ENV='${process.env.NODE_ENV}', isTest=${isTest}, isProduction=${isProduction}, isStaging=${isStaging}`);
 
   if (getApps().find(app => app.name === appName)) {
     console.log(`Admin app "${appName}" already exists. Returning existing instance.`);
@@ -42,23 +72,18 @@ async function initializeAdmin() {
       storageBucket: "demo-test.appspot.com"
     };
     console.log(`🧪 Admin SDK will use project: ${options.projectId}, storage: ${options.storageBucket}`);
-  } else if (isProduction && process.env.USE_AWS_SECRETS === 'true') {
-    console.log("Using Production configuration for Admin SDK with AWS Secrets Manager.");
+  } else if ((isProduction || isStaging) && process.env.USE_AWS_SECRETS === 'true') {
+    console.log(`Using ${isStaging ? 'Staging' : 'Production'} configuration for Admin SDK with AWS Secrets Manager.`);
     
-    // In production with AWS Secrets Manager, try to get Firebase service account
     try {
-      const firebaseServiceAccount = await awsSecretsManager.getFirebaseServiceAccount();
-      
-      if (!firebaseServiceAccount || !firebaseServiceAccount.project_id || !firebaseServiceAccount.private_key || !firebaseServiceAccount.client_email) {
-        throw new Error('Firebase service account is missing required fields from AWS Secrets Manager');
-      }
+      const firebaseServiceAccount = await getFirebaseServiceAccountFromAWS();
       
       options = {
         credential: cert(firebaseServiceAccount),
         projectId: firebaseServiceAccount.project_id,
         storageBucket: process.env.FIREBASE_STORAGE_BUCKET || firebaseServiceAccount.project_id + '.appspot.com'
       };
-      console.log("Firebase Admin SDK initialized with service account from AWS Secrets Manager.");
+      console.log(`Firebase Admin SDK initialized with service account from AWS Secrets Manager for ${isStaging ? 'staging' : 'production'}.`);
     } catch (secretsManagerError) {
       console.warn(`Failed to get Firebase service account from AWS Secrets Manager: ${secretsManagerError.message}`);
       console.log("Attempting fallback to environment variables for Firebase configuration...");
@@ -135,11 +160,11 @@ async function getAdminApp() {
 
 // For backward compatibility, export a synchronous version for non-production environments
 let adminApp;
-if (isTest || (!isProduction || process.env.USE_AWS_SECRETS !== 'true')) {
+if (isTest || (!isProduction && !isStaging)) {
   // For test or development environments, initialize synchronously using the old approach
   console.log("Using synchronous initialization for development/test environment.");
   try {
-    // Use the synchronous version for development
+    // Use the synchronous version for development only
     if (isTest) {
       adminApp = initializeApp({
         projectId: "demo-test",
@@ -164,7 +189,7 @@ if (isTest || (!isProduction || process.env.USE_AWS_SECRETS !== 'true')) {
     console.log('Admin app will be initialized asynchronously when first accessed.');
   }
 } else {
-  console.log("Production mode detected. Admin app will be initialized asynchronously when first accessed.");
+  console.log(`${isStaging ? 'Staging' : 'Production'} mode detected. Admin app will be initialized asynchronously when first accessed.`);
 }
 
 export { adminApp, getAdminApp };

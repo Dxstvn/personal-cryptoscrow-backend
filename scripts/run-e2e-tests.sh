@@ -44,7 +44,7 @@ wait_for_service() {
 
 # Kill any existing processes on our ports
 echo "🧹 Cleaning up existing processes..."
-for port in 3001 8545 9099 5004 9199; do
+for port in 5173 8545 9099 5004 9199; do
     if check_port $port; then
         echo "Killing process on port $port..."
         kill-port $port 2>/dev/null || lsof -ti:$port | xargs kill -9 2>/dev/null
@@ -82,7 +82,7 @@ kill $FIREBASE_PID 2>/dev/null
 kill $HARDHAT_PID 2>/dev/null
 
 # Kill any remaining processes on our ports
-for port in 3001 8545 9099 5004 9199; do
+for port in 5173 8545 9099 5004 9199; do
     if check_port $port; then
         lsof -ti:$port | xargs kill -9 2>/dev/null
     fi

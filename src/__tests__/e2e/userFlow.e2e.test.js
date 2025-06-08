@@ -29,8 +29,8 @@ describe('E2E User Flow Tests', () => {
     try {
     // Start test server
     serverUrl = await startTestServer();
-      // Use port 3001 as shown in the logs
-      serverUrl = serverUrl.replace(':3000', ':3001');
+      // Use port 5173 as shown in the logs
+      serverUrl = serverUrl.replace(':3000', ':5173');
       console.log(`📡 Server URL: ${serverUrl}`);
       
     apiClient = new ApiClient(serverUrl);

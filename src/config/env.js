@@ -46,9 +46,9 @@ async function loadAWSSecrets() {
       console.log('✅ AWS Secrets Manager integration successful');
     } catch (error) {
       console.error('❌ Failed to load secrets from AWS Secrets Manager:', error.message);
-      // In production, we might want to exit the process if secrets can't be loaded
-      if (process.env.NODE_ENV === 'production') {
-        console.error('🚨 Cannot start application without required secrets in production');
+      // In production or staging, we might want to exit the process if secrets can't be loaded
+      if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') {
+        console.error('🚨 Cannot start application without required secrets in production/staging');
         process.exit(1);
       }
     }
@@ -132,4 +132,6 @@ if (config.NODE_ENV === 'development') {
   console.log('🔧 Environment variables loaded from .env and .env.local');
 } else if (config.NODE_ENV === 'production') {
   console.log('🔧 Production environment variables loaded');
+} else if (config.NODE_ENV === 'staging') {
+  console.log('🔧 Staging environment variables loaded');
 } 

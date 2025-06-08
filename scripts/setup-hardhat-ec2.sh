@@ -139,6 +139,6 @@ echo -e "  8545  - Hardhat blockchain node"
 echo -e "  9099  - Firebase Auth emulator"
 echo -e "  5004  - Firestore emulator"
 echo -e "  9199  - Firebase Storage emulator"
-echo -e "  3001  - Application server (tests)"
+echo -e "  5173  - Application server (tests)"
 
 echo -e "\n${GREEN}🔥 Setup complete! Your EC2 instance is ready for blockchain testing.${NC}" 

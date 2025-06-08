@@ -49,7 +49,7 @@
     "test:e2e:security": "npm run kill-ports && concurrently -k --names \"HARDHAT,EMULATOR,TESTS\" --success first \"npm:start-hardhat-e2e\" \"npm:start-emulators-e2e\" \"npm:_run-jest-security-e2e-delayed\" && npm run kill-ports",
     "emulators": "firebase emulators:start",
     "test:services:emulator": "NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIRESTORE_EMULATOR_HOST=localhost:5004 FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 node node_modules/jest/bin/jest.js src/services/__tests__ --detectOpenHandles --coverage",
-    "kill-ports": "kill-port 8545 || echo 'Port 8545 not in use' && kill-port 5004 || echo 'Port 5004 not in use' && kill-port 9099 || echo 'Port 9099 not in use' && kill-port 9199 || echo 'Port 9199 not in use' && kill-port 3001 || echo 'Port 3001 not in use'",
+    "kill-ports": "kill-port 8545 || echo 'Port 8545 not in use' && kill-port 5004 || echo 'Port 5004 not in use' && kill-port 9099 || echo 'Port 9099 not in use' && kill-port 9199 || echo 'Port 9199 not in use' && kill-port 5173 || echo 'Port 5173 not in use'",
     "start-hardhat-e2e": "cd src/contract && npx hardhat node --port 8545",
     "start-emulators-e2e": "firebase emulators:start --only firestore,auth,storage --project demo-test --config firebase.json",
     "test:aws-secrets": "NODE_ENV=production NODE_OPTIONS=--experimental-vm-modules node test-aws-secrets.js",

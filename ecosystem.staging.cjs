@@ -8,10 +8,10 @@ module.exports = {
     watch: false,
     max_memory_restart: '1G',
     env_staging: {
-      NODE_ENV: 'production', // Use production mode to trigger AWS secrets
+      NODE_ENV: 'staging', // Use proper staging mode instead of production workaround
       USE_AWS_SECRETS: 'true',
       AWS_REGION: 'us-east-1',
-      PORT: 3001,
+      PORT: 5173,
       
       // Firebase staging project (updated to match AWS Secrets Manager)
       FIREBASE_PROJECT_ID: 'escrowstaging',

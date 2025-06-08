@@ -54,7 +54,13 @@ class AWSSecretsManager {
   }
 
   async getFirebaseServiceAccount() {
-    const serviceAccount = await this.getSecret('CryptoEscrow/Firebase/ServiceAccount');
+    const environment = process.env.NODE_ENV || 'development';
+    const secretName = environment === 'staging' 
+      ? 'CryptoEscrow/Staging/Firebase'
+      : 'CryptoEscrow/Production/Firebase';
+      
+    console.log(`Getting Firebase service account for environment: ${environment}, secret: ${secretName}`);
+    const serviceAccount = await this.getSecret(secretName);
     
     // Fix the private key formatting - unescape the newlines
     if (serviceAccount && serviceAccount.private_key) {

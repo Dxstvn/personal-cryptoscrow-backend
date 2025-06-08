@@ -58,8 +58,8 @@ Ensure `.env.test.e2e` exists in the project root with the following variables:
 
 ```env
 NODE_ENV=e2e_test
-PORT=3001
-API_BASE_URL=http://localhost:3001
+PORT=5173
+API_BASE_URL=http://localhost:5173
 FIRESTORE_EMULATOR_HOST=localhost:5004
 FIREBASE_AUTH_EMULATOR_HOST=localhost:9099
 FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199
@@ -156,8 +156,8 @@ The `testHelpers.js` file provides utilities for:
 ### Common Issues
 
 1. **Port Already in Use**
-   - Ensure no other services are running on ports 3001, 8545, 9099, 5004, 9199
-   - Kill any orphaned processes: `kill-port 3001`
+   - Ensure no other services are running on ports 5173, 8545, 9099, 5004, 9199
+   - Kill any orphaned processes: `kill-port 5173`
 
 2. **Emulator Connection Failed**
    - Verify emulators are running: `firebase emulators:start`

@@ -147,7 +147,7 @@ When running full tests, these ports are used:
 - **9099** - Firebase Auth emulator
 - **5004** - Firestore emulator
 - **9199** - Firebase Storage emulator
-- **3001** - Application server (during tests)
+- **5173** - Application server (during tests)
 
 ## Environment Variables
 
