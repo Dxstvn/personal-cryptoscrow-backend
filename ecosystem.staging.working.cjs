@@ -12,7 +12,7 @@ module.exports = {
         NODE_ENV: 'staging',
         USE_AWS_SECRETS: 'true',
         AWS_REGION: 'us-east-1',
-        PORT: '3001',
+        PORT: '5173',
         FIREBASE_PROJECT_ID: 'escrowstaging',
         FIREBASE_STORAGE_BUCKET: 'escrowstaging.appspot.com',
         FIREBASE_API_KEY: 'AIzaSyAEnTHpQpcgzWvDfiusF90-beSGCz5pva8',

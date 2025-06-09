@@ -97,8 +97,8 @@ sudo nano /opt/cryptoescrow/config/firebase-service-account.json
 pm2 status
 
 # Test health endpoints
-curl http://localhost:3000/api/health     # Production
-curl http://localhost:5173/api/health     # Staging
+curl http://localhost:3000/health     # Production
+curl http://localhost:5173/health     # Staging
 
 # Check logs for Firebase errors
 pm2 logs cryptoescrow-backend | grep -i firebase         # Production

@@ -11,7 +11,7 @@ module.exports = {
       NODE_ENV: 'staging',
       USE_AWS_SECRETS: 'true',
       AWS_REGION: 'us-east-1',
-      PORT: '3001',  // Match the working direct command
+      PORT: '5173',  // Updated to match ALB configuration
       FIREBASE_PROJECT_ID: 'escrowstaging',
       FIREBASE_STORAGE_BUCKET: 'escrowstaging.appspot.com',
       FIREBASE_API_KEY: 'AIzaSyAEnTHpQpcgzWvDfiusF90-beSGCz5pva8',

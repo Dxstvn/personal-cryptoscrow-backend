@@ -7,7 +7,7 @@ module.exports = {
     autorestart: true,
     watch: false,
     max_memory_restart: '1G',
-    env_production: {
+    env: {
       NODE_ENV: 'production',
       USE_AWS_SECRETS: 'true',
       AWS_REGION: 'us-east-1',

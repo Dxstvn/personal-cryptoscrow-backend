@@ -59,7 +59,7 @@ module.exports = {
       NODE_ENV: 'production', // Use production mode to trigger AWS secrets
       USE_AWS_SECRETS: 'true',
       AWS_REGION: 'us-east-1',
-      PORT: 3001,
+      PORT: 5173,
       
       // Firebase staging project (updated to match AWS Secrets Manager)
       FIREBASE_PROJECT_ID: 'escrowstaging',
@@ -122,7 +122,7 @@ import '../../../config/env.js';
 // Set emulator configuration BEFORE any Firebase imports
 const isTest = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test';
 const isProduction = process.env.NODE_ENV === 'production';
-const isStaging = process.env.NODE_ENV === 'staging' || (process.env.NODE_ENV === 'production' && process.env.PORT === '3001');
+const isStaging = process.env.NODE_ENV === 'staging' || (process.env.NODE_ENV === 'production' && process.env.PORT === '5173');
 
 if (isTest) {
   // Ensure Admin SDK uses emulators - set environment variables BEFORE any Firebase imports
@@ -363,7 +363,7 @@ safe_pm2_logs
 
 # Step 10: Test health endpoint
 log_info "Step 10: Testing health endpoint..."
-if curl -s http://localhost:3001/health | grep -q "OK"; then
+if curl -s http://localhost:5173/health | grep -q "OK"; then
     log_success "Health endpoint is responding correctly!"
 else
     log_warning "Health endpoint test failed. Let's check the logs again..."
@@ -384,16 +384,16 @@ if [ -n "$INSTANCE_ID" ]; then
     
     # Check if port 3001 is open
     for SG in $SECURITY_GROUPS; do
-        log_info "Checking security group $SG for port 3001..."
-        if aws ec2 describe-security-groups --group-ids $SG --query "SecurityGroups[0].IpPermissions[?FromPort==\`3001\`]" --output text | grep -q "3001"; then
-            log_success "Port 3001 is open in security group $SG"
+        log_info "Checking security group $SG for port 5173..."
+        if aws ec2 describe-security-groups --group-ids $SG --query "SecurityGroups[0].IpPermissions[?FromPort==\`5173\`]" --output text | grep -q "5173"; then
+            log_success "Port 5173 is open in security group $SG"
         else
-            log_warning "Port 3001 is NOT open in security group $SG"
-            log_info "Adding inbound rule for port 3001..."
+            log_warning "Port 5173 is NOT open in security group $SG"
+            log_info "Adding inbound rule for port 5173..."
             aws ec2 authorize-security-group-ingress \
                 --group-id $SG \
                 --protocol tcp \
-                --port 3001 \
+                --port 5173 \
                 --cidr 0.0.0.0/0 2>/dev/null || log_warning "Failed to add rule (may already exist or insufficient permissions)"
         fi
     done
@@ -407,13 +407,13 @@ log_info "Application Status:"
 pm2 status cryptoescrow-backend-staging
 
 log_info "Testing endpoints:"
-echo "• Local health check: curl http://localhost:3001/health"
-echo "• External health check: curl http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):3001/health"
+echo "• Local health check: curl http://localhost:5173/health"
+echo "• External health check: curl http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):5173/health"
 
 log_info "Next steps:"
 echo "1. Configure Firebase service account in AWS Secrets Manager"
 echo "2. Update DNS to point staging.clearhold.app to your ALB"
-echo "3. Configure ALB to forward traffic to port 3001"
+echo "3. Configure ALB to forward traffic to port 5173"
 echo "4. Update Firebase project settings with actual values"
 
 echo ""
