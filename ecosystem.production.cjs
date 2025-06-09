@@ -7,7 +7,9 @@ module.exports = {
     autorestart: true,
     watch: false,
     max_memory_restart: '1G',
-    env: {
+    // Add node arguments for ESM support
+    node_args: '--no-warnings',
+    env_production: {
       NODE_ENV: 'production',
       USE_AWS_SECRETS: 'true',
       AWS_REGION: 'us-east-1',
@@ -26,8 +28,14 @@ module.exports = {
     out_file: './logs/out.log',
     log_file: './logs/combined.log',
     time: true,
+    log_date_format: 'YYYY-MM-DD HH:mm Z',
     merge_logs: true,
     max_restarts: 10,
-    min_uptime: '10s'
+    min_uptime: '10s',
+    // Health check
+    health_check_grace_period: 3000,
+    // Graceful shutdown
+    kill_timeout: 5000,
+    listen_timeout: 3000
   }]
 }; 

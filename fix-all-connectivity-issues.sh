@@ -131,14 +131,15 @@ npm install --production
 log_section "PHASE 4: STARTING PRODUCTION (PORT 3000)"
 
 log_info "Starting production environment..."
-pm2 start ecosystem.production.cjs
+pm2 start ecosystem.config.cjs --env production
 
 # Wait for production to start
 log_info "Waiting for production to initialize..."
 sleep 10
 
 # Check production status
-PROD_RUNNING=$(pm2 list | grep -c "cryptoescrow-backend.*online" || echo "0")
+PROD_RUNNING=$(pm2 list | grep -c "cryptoescrow-backend.*online" 2>/dev/null || echo "0")
+PROD_RUNNING=$(echo "$PROD_RUNNING" | tr -d '\n')
 if [ "$PROD_RUNNING" -eq 0 ]; then
     log_error "Production failed to start"
     pm2 logs cryptoescrow-backend --lines 20
@@ -175,7 +176,8 @@ log_info "Waiting for staging to initialize..."
 sleep 10
 
 # Check staging status
-STAGING_RUNNING=$(pm2 list | grep -c "cryptoescrow-backend-staging.*online" || echo "0")
+STAGING_RUNNING=$(pm2 list | grep -c "cryptoescrow-backend-staging.*online" 2>/dev/null || echo "0")
+STAGING_RUNNING=$(echo "$STAGING_RUNNING" | tr -d '\n')
 if [ "$STAGING_RUNNING" -eq 0 ]; then
     log_error "Staging failed to start"
     pm2 logs cryptoescrow-backend-staging --lines 20
