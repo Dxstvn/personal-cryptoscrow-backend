@@ -28,9 +28,11 @@ const appName = "adminApp";
 // Function to get Firebase service account from AWS Secrets Manager
 async function getFirebaseServiceAccountFromAWS() {
   try {
+    // For staging, we need a separate Firebase project (escrowstaging)
+    // For production, we use the main Firebase project (ethescrow-377c6)
     const secretName = isStaging 
-      ? 'CryptoEscrow/Staging/Firebase' 
-      : 'CryptoEscrow/Production/Firebase';
+      ? 'CryptoEscrow/Staging/Firebase'
+      : 'CryptoEscrow/Firebase/ServiceAccount';
     
     console.log(`Getting Firebase service account from AWS Secrets Manager: ${secretName}`);
     const secret = await awsSecretsManager.getSecret(secretName);

@@ -55,9 +55,12 @@ class AWSSecretsManager {
 
   async getFirebaseServiceAccount() {
     const environment = process.env.NODE_ENV || 'development';
+    
+    // For staging, we need a separate Firebase project (escrowstaging)
+    // For production, we use the main Firebase project (ethescrow-377c6)
     const secretName = environment === 'staging' 
       ? 'CryptoEscrow/Staging/Firebase'
-      : 'CryptoEscrow/Production/Firebase';
+      : 'CryptoEscrow/Firebase/ServiceAccount';
       
     console.log(`Getting Firebase service account for environment: ${environment}, secret: ${secretName}`);
     const serviceAccount = await this.getSecret(secretName);

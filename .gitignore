@@ -110,3 +110,4 @@ aws-deployment/
 # TypeScript cache
 tsconfig.tsbuildinfo
 .tscache/
+mcp/

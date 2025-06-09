@@ -1,0 +1,8 @@
+Type,Host,Value,TTL
+A,@,76.76.21.21,5m
+CNAME,_6d16a410cd419420a0c1a3333c99aedb.api,_b7936c1daf1c4e7979a188cc2eb3774a.xlfgrmvvlj.acm-validations.aws.,5m
+CNAME,_cd0d1a09d4764863e8284780924cb3cb,_1994422fa0a62b24446dbd501fa7fab8.xlfgrmvvlj.acm-validations.aws.,5m
+CNAME,_cd97577c01f297279156ac5f8914ec6b.staging,_97b10fa5ccb08f151665771489045e66.xlfgrmvvlj.acm-validations.aws.,5m
+CNAME,api,clearhold-app-alb-360906699.us-east-1.elb.amazonaws.com.,5m
+CNAME,www,cname.vercel-dns.com.,5m
+CNAME,_75da1d6b7ac08e3dff07b1eacd2fb7c6,_2af02d64bbb24b52fd1e9e0f55d14d74.xlfgrmvvlj.acm-validations.aws.,5m

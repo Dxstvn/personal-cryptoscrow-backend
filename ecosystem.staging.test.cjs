@@ -1,6 +1,6 @@
 module.exports = {
   apps: [{
-    name: 'cryptoescrow-backend-staging',
+    name: 'cryptoescrow-backend-staging-test',
     script: 'src/server.js',
     instances: 1,
     exec_mode: 'fork',
@@ -8,12 +8,10 @@ module.exports = {
     watch: false,
     max_memory_restart: '1G',
     env: {
-      NODE_ENV: 'staging', // Use proper staging mode instead of production workaround
+      NODE_ENV: 'staging',
       USE_AWS_SECRETS: 'true',
       AWS_REGION: 'us-east-1',
-      PORT: '5173',
-      
-      // Firebase staging project (updated to match AWS Secrets Manager)
+      PORT: '3001',  // Match the working direct command
       FIREBASE_PROJECT_ID: 'escrowstaging',
       FIREBASE_STORAGE_BUCKET: 'escrowstaging.appspot.com',
       FIREBASE_API_KEY: 'AIzaSyAEnTHpQpcgzWvDfiusF90-beSGCz5pva8',
@@ -21,21 +19,15 @@ module.exports = {
       FIREBASE_MESSAGING_SENDER_ID: '960491714548',
       FIREBASE_APP_ID: '1:960491714548:web:f1b418ffaddd0ba2cc2ba',
       FIREBASE_MEASUREMENT_ID: 'G-07NYQBYP9N',
-      
-      // Blockchain - use testnet for staging
-      CHAIN_ID: '11155111', // Sepolia testnet
+      CHAIN_ID: '11155111',
       RPC_URL: 'https://sepolia.infura.io/v3/4af9a8307a914da58937e8da53c602f9',
-      
-      // Frontend staging URL
       FRONTEND_URL: 'https://staging.clearhold.app',
-      
-      // Enable additional logging for staging
       DEBUG: 'cryptoescrow:*',
       LOG_LEVEL: 'debug'
     },
-    error_file: './logs/staging-err.log',
-    out_file: './logs/staging-out.log',
-    log_file: './logs/staging-combined.log',
+    error_file: './logs/staging-test-err.log',
+    out_file: './logs/staging-test-out.log',
+    log_file: './logs/staging-test-combined.log',
     time: true,
     merge_logs: true,
     max_restarts: 10,
