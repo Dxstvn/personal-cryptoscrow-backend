@@ -4,6 +4,16 @@ import { getAdminApp } from "../auth/admin.js";
 
 const router = express.Router();
 
+// Simple health check without Firebase (for basic connectivity test)
+router.get("/simple", (req, res) => {
+  res.status(200).json({ 
+    status: "OK", 
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    port: process.env.PORT || 'unknown'
+  });
+});
+
 // Helper function to get database
 async function getDb() {
   const adminApp = await getAdminApp();
@@ -26,6 +36,7 @@ async function ensureHealthDocument() {
   }
 }
 
+// Full health check with Firebase
 router.get("/", async (req, res) => {
   try {
     // Ensure the health document exists
@@ -37,10 +48,20 @@ router.get("/", async (req, res) => {
     if (!healthDoc.exists) {
       throw new Error("Health check document not found");
     }
-    res.status(200).json({ status: "OK" });
+    res.status(200).json({ 
+      status: "OK", 
+      firebase: "connected",
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development'
+    });
   } catch (error) {
     console.error("Health check failed:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      details: error.message,
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development'
+    });
   }
 });
 
