@@ -39,7 +39,7 @@ echo ""
 # Get existing ALB information from your screenshots
 ALB_ARN="arn:aws:elasticloadbalancing:us-east-1:407813178514:loadbalancer/app/clearhold-app-alb/24298611ecbe24a1"
 VPC_ID="vpc-00661f7a3875053a4"
-INSTANCE_ID="i-0b25b447125440fc6b"
+INSTANCE_ID="i-0b25b44712540fc6b"
 
 log_info "Using ALB: clearhold-app-alb"
 log_info "VPC ID: $VPC_ID"
