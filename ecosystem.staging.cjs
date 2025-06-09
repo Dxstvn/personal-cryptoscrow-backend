@@ -11,7 +11,7 @@ module.exports = {
       NODE_ENV: 'staging', // Use proper staging mode instead of production workaround
       USE_AWS_SECRETS: 'true',
       AWS_REGION: 'us-east-1',
-      PORT: '5173',
+      PORT: '3001',
       
       // Firebase staging project (updated to match AWS Secrets Manager)
       FIREBASE_PROJECT_ID: 'escrowstaging',
