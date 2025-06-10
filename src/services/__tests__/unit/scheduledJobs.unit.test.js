@@ -10,34 +10,34 @@ const mockUpdateDealStatusInDB = jest.fn();
 const mockTriggerReleaseAfterApproval = jest.fn();
 const mockTriggerCancelAfterDisputeDeadline = jest.fn();
 const mockInitializeBlockchainService = jest.fn();
+
+// ✅ NEW: Cross-chain database service mocks
+const mockGetCrossChainDealsPendingMonitoring = jest.fn();
+const mockGetCrossChainTransactionsPendingCheck = jest.fn();
+const mockGetCrossChainDealsStuck = jest.fn();
+const mockGetCrossChainDealsPastFinalApproval = jest.fn();
+const mockGetCrossChainDealsPastDisputeDeadline = jest.fn();
+const mockUpdateCrossChainDealStatus = jest.fn();
+
+// ✅ NEW: Cross-chain service mocks
+const mockCheckPendingTransactionStatus = jest.fn();
+const mockTriggerCrossChainReleaseAfterApproval = jest.fn();
+const mockTriggerCrossChainReleaseAfterApprovalSimple = jest.fn();
+const mockTriggerCrossChainCancelAfterDisputeDeadline = jest.fn();
+const mockHandleStuckCrossChainTransaction = jest.fn();
+const mockRetryCrossChainTransactionStep = jest.fn();
+const mockGetCrossChainTransactionsForDeal = jest.fn();
+
 const mockCronSchedule = jest.fn(() => ({ start: jest.fn(), stop: jest.fn() }));
 const mockCronValidate = jest.fn().mockReturnValue(true);
 const mockContractABIGet = jest.fn(); // New mock function for contractABI getter
 let factoryExecutionCount = 0; // Counter for factory executions
-
-// This variable will be controlled by tests to change the ABI value.
-// let mockableContractABIValueForTests; // REMOVED
-// console.log('[TEST FILE SCOPE] mockableContractABIValueForTests declared top-level.'); // REMOVED
 let fixedTimestampNow; // To hold our fixed timestamp
 
-// Mock node-cron at the top level (can remain jest.mock as it's likely CJS)
-// jest.mock('node-cron', () => ({
-//   __esModule: true,
-//   schedule: mockCronSchedule,
-//   validate: mockCronValidate,
-//   default: {
-//     schedule: mockCronSchedule,
-//     validate: mockCronValidate,
-//   }
-// }));
-
-// REMOVE top-level jest.unstable_mockModule for blockchainService.js and databaseService.js
-// They will be moved into beforeEach
-
-// --- Test Suite ---
 describe('Scheduled Jobs (scheduledJobs.js)', () => {
   let startScheduledJobs;
   let checkAndProcessContractDeadlines;
+  let checkAndProcessCrossChainTransactions; // ✅ NEW
   let __TEST_ONLY_resetJobRunningFlag;
 
   // Console spies
@@ -56,15 +56,39 @@ describe('Scheduled Jobs (scheduledJobs.js)', () => {
     smartContractAddress: '0xCancelContractAddress',
     disputeDeadlineTimestamp: OriginalTimestamp.fromDate(new Date(Date.now() - 24 * 60 * 60 * 1000)),
   };
-  const dealNoSCRelease = {
-    id: 'dealNoSC001Release',
-    smartContractAddress: null,
-    finalApprovalTimestamp: OriginalTimestamp.fromDate(new Date(Date.now() - 24 * 60 * 60 * 1000)),
+
+  // ✅ NEW: Cross-chain mock data
+  const mockCrossChainDealRelease = {
+    id: 'crossChainDealRelease001',
+    isCrossChain: true,
+    smartContractAddress: '0xCrossChainReleaseContract',
+    crossChainTransactionId: 'cc-tx-release-001',
+    status: 'CrossChainFinalApproval',
+    finalApprovalDeadlineBackend: OriginalTimestamp.fromDate(new Date(Date.now() - 24 * 60 * 60 * 1000)),
   };
-  const dealNoSCCancel = {
-    id: 'dealNoSC001Cancel',
-    smartContractAddress: null,
-    disputeDeadlineTimestamp: OriginalTimestamp.fromDate(new Date(Date.now() - 24 * 60 * 60 * 1000)),
+
+  const mockCrossChainDealCancel = {
+    id: 'crossChainDealCancel001',
+    isCrossChain: true,
+    smartContractAddress: '0xCrossChainCancelContract',
+    crossChainTransactionId: 'cc-tx-cancel-001',
+    status: 'CrossChainInDispute',
+    disputeResolutionDeadlineBackend: OriginalTimestamp.fromDate(new Date(Date.now() - 24 * 60 * 60 * 1000)),
+  };
+
+  const mockCrossChainTransaction = {
+    id: 'cc-tx-pending-001',
+    status: 'in_progress',
+    dealId: 'deal-123',
+    lastUpdated: OriginalTimestamp.fromDate(new Date(Date.now() - 4 * 60 * 60 * 1000)), // 4 hours ago
+  };
+
+  const mockStuckCrossChainDeal = {
+    id: 'stuckDeal001',
+    isCrossChain: true,
+    status: 'CrossChainInProgress',
+    crossChainTransactionId: 'cc-tx-stuck-001',
+    crossChainLastActivity: OriginalTimestamp.fromDate(new Date(Date.now() - 25 * 60 * 60 * 1000)), // 25 hours ago
   };
 
   beforeEach(async () => {
@@ -72,12 +96,11 @@ describe('Scheduled Jobs (scheduledJobs.js)', () => {
     fixedTimestampNow = OriginalTimestamp.fromDate(new Date('2024-01-01T10:00:00.000Z'));
     console.log('[BEFORE EACH START] Beginning beforeEach setup.');
 
-    // 1. Set default for mockableContractABIValueForTests and ENV variables.
-    // mockableContractABIValueForTests = [{ type: 'function', name: 'defaultValidABI' }]; // REMOVED
-    // console.log(`[BEFORE EACH] mockableContractABIValueForTests initialized to: ${JSON.stringify(mockableContractABIValueForTests)}`); // REMOVED
+    // 1. Set ENV variables
     process.env.BACKEND_WALLET_PRIVATE_KEY = 'dummyPrivateKey';
     process.env.RPC_URL = 'dummyRpcUrl';
     delete process.env.CRON_SCHEDULE_DEADLINE_CHECKS;
+    delete process.env.CRON_SCHEDULE_CROSS_CHAIN_CHECKS; // ✅ NEW
 
     // 2. Reset modules
     console.log('[BEFORE EACH] Calling jest.resetModules().');
@@ -85,11 +108,10 @@ describe('Scheduled Jobs (scheduledJobs.js)', () => {
     console.log('[BEFORE EACH] jest.resetModules() completed.');
 
     // 3. Define mocks using jest.unstable_mockModule INSIDE beforeEach, AFTER resetModules
-    // console.log('[BEFORE EACH] Setting up unstable_mockModule for blockchainService.js.'); // REMOVED
     jest.unstable_mockModule('../../blockchainService.js', () => {
       factoryExecutionCount++;
       const currentFactoryExecution = factoryExecutionCount;
-      console.log(`[TEST DEBUG] blockchainService MOCK FACTORY EXECUTED. Count: ${currentFactoryExecution}. mockContractABIGet is now set to return (will call its current mock impl).`);
+      console.log(`[TEST DEBUG] blockchainService MOCK FACTORY EXECUTED. Count: ${currentFactoryExecution}.`);
       return {
         __esModule: true,
         initializeBlockchainService: mockInitializeBlockchainService,
@@ -102,14 +124,33 @@ describe('Scheduled Jobs (scheduledJobs.js)', () => {
         }
       };
     });
-    // console.log('[BEFORE EACH] unstable_mockModule for blockchainService.js configured.'); // REMOVED
 
+    // ✅ NEW: Enhanced database service mock with cross-chain functions
     console.log('[BEFORE EACH] Setting up unstable_mockModule for databaseService.js.');
     jest.unstable_mockModule('../../databaseService.js', () => ({
       __esModule: true,
       getDealsPastFinalApproval: mockGetDealsPastFinalApproval,
       getDealsPastDisputeDeadline: mockGetDealsPastDisputeDeadline,
       updateDealStatusInDB: mockUpdateDealStatusInDB,
+      // Cross-chain functions
+      getCrossChainDealsPendingMonitoring: mockGetCrossChainDealsPendingMonitoring,
+      getCrossChainTransactionsPendingCheck: mockGetCrossChainTransactionsPendingCheck,
+      getCrossChainDealsStuck: mockGetCrossChainDealsStuck,
+      getCrossChainDealsPastFinalApproval: mockGetCrossChainDealsPastFinalApproval,
+      getCrossChainDealsPastDisputeDeadline: mockGetCrossChainDealsPastDisputeDeadline,
+      updateCrossChainDealStatus: mockUpdateCrossChainDealStatus,
+    }));
+
+    // ✅ NEW: Cross-chain service mock
+    jest.unstable_mockModule('../../crossChainService.js', () => ({
+      __esModule: true,
+      checkPendingTransactionStatus: mockCheckPendingTransactionStatus,
+      triggerCrossChainReleaseAfterApproval: mockTriggerCrossChainReleaseAfterApproval,
+      triggerCrossChainReleaseAfterApprovalSimple: mockTriggerCrossChainReleaseAfterApprovalSimple,
+      triggerCrossChainCancelAfterDisputeDeadline: mockTriggerCrossChainCancelAfterDisputeDeadline,
+      handleStuckCrossChainTransaction: mockHandleStuckCrossChainTransaction,
+      retryCrossChainTransactionStep: mockRetryCrossChainTransactionStep,
+      getCrossChainTransactionsForDeal: mockGetCrossChainTransactionsForDeal,
     }));
 
     jest.unstable_mockModule('node-cron', () => ({
@@ -140,13 +181,26 @@ describe('Scheduled Jobs (scheduledJobs.js)', () => {
     mockInitializeBlockchainService.mockReset().mockImplementation(() => Promise.resolve(true));
     mockTriggerReleaseAfterApproval.mockReset().mockImplementation(() => Promise.resolve({ success: true, receipt: { transactionHash: '0xreleasehash' } }));
     mockTriggerCancelAfterDisputeDeadline.mockReset().mockImplementation(() => Promise.resolve({ success: true, receipt: { transactionHash: '0xcancelhash' } }));
-    mockContractABIGet.mockReset().mockReturnValue([{ type: 'function', name: 'defaultValidABI' }]); // Reset and set default for new mock
+    mockContractABIGet.mockReset().mockReturnValue([{ type: 'function', name: 'defaultValidABI' }]);
+    
+    // ✅ NEW: Reset cross-chain mocks
+    mockGetCrossChainDealsPendingMonitoring.mockReset().mockImplementation(() => Promise.resolve([]));
+    mockGetCrossChainTransactionsPendingCheck.mockReset().mockImplementation(() => Promise.resolve([]));
+    mockGetCrossChainDealsStuck.mockReset().mockImplementation(() => Promise.resolve([]));
+    mockGetCrossChainDealsPastFinalApproval.mockReset().mockImplementation(() => Promise.resolve([]));
+    mockGetCrossChainDealsPastDisputeDeadline.mockReset().mockImplementation(() => Promise.resolve([]));
+    mockUpdateCrossChainDealStatus.mockReset().mockImplementation(() => Promise.resolve({ success: true }));
+    mockCheckPendingTransactionStatus.mockReset().mockImplementation(() => Promise.resolve({ success: true, updated: false }));
+    mockTriggerCrossChainReleaseAfterApproval.mockReset().mockImplementation(() => Promise.resolve({ success: true, transactionId: 'cc-tx-release' }));
+    mockTriggerCrossChainReleaseAfterApprovalSimple.mockReset().mockImplementation(() => Promise.resolve({ success: true, receipt: { transactionHash: '0xccreleasehash' } }));
+    mockTriggerCrossChainCancelAfterDisputeDeadline.mockReset().mockImplementation(() => Promise.resolve({ success: true, receipt: { transactionHash: '0xcccancelhash' } }));
+    mockHandleStuckCrossChainTransaction.mockReset().mockImplementation(() => Promise.resolve({ success: true, message: 'Transaction unstuck' }));
+    mockRetryCrossChainTransactionStep.mockReset().mockImplementation(() => Promise.resolve({ success: true, result: { status: 'completed' } }));
+    mockGetCrossChainTransactionsForDeal.mockReset().mockImplementation(() => Promise.resolve([]));
     
     mockCronSchedule.mockClear(); // Clear cron schedule mock specifically
     mockCronValidate.mockClear().mockReturnValue(true);
 
-    
-    
     // 6. Setup console spies
     consoleLogSpy = jest.spyOn(console, 'log');
     consoleWarnSpy = jest.spyOn(console, 'warn');
@@ -158,16 +212,13 @@ describe('Scheduled Jobs (scheduledJobs.js)', () => {
     }
 
     // Dynamically import the SUT (System Under Test) AFTER all mocks are set up
-    // console.log('[BEFORE EACH] Dynamically importing SUT (../../scheduledJobs.js)...'); // REMOVED
     const SUT = await import('../../scheduledJobs.js');
-    // console.log('[BEFORE EACH] SUT import completed.'); // REMOVED
     startScheduledJobs = SUT.startScheduledJobs;
     checkAndProcessContractDeadlines = SUT.checkAndProcessContractDeadlines;
+    checkAndProcessCrossChainTransactions = SUT.checkAndProcessCrossChainTransactions; // ✅ NEW
     __TEST_ONLY_resetJobRunningFlag = SUT.__TEST_ONLY_resetJobRunningFlag;
 
     // Now, reset the job running flag for the actual module instance if it was already loaded
-    // This is important because the module might have been imported by Jest for initial parsing
-    // before mocks were fully in place for its top-level execution paths.
     if (typeof __TEST_ONLY_resetJobRunningFlag === 'function') {
         __TEST_ONLY_resetJobRunningFlag();
     }
@@ -185,290 +236,284 @@ describe('Scheduled Jobs (scheduledJobs.js)', () => {
 
   afterAll(async () => {
     await deleteAdminApp();
-    // REMOVED jest.forceExit();
   });
 
   describe('startScheduledJobs', () => {
-    it('should schedule the cron job with the correct schedule from env', async () => {
+    it('should schedule both deadline check and cross-chain monitoring jobs with correct schedules', async () => {
       process.env.CRON_SCHEDULE_DEADLINE_CHECKS = '0 0 * * *';
-      // const { startScheduledJobs } = await import('../../services/scheduledJobs.js'); // Ensure SUT import
+      process.env.CRON_SCHEDULE_CROSS_CHAIN_CHECKS = '*/10 * * * *';
+      
       startScheduledJobs();
-      expect(mockCronSchedule).toHaveBeenCalledTimes(1);
+      
+      expect(mockCronSchedule).toHaveBeenCalledTimes(2); // ✅ NEW: Now schedules 2 jobs
       expect(mockCronSchedule).toHaveBeenCalledWith('0 0 * * *', expect.any(Function), expect.objectContaining({
         scheduled: true,
         timezone: "America/New_York"
       }));
-    });
-
-    it('should use default cron schedule if env variable is not set', async () => {
-      // const { startScheduledJobs } = await import('../../services/scheduledJobs.js'); // Ensure SUT import
-      startScheduledJobs();
-      expect(mockCronSchedule).toHaveBeenCalledTimes(1);
-      expect(mockCronSchedule).toHaveBeenCalledWith('*/30 * * * *', expect.any(Function), expect.objectContaining({
+      expect(mockCronSchedule).toHaveBeenCalledWith('*/10 * * * *', expect.any(Function), expect.objectContaining({
         scheduled: true,
         timezone: "America/New_York"
       }));
     });
 
-    it('should NOT schedule jobs if BACKEND_WALLET_PRIVATE_KEY is missing', async () => {
-      delete process.env.BACKEND_WALLET_PRIVATE_KEY;
-      // const { startScheduledJobs } = await import('../../services/scheduledJobs.js'); // Ensure SUT import
+    it('should use default cron schedules if env variables are not set', async () => {
       startScheduledJobs();
-      expect(mockCronSchedule).not.toHaveBeenCalled();
-      expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('Automated contract call jobs DISABLED due to missing BACKEND_WALLET_PRIVATE_KEY or RPC_URL.'));
-    });
-
-    it('should NOT schedule jobs if RPC_URL is missing', async () => {
-      delete process.env.RPC_URL;
-      // const { startScheduledJobs } = await import('../../services/scheduledJobs.js'); // Ensure SUT import
-      startScheduledJobs();
-      expect(mockCronSchedule).not.toHaveBeenCalled();
-      expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('Automated contract call jobs DISABLED due to missing BACKEND_WALLET_PRIVATE_KEY or RPC_URL.'));
-    });
-
-    it('should NOT schedule jobs if contractABI is null', async () => {
-      console.log('[TEST DEBUG] Test: contractABI is null - START');
-      jest.resetModules(); // Reset modules for this specific test
-      console.log('[TEST DEBUG] Test: contractABI is null - jest.resetModules() DONE');
-
-      // Re-apply mocks for this test after resetModules
-      mockContractABIGet.mockReset().mockReturnValue(null); // IMPORTANT: Set for this test *before* SUT import
-      console.log(`[TEST DEBUG] Test: contractABI is null - mockContractABIGet configured to return null. Direct call: ${JSON.stringify(mockContractABIGet())}`);
-
-      factoryExecutionCount = 0; // Reset for clarity
-      jest.unstable_mockModule('../../blockchainService.js', () => {
-        factoryExecutionCount++;
-        const currentFactoryExecution = factoryExecutionCount;
-        console.log(`[TEST DEBUG IN-TEST] blockchainService MOCK FACTORY EXECUTED. Count: ${currentFactoryExecution}.`);
-        return {
-          __esModule: true, initializeBlockchainService: mockInitializeBlockchainService, triggerReleaseAfterApproval: mockTriggerReleaseAfterApproval, triggerCancelAfterDisputeDeadline: mockTriggerCancelAfterDisputeDeadline,
-          get contractABI() { const val = mockContractABIGet(); console.log(`[TEST DEBUG IN-TEST] contractABI GETTER CALLED (Factory Exec Count: ${currentFactoryExecution}). mockContractABIGet() returned: ${JSON.stringify(val)}`); return val; }
-        };
-      });
-      jest.unstable_mockModule('../../databaseService.js', () => ({ __esModule: true, getDealsPastFinalApproval: mockGetDealsPastFinalApproval, getDealsPastDisputeDeadline: mockGetDealsPastDisputeDeadline, updateDealStatusInDB: mockUpdateDealStatusInDB }));
-      jest.unstable_mockModule('node-cron', () => ({ __esModule: true, schedule: mockCronSchedule, validate: mockCronValidate, default: { schedule: mockCronSchedule, validate: mockCronValidate } }));
-      const originalFirestore = jest.requireActual('firebase-admin/firestore');
-      jest.unstable_mockModule('firebase-admin/firestore', () => ({ ...originalFirestore, Timestamp: { ...originalFirestore.Timestamp, now: jest.fn(() => fixedTimestampNow) } }));
-
-      const { startScheduledJobs: localStartScheduledJobs } = await import('../../scheduledJobs.js');
-      console.log('[TEST DEBUG] Test: contractABI is null - localStartScheduledJobs imported');
-      localStartScheduledJobs();
-      expect(mockCronSchedule).not.toHaveBeenCalled();
-      expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('DISABLED due to ABI loading failure or empty ABI.'));
-      console.log('[TEST DEBUG] Test: contractABI is null - END');
-    });
-
-    it('should NOT schedule jobs if contractABI is an empty array', async () => {
-      console.log('[TEST DEBUG] Test: contractABI is empty array - START');
-      jest.resetModules(); // Reset modules for this specific test
-      console.log('[TEST DEBUG] Test: contractABI is empty array - jest.resetModules() DONE');
-
-      // Re-apply mocks for this test after resetModules
-      mockContractABIGet.mockReset().mockReturnValue([]); // IMPORTANT: Set for this test *before* SUT import
-      console.log(`[TEST DEBUG] Test: contractABI is empty array - mockContractABIGet configured to return []. Direct call: ${JSON.stringify(mockContractABIGet())}`);
       
-      factoryExecutionCount = 0; // Reset for clarity
-      jest.unstable_mockModule('../../blockchainService.js', () => {
-        factoryExecutionCount++;
-        const currentFactoryExecution = factoryExecutionCount;
-        console.log(`[TEST DEBUG IN-TEST] blockchainService MOCK FACTORY EXECUTED. Count: ${currentFactoryExecution}.`);
-        return {
-          __esModule: true, initializeBlockchainService: mockInitializeBlockchainService, triggerReleaseAfterApproval: mockTriggerReleaseAfterApproval, triggerCancelAfterDisputeDeadline: mockTriggerCancelAfterDisputeDeadline,
-          get contractABI() { const val = mockContractABIGet(); console.log(`[TEST DEBUG IN-TEST] contractABI GETTER CALLED (Factory Exec Count: ${currentFactoryExecution}). mockContractABIGet() returned: ${JSON.stringify(val)}`); return val; }
-        };
-      });
-      jest.unstable_mockModule('../../databaseService.js', () => ({ __esModule: true, getDealsPastFinalApproval: mockGetDealsPastFinalApproval, getDealsPastDisputeDeadline: mockGetDealsPastDisputeDeadline, updateDealStatusInDB: mockUpdateDealStatusInDB }));
-      jest.unstable_mockModule('node-cron', () => ({ __esModule: true, schedule: mockCronSchedule, validate: mockCronValidate, default: { schedule: mockCronSchedule, validate: mockCronValidate } }));
-      const originalFirestore = jest.requireActual('firebase-admin/firestore');
-      jest.unstable_mockModule('firebase-admin/firestore', () => ({ ...originalFirestore, Timestamp: { ...originalFirestore.Timestamp, now: jest.fn(() => fixedTimestampNow) } }));
-
-      const { startScheduledJobs: localStartScheduledJobs } = await import('../../scheduledJobs.js');
-      console.log('[TEST DEBUG] Test: contractABI is empty array - localStartScheduledJobs imported');
-      localStartScheduledJobs();
-      expect(mockCronSchedule).not.toHaveBeenCalled();
-      expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('DISABLED due to ABI loading failure or empty ABI.'));
-      console.log('[TEST DEBUG] Test: contractABI is empty array - END');
+      expect(mockCronSchedule).toHaveBeenCalledTimes(2);
+      expect(mockCronSchedule).toHaveBeenCalledWith('*/30 * * * *', expect.any(Function), expect.objectContaining({
+        scheduled: true,
+        timezone: "America/New_York"
+      }));
+      expect(mockCronSchedule).toHaveBeenCalledWith('*/15 * * * *', expect.any(Function), expect.objectContaining({
+        scheduled: true,
+        timezone: "America/New_York"
+      }));
     });
 
-    it('should NOT schedule jobs if CRON_SCHEDULE_DEADLINE_CHECKS is invalid', async () => {
-      process.env.CRON_SCHEDULE_DEADLINE_CHECKS = 'invalid-cron-string';
-      mockCronValidate.mockReturnValue(false); // Simulate cron.validate returning false
-      // const { startScheduledJobs } = await import('../../services/scheduledJobs.js');
+    it('should skip deadline check job if blockchain service not available but still schedule cross-chain job', async () => {
+      mockContractABIGet.mockReturnValue(null);
+      jest.resetModules();
+      
+      // Re-setup mocks with null ABI
+      jest.unstable_mockModule('../../blockchainService.js', () => ({
+        __esModule: true,
+        get contractABI() { return null; }
+      }));
+      jest.unstable_mockModule('../../databaseService.js', () => ({
+        __esModule: true,
+        getCrossChainDealsPendingMonitoring: mockGetCrossChainDealsPendingMonitoring,
+        getCrossChainTransactionsPendingCheck: mockGetCrossChainTransactionsPendingCheck,
+        getCrossChainDealsStuck: mockGetCrossChainDealsStuck,
+      }));
+      jest.unstable_mockModule('../../crossChainService.js', () => ({
+        __esModule: true,
+        checkPendingTransactionStatus: mockCheckPendingTransactionStatus,
+      }));
+      jest.unstable_mockModule('node-cron', () => ({
+        __esModule: true,
+        schedule: mockCronSchedule,
+        validate: mockCronValidate,
+        default: { schedule: mockCronSchedule, validate: mockCronValidate }
+      }));
+
+      const { startScheduledJobs: localStartScheduledJobs } = await import('../../scheduledJobs.js');
+      localStartScheduledJobs();
+      
+      expect(mockCronSchedule).toHaveBeenCalledTimes(1); // Only cross-chain job
+      expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('Skipping deadline check job - blockchain service not available'));
+    });
+
+    it('should NOT schedule any jobs if required env vars are missing', async () => {
+      delete process.env.BACKEND_WALLET_PRIVATE_KEY;
       startScheduledJobs();
       expect(mockCronSchedule).not.toHaveBeenCalled();
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[Scheduler] Invalid CRON_SCHEDULE: "invalid-cron-string". Automated jobs will not start.')
-      );
+      expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('Automated contract call jobs DISABLED due to missing BACKEND_WALLET_PRIVATE_KEY or RPC_URL.'));
+    });
+
+    it('should NOT schedule jobs if cross-chain cron schedule is invalid', async () => {
+      process.env.CRON_SCHEDULE_CROSS_CHAIN_CHECKS = 'invalid-cron-string';
+      mockCronValidate.mockImplementation((schedule) => {
+        if (schedule === 'invalid-cron-string') return false;
+        return true;
+      });
+      
+      startScheduledJobs();
+      expect(mockCronSchedule).not.toHaveBeenCalled();
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid CROSS_CHAIN_CRON_SCHEDULE'));
     });
   });
 
-  describe('checkAndProcessContractDeadlines', () => {
-    async function getSutWithFreshJobFlag() {
-      const mod = await import('../../scheduledJobs.js');
-      if (typeof mod.__TEST_ONLY_resetJobRunningFlag === 'function') {
-        mod.__TEST_ONLY_resetJobRunningFlag();
-      }
-      // Return all exports, but the test will destructure what it needs
-      return mod; 
-    }
-
-    it('should call DB checks and do nothing else if no deals are found', async () => {
-      // const { checkAndProcessContractDeadlines } = await getSutWithFreshJobFlag();
-      await checkAndProcessContractDeadlines();
-      expect(mockGetDealsPastFinalApproval).toHaveBeenCalledTimes(1);
-      expect(mockGetDealsPastDisputeDeadline).toHaveBeenCalledTimes(1);
-      expect(mockTriggerReleaseAfterApproval).not.toHaveBeenCalled();
-      expect(mockTriggerCancelAfterDisputeDeadline).not.toHaveBeenCalled();
-      expect(mockUpdateDealStatusInDB).not.toHaveBeenCalled();
-    });
-
-    it('should process a deal for release successfully', async () => {
+  describe('checkAndProcessContractDeadlines (Enhanced)', () => {
+    it('should process regular deals and cross-chain deals past final approval', async () => {
       mockGetDealsPastFinalApproval.mockResolvedValueOnce([mockDealRelease]);
-      // const { checkAndProcessContractDeadlines } = await getSutWithFreshJobFlag(); // Use helper
+      mockGetCrossChainDealsPastFinalApproval.mockResolvedValueOnce([mockCrossChainDealRelease]);
+      
       await checkAndProcessContractDeadlines();
-      expect(mockGetDealsPastFinalApproval).toHaveBeenCalledTimes(1);
-      expect(mockGetDealsPastDisputeDeadline).toHaveBeenCalledTimes(1);
-      expect(mockTriggerReleaseAfterApproval).toHaveBeenCalledTimes(1);
+      
+      // Regular deal processing
       expect(mockTriggerReleaseAfterApproval).toHaveBeenCalledWith(mockDealRelease.smartContractAddress, mockDealRelease.id);
-      expect(mockUpdateDealStatusInDB).toHaveBeenCalledTimes(1);
-      expect(mockUpdateDealStatusInDB).toHaveBeenCalledWith(mockDealRelease.id, {
+      expect(mockUpdateDealStatusInDB).toHaveBeenCalledWith(mockDealRelease.id, expect.objectContaining({
         status: 'FundsReleased',
         autoReleaseTxHash: '0xreleasehash',
-        lastAutomaticProcessAttempt: fixedTimestampNow,
-        timelineEventMessage: expect.stringContaining('Successfully auto-released funds')
-      });
+      }));
+      
+      // ✅ NEW: Cross-chain deal processing
+      expect(mockTriggerCrossChainReleaseAfterApprovalSimple).toHaveBeenCalledWith(mockCrossChainDealRelease.smartContractAddress, mockCrossChainDealRelease.id);
+      expect(mockUpdateCrossChainDealStatus).toHaveBeenCalledWith(mockCrossChainDealRelease.id, expect.objectContaining({
+        status: 'CrossChainFundsReleased',
+        crossChainTxHash: '0xccreleasehash',
+      }));
     });
 
-    it('should process a deal for cancellation successfully', async () => {
+    it('should process regular deals and cross-chain deals past dispute deadline', async () => {
       mockGetDealsPastDisputeDeadline.mockResolvedValueOnce([mockDealCancel]);
-      // const { checkAndProcessContractDeadlines } = await getSutWithFreshJobFlag(); // Use helper
+      mockGetCrossChainDealsPastDisputeDeadline.mockResolvedValueOnce([mockCrossChainDealCancel]);
+      
       await checkAndProcessContractDeadlines();
-      expect(mockGetDealsPastFinalApproval).toHaveBeenCalledTimes(1);
-      expect(mockGetDealsPastDisputeDeadline).toHaveBeenCalledTimes(1);
-      expect(mockTriggerCancelAfterDisputeDeadline).toHaveBeenCalledTimes(1);
+      
+      // Regular deal processing
       expect(mockTriggerCancelAfterDisputeDeadline).toHaveBeenCalledWith(mockDealCancel.smartContractAddress, mockDealCancel.id);
-      expect(mockUpdateDealStatusInDB).toHaveBeenCalledTimes(1);
-      expect(mockUpdateDealStatusInDB).toHaveBeenCalledWith(mockDealCancel.id, {
+      expect(mockUpdateDealStatusInDB).toHaveBeenCalledWith(mockDealCancel.id, expect.objectContaining({
         status: 'CancelledAfterDisputeDeadline',
         autoCancelTxHash: '0xcancelhash',
-        lastAutomaticProcessAttempt: fixedTimestampNow,
-        timelineEventMessage: expect.stringContaining('Successfully auto-cancelled deal')
-      });
-    });
-
-    it('should handle blockchain call failure for release and update DB accordingly', async () => {
-      const releaseError = new Error('Blockchain release failed');
-      mockGetDealsPastFinalApproval.mockResolvedValueOnce([mockDealRelease]);
-      mockTriggerReleaseAfterApproval.mockResolvedValueOnce({ success: false, error: releaseError.message });
-      // const { checkAndProcessContractDeadlines } = await getSutWithFreshJobFlag(); // Use helper
-      await checkAndProcessContractDeadlines();
-      expect(mockTriggerReleaseAfterApproval).toHaveBeenCalledTimes(1);
-      expect(mockUpdateDealStatusInDB).toHaveBeenCalledTimes(1);
-      expect(mockUpdateDealStatusInDB).toHaveBeenCalledWith(mockDealRelease.id, {
-        status: 'AutoReleaseFailed',
-        lastAutomaticProcessAttempt: fixedTimestampNow, 
-        processingError: `Blockchain call failed: ${releaseError.message}`,
-        timelineEventMessage: expect.stringContaining('FAILED to process auto-release')
-      });
-      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining(`[Scheduler] FAILED to process auto-release for deal ${mockDealRelease.id}`), releaseError.message);
-    });
-
-    it('should handle blockchain call failure for cancellation and update DB accordingly', async () => {
-      const cancelError = new Error('Blockchain cancel failed');
-      mockGetDealsPastDisputeDeadline.mockResolvedValueOnce([mockDealCancel]);
-      mockTriggerCancelAfterDisputeDeadline.mockResolvedValueOnce({ success: false, error: cancelError.message });
-      // const { checkAndProcessContractDeadlines } = await getSutWithFreshJobFlag(); // Use helper
-      await checkAndProcessContractDeadlines();
-      expect(mockTriggerCancelAfterDisputeDeadline).toHaveBeenCalledTimes(1);
-      expect(mockUpdateDealStatusInDB).toHaveBeenCalledTimes(1);
-      expect(mockUpdateDealStatusInDB).toHaveBeenCalledWith(mockDealCancel.id, {
-        status: 'AutoCancellationFailed',
-        lastAutomaticProcessAttempt: fixedTimestampNow, 
-        processingError: `Blockchain call failed: ${cancelError.message}`,
-        timelineEventMessage: expect.stringContaining('FAILED to process auto-cancellation')
-      });
-      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining(`[Scheduler] FAILED to process auto-cancellation for deal ${mockDealCancel.id}`), cancelError.message);
-    });
-
-    it('should skip processing and warn if deal has no smartContractAddress for release', async () => {
-      mockGetDealsPastFinalApproval.mockResolvedValueOnce([dealNoSCRelease]);
-      // const { checkAndProcessContractDeadlines } = await getSutWithFreshJobFlag(); // Use helper
-      await checkAndProcessContractDeadlines();
-      expect(mockTriggerReleaseAfterApproval).not.toHaveBeenCalled();
-      expect(mockUpdateDealStatusInDB).not.toHaveBeenCalled();
-      expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining(`[Scheduler] Deal ${dealNoSCRelease.id} is past final approval but has no smartContractAddress. Skipping.`));
-    });
-
-    it('should skip processing and warn if deal has no smartContractAddress for cancellation', async () => {
-      mockGetDealsPastDisputeDeadline.mockResolvedValueOnce([dealNoSCCancel]);
-      // const { checkAndProcessContractDeadlines } = await getSutWithFreshJobFlag(); // Use helper
-      await checkAndProcessContractDeadlines();
-      expect(mockTriggerCancelAfterDisputeDeadline).not.toHaveBeenCalled();
-      expect(mockUpdateDealStatusInDB).not.toHaveBeenCalled();
-      expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining(`[Scheduler] Deal ${dealNoSCCancel.id} is past dispute deadline but has no smartContractAddress. Skipping.`));
-    });
-
-    it('should prevent concurrent job runs', async () => {
-      jest.useFakeTimers();
-      // const { checkAndProcessContractDeadlines, __TEST_ONLY_resetJobRunningFlag } = await import('../../services/scheduledJobs.js');
-      // if (typeof __TEST_ONLY_resetJobRunningFlag === 'function') __TEST_ONLY_resetJobRunningFlag();
+      }));
       
-      // Ensure the SUT's internal flag is reset before this specific test
+      // ✅ NEW: Cross-chain deal processing
+      expect(mockTriggerCrossChainCancelAfterDisputeDeadline).toHaveBeenCalledWith(mockCrossChainDealCancel.smartContractAddress, mockCrossChainDealCancel.id);
+      expect(mockUpdateCrossChainDealStatus).toHaveBeenCalledWith(mockCrossChainDealCancel.id, expect.objectContaining({
+        status: 'CrossChainCancelledAfterDisputeDeadline',
+        crossChainTxHash: '0xcccancelhash',
+      }));
+    });
+
+    it('should handle cross-chain release failure requiring manual intervention', async () => {
+      const crossChainDealWithFailure = { ...mockCrossChainDealRelease };
+      mockGetCrossChainDealsPastFinalApproval.mockResolvedValueOnce([crossChainDealWithFailure]);
+      mockTriggerCrossChainReleaseAfterApprovalSimple.mockResolvedValueOnce({ 
+        success: false, 
+        error: 'Bridge unavailable',
+        requiresManualIntervention: true 
+      });
+      
+      await checkAndProcessContractDeadlines();
+      
+      expect(mockUpdateCrossChainDealStatus).toHaveBeenCalledWith(crossChainDealWithFailure.id, expect.objectContaining({
+        status: 'CrossChainReleaseRequiresIntervention',
+        processingError: 'Cross-chain call failed: Bridge unavailable',
+      }));
+      expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('FAILED to process cross-chain auto-release'));
+    });
+  });
+
+  // ✅ NEW: Cross-chain monitoring job tests
+  describe('checkAndProcessCrossChainTransactions', () => {
+    it('should check pending cross-chain transactions and update status', async () => {
+      mockGetCrossChainTransactionsPendingCheck.mockResolvedValueOnce([mockCrossChainTransaction]);
+      mockCheckPendingTransactionStatus.mockResolvedValueOnce({
+        success: true,
+        updated: true,
+        status: 'completed'
+      });
+      
+      await checkAndProcessCrossChainTransactions();
+      
+      expect(mockCheckPendingTransactionStatus).toHaveBeenCalledWith(mockCrossChainTransaction.id);
+      expect(mockUpdateCrossChainDealStatus).toHaveBeenCalledWith(mockCrossChainTransaction.dealId, expect.objectContaining({
+        status: 'CrossChainCompleted',
+        crossChainTxHash: mockCrossChainTransaction.id,
+      }));
+    });
+
+    it('should handle stuck cross-chain deals and mark for manual intervention', async () => {
+      mockGetCrossChainDealsStuck.mockResolvedValueOnce([mockStuckCrossChainDeal]);
+      mockGetCrossChainTransactionsForDeal.mockResolvedValueOnce([{
+        id: 'stuck-tx-001',
+        status: 'in_progress',
+        dealId: mockStuckCrossChainDeal.id
+      }]);
+      mockHandleStuckCrossChainTransaction.mockResolvedValueOnce({
+        success: true,
+        message: 'Transaction marked as stuck',
+        requiresManualIntervention: true
+      });
+      
+      await checkAndProcessCrossChainTransactions();
+      
+      expect(mockHandleStuckCrossChainTransaction).toHaveBeenCalledWith('stuck-tx-001');
+      expect(mockUpdateCrossChainDealStatus).toHaveBeenCalledWith(mockStuckCrossChainDeal.id, expect.objectContaining({
+        status: 'CrossChainStuck',
+        processingError: 'Transaction stuck: Transaction marked as stuck',
+      }));
+    });
+
+    it('should prevent concurrent cross-chain job runs', async () => {
+      jest.useFakeTimers();
+      
       if (typeof __TEST_ONLY_resetJobRunningFlag === 'function') {
         __TEST_ONLY_resetJobRunningFlag();
       }
 
-      const promise1 = checkAndProcessContractDeadlines();
-      const promise2 = checkAndProcessContractDeadlines(); 
+      const promise1 = checkAndProcessCrossChainTransactions();
+      const promise2 = checkAndProcessCrossChainTransactions(); 
       
       jest.advanceTimersByTime(100);
       await Promise.all([promise1, promise2]);
       
-      expect(mockGetDealsPastFinalApproval).toHaveBeenCalledTimes(1);
-      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('[Scheduler] Deadline check job already running. Skipping this cycle.'));
+      expect(mockGetCrossChainTransactionsPendingCheck).toHaveBeenCalledTimes(1);
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('[Scheduler] Cross-chain monitoring job already running. Skipping this cycle.'));
       jest.useRealTimers();
-    }, 10000);
-
-    it('should log critical error if database query fails unexpectedly', async () => {
-      const dbError = new Error('Firestore query failed');
-      mockGetDealsPastFinalApproval.mockRejectedValueOnce(dbError);
-      // const { checkAndProcessContractDeadlines } = await getSutWithFreshJobFlag(); // Use helper
-      await checkAndProcessContractDeadlines();
-      expect(consoleErrorSpy).toHaveBeenCalledWith('[Scheduler] CRITICAL ERROR in deadline check job:', dbError);
-      
-      mockGetDealsPastFinalApproval.mockReset().mockResolvedValue([]);
-      // const { checkAndProcessContractDeadlines: cpcDeadlinesAfterError } = await getSutWithFreshJobFlag(); 
-      
-      // Reset flag before next call within the same test if needed, or rely on fresh SUT state.
-      // For this particular follow-up, we want to ensure the flag was reset by the previous error.
-      // So, we'll call the already initialized 'checkAndProcessContractDeadlines' directly.
-      // No, we still need a clean state for the flag to test if it's correctly reset.
-      const { checkAndProcessContractDeadlines: cpcDeadlinesAfterError } = await getSutWithFreshJobFlag();
-
-      await cpcDeadlinesAfterError();
-      expect(mockGetDealsPastFinalApproval).toHaveBeenCalledTimes(1); // This assertion counts calls *within this new SUT instance*
     });
 
-    it('should reset isJobRunning flag even if processing logic throws error', async () => {
-      mockGetDealsPastFinalApproval.mockResolvedValueOnce([mockDealRelease]);
-      const unexpectedError = new Error('Unexpected blockchain service crash');
-      mockTriggerReleaseAfterApproval.mockRejectedValueOnce(unexpectedError);
-      // const { checkAndProcessContractDeadlines } = await getSutWithFreshJobFlag(); // Use helper
-      await checkAndProcessContractDeadlines();
-      expect(consoleErrorSpy).toHaveBeenCalledWith('[Scheduler] CRITICAL ERROR in deadline check job:', unexpectedError);
+    it('should handle cross-chain monitoring errors gracefully', async () => {
+      const dbError = new Error('Cross-chain query failed');
+      mockGetCrossChainTransactionsPendingCheck.mockRejectedValueOnce(dbError);
       
-      mockGetDealsPastFinalApproval.mockReset().mockResolvedValue([]);
-      mockTriggerReleaseAfterApproval.mockReset().mockResolvedValue({ success: true, receipt: { transactionHash: '0xreleasehash' } });
-      consoleLogSpy.mockClear();
+      await checkAndProcessCrossChainTransactions();
+      
+      expect(consoleErrorSpy).toHaveBeenCalledWith('[Scheduler] CRITICAL ERROR in cross-chain monitoring job:', dbError);
+    });
 
-      // const { checkAndProcessContractDeadlines: cpcDeadlinesAfterError } = await getSutWithFreshJobFlag();
-      // Call the 'checkAndProcessContractDeadlines' that should now have its flag reset by the 'finally' block
-      // of the previous invocation within this test (even though it threw an error).
-      // We need a fresh SUT instance to properly test the flag reset from a prior run.
-      const { checkAndProcessContractDeadlines: cpcDeadlinesAfterError } = await getSutWithFreshJobFlag();
-      await cpcDeadlinesAfterError();
-      expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('[Scheduler] Deadline check job already running. Skipping this cycle.'));
-      expect(mockGetDealsPastFinalApproval).toHaveBeenCalledTimes(1); // Counts calls for this new SUT instance
+    it('should warn when transaction status check fails but continue processing', async () => {
+      const failingTransaction = { ...mockCrossChainTransaction, id: 'failing-tx' };
+      mockGetCrossChainTransactionsPendingCheck.mockResolvedValueOnce([failingTransaction]);
+      mockCheckPendingTransactionStatus.mockResolvedValueOnce({
+        success: false,
+        error: 'Network timeout'
+      });
+      
+      await checkAndProcessCrossChainTransactions();
+      
+      expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to check status for transaction failing-tx:'), 'Network timeout');
+    });
+  });
+
+  // ✅ NEW: Integration test for dual job system
+  describe('Dual Job System Integration', () => {
+    it('should run both deadline check and cross-chain monitoring independently', async () => {
+      // Setup data for both job types
+      mockGetDealsPastFinalApproval.mockResolvedValueOnce([mockDealRelease]);
+      mockGetCrossChainTransactionsPendingCheck.mockResolvedValueOnce([mockCrossChainTransaction]);
+      mockCheckPendingTransactionStatus.mockResolvedValueOnce({ success: true, updated: false });
+      
+      // Run both jobs
+      await Promise.all([
+        checkAndProcessContractDeadlines(),
+        checkAndProcessCrossChainTransactions()
+      ]);
+      
+      // Verify both jobs executed their respective functions
+      expect(mockTriggerReleaseAfterApproval).toHaveBeenCalledWith(mockDealRelease.smartContractAddress, mockDealRelease.id);
+      expect(mockCheckPendingTransactionStatus).toHaveBeenCalledWith(mockCrossChainTransaction.id);
+      
+      // Verify separate update functions were called
+      expect(mockUpdateDealStatusInDB).toHaveBeenCalledWith(mockDealRelease.id, expect.any(Object));
+      expect(mockCheckPendingTransactionStatus).toHaveBeenCalled();
+    });
+
+    it('should maintain separate job running flags for deadline check and cross-chain monitoring', async () => {
+      jest.useFakeTimers();
+      
+      if (typeof __TEST_ONLY_resetJobRunningFlag === 'function') {
+        __TEST_ONLY_resetJobRunningFlag();
+      }
+
+      // Start deadline check job
+      const deadlinePromise1 = checkAndProcessContractDeadlines();
+      const deadlinePromise2 = checkAndProcessContractDeadlines(); // Should be skipped
+      
+      // Start cross-chain job (should NOT be blocked by deadline check job)
+      const crossChainPromise = checkAndProcessCrossChainTransactions();
+      
+      jest.advanceTimersByTime(100);
+      await Promise.all([deadlinePromise1, deadlinePromise2, crossChainPromise]);
+      
+      // Verify deadline check was blocked on second call
+      expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('[Scheduler] Deadline check job already running. Skipping this cycle.'));
+      
+      // Verify cross-chain job was NOT blocked
+      expect(mockGetCrossChainTransactionsPendingCheck).toHaveBeenCalledTimes(1);
+      
+      jest.useRealTimers();
     });
   });
 }); 

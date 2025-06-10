@@ -441,12 +441,45 @@ router.post('/create', authenticateToken, async (req, res) => {
                     
                     deployedContractAddress = deploymentResult.contractAddress;
                     newTransactionData.smartContractAddress = deployedContractAddress;
+                    
+                    // ✅ NEW: Enhanced deployment success message
+                    const deploymentTypeMessage = isCrossChain ? 
+                        (deploymentResult.contractInfo?.isRealContract ? 
+                            'cross-chain compatible smart contract' : 
+                            'cross-chain mock contract (fallback)') : 
+                        'standard escrow smart contract';
+                    
                     newTransactionData.timeline.push({ 
-                        event: `PropertyEscrow smart contract deployed at ${deployedContractAddress} with 2% service fee to ${serviceWalletAddress}${isCrossChain ? ' (cross-chain compatible)' : ''}.`, 
+                        event: `PropertyEscrow ${deploymentTypeMessage} deployed at ${deployedContractAddress} with 2% service fee to ${serviceWalletAddress}.`, 
                         timestamp: Timestamp.now(), 
-                        system: true 
+                        system: true,
+                        deploymentInfo: {
+                            isCrossChain,
+                            isRealContract: deploymentResult.contractInfo?.isRealContract !== false,
+                            gasUsed: deploymentResult.gasUsed,
+                            deploymentCost: deploymentResult.deploymentCost
+                        }
                     });
                     console.log(`[ROUTE LOG] Smart contract deployed: ${deployedContractAddress} with service wallet: ${serviceWalletAddress}`);
+                    
+                    // ✅ NEW: Auto-complete cross-chain setup for seamless experience
+                    if (isCrossChain && deploymentResult.success) {
+                        try {
+                            const { autoCompleteCrossChainSteps } = await import('../../../services/crossChainService.js');
+                            const autoSetupResult = await autoCompleteCrossChainSteps(transactionRef.id);
+                            
+                            if (autoSetupResult.success) {
+                                newTransactionData.timeline.push({
+                                    event: `Cross-chain setup auto-completed: ${autoSetupResult.message}`,
+                                    timestamp: Timestamp.now(),
+                                    system: true,
+                                    autoSetup: true
+                                });
+                            }
+                        } catch (autoSetupError) {
+                            console.warn('[ROUTE WARN] Cross-chain auto-setup failed:', autoSetupError.message);
+                        }
+                    }
                 } catch (deployError) {
                     console.error('[ROUTE ERROR] Smart contract deployment failed:', deployError.message, deployError.stack);
                     newTransactionData.timeline.push({ 
@@ -2043,5 +2076,427 @@ async function estimateSmartContractGas(req, res) {
     });
   }
 }
+
+// ✅ NEW: Manual intervention endpoints for scheduled jobs
+
+// Get deals requiring manual intervention
+router.get('/admin/manual-intervention', authenticateToken, async (req, res) => {
+    const userId = req.userId;
+    const { limit = 20, type = 'all' } = req.query;
+
+    try {
+        const { db } = await getFirebaseServices();
+        
+        // Build query based on type
+        let query = db.collection('deals');
+        
+        if (type === 'cross-chain-stuck') {
+            query = query.where('status', '==', 'CrossChainStuck');
+        } else if (type === 'cross-chain-failed') {
+            query = query.where('status', 'in', ['CrossChainAutoReleaseFailed', 'CrossChainReleaseRequiresIntervention']);
+        } else if (type === 'blockchain-failed') {
+            query = query.where('status', 'in', ['AutoReleaseFailed', 'AutoCancellationFailed']);
+        } else {
+            // All deals requiring manual intervention
+            query = query.where('status', 'in', [
+                'CrossChainStuck',
+                'CrossChainAutoReleaseFailed', 
+                'CrossChainReleaseRequiresIntervention',
+                'AutoReleaseFailed',
+                'AutoCancellationFailed'
+            ]);
+        }
+
+        const snapshot = await query
+            .orderBy('updatedAt', 'desc')
+            .limit(Number(limit))
+            .get();
+
+        if (snapshot.empty) {
+            return res.json([]);
+        }
+
+        const deals = [];
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            // Only include deals where user is participant or admin (for now, just participant)
+            if (data.participants && data.participants.includes(userId)) {
+                deals.push({
+                    id: doc.id,
+                    ...data,
+                    createdAt: data.createdAt?.toDate()?.toISOString(),
+                    updatedAt: data.updatedAt?.toDate()?.toISOString(),
+                    timeline: (data.timeline || []).map(t => ({
+                        ...t,
+                        timestamp: t.timestamp?.toDate()?.toISOString()
+                    }))
+                });
+            }
+        });
+
+        res.json({
+            deals,
+            total: deals.length,
+            type,
+            message: deals.length > 0 ? 
+                `Found ${deals.length} deals requiring manual intervention` : 
+                'No deals requiring manual intervention'
+        });
+
+    } catch (error) {
+        console.error('[ADMIN] Error fetching manual intervention deals:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Retry stuck cross-chain transaction
+router.post('/cross-chain/:dealId/retry-stuck', authenticateToken, async (req, res) => {
+    const { dealId } = req.params;
+    const { stepNumber, action = 'auto' } = req.body;
+    const userId = req.userId;
+
+    try {
+        const { db } = await getFirebaseServices();
+        
+        // Get the deal
+        const dealDoc = await db.collection('deals').doc(dealId).get();
+        if (!dealDoc.exists) {
+            return res.status(404).json({ error: 'Deal not found.' });
+        }
+
+        const dealData = dealDoc.data();
+        
+        // Check if user is participant
+        if (!dealData.participants.includes(userId)) {
+            return res.status(403).json({ error: 'Access denied. User is not a participant in this deal.' });
+        }
+
+        // Check if deal is actually stuck
+        if (!['CrossChainStuck', 'CrossChainAutoReleaseFailed'].includes(dealData.status)) {
+            return res.status(400).json({ 
+                error: `Deal is not in a stuck state. Current status: ${dealData.status}` 
+            });
+        }
+
+        // Import cross-chain service functions
+        const { 
+            handleStuckCrossChainTransaction,
+            retryCrossChainTransactionStep,
+            getCrossChainTransactionsForDeal
+        } = await import('../../../services/crossChainService.js');
+
+        let result;
+
+        if (action === 'auto' && dealData.crossChainTransactionId) {
+            // Try automatic recovery
+            result = await handleStuckCrossChainTransaction(dealData.crossChainTransactionId);
+        } else if (stepNumber && dealData.crossChainTransactionId) {
+            // Retry specific step
+            result = await retryCrossChainTransactionStep(dealData.crossChainTransactionId, stepNumber);
+        } else {
+            return res.status(400).json({ 
+                error: 'Either use action="auto" for automatic recovery or provide stepNumber for manual retry' 
+            });
+        }
+
+        // Update deal timeline
+        await db.collection('deals').doc(dealId).update({
+            timeline: FieldValue.arrayUnion({
+                event: `Manual retry initiated by user${stepNumber ? ` for step ${stepNumber}` : ' (automatic recovery)'}. Result: ${result.success ? 'SUCCESS' : 'FAILED'}`,
+                timestamp: Timestamp.now(),
+                userId,
+                manualIntervention: true,
+                retryResult: result
+            }),
+            updatedAt: Timestamp.now()
+        });
+
+        if (result.success) {
+            res.json({
+                message: 'Retry operation completed successfully',
+                dealId,
+                action,
+                stepNumber,
+                result,
+                nextAction: result.requiresManualIntervention ? 
+                    'Further manual intervention may be required' : 
+                    'Transaction should proceed automatically'
+            });
+        } else {
+            res.status(422).json({
+                message: 'Retry operation failed',
+                dealId,
+                error: result.error,
+                requiresManualIntervention: true
+            });
+        }
+
+    } catch (error) {
+        console.error('[CROSS-CHAIN] Error retrying stuck transaction:', error);
+        res.status(500).json({ error: error.message || 'Internal server error' });
+    }
+});
+
+// Force refresh cross-chain transaction status
+router.post('/cross-chain/:dealId/force-refresh', authenticateToken, async (req, res) => {
+    const { dealId } = req.params;
+    const userId = req.userId;
+
+    try {
+        const { db } = await getFirebaseServices();
+        
+        // Get the deal
+        const dealDoc = await db.collection('deals').doc(dealId).get();
+        if (!dealDoc.exists) {
+            return res.status(404).json({ error: 'Deal not found.' });
+        }
+
+        const dealData = dealDoc.data();
+        
+        // Check if user is participant
+        if (!dealData.participants.includes(userId)) {
+            return res.status(403).json({ error: 'Access denied. User is not a participant in this deal.' });
+        }
+
+        // Check if this is a cross-chain transaction
+        if (!dealData.isCrossChain || !dealData.crossChainTransactionId) {
+            return res.status(400).json({ error: 'This is not a cross-chain transaction.' });
+        }
+
+        // Import cross-chain service function
+        const { checkPendingTransactionStatus } = await import('../../../services/crossChainService.js');
+
+        // Force status check
+        const statusResult = await checkPendingTransactionStatus(dealData.crossChainTransactionId);
+
+        // Update deal timeline
+        await db.collection('deals').doc(dealId).update({
+            timeline: FieldValue.arrayUnion({
+                event: `Manual status refresh requested by user. Status check: ${statusResult.success ? 'SUCCESS' : 'FAILED'}`,
+                timestamp: Timestamp.now(),
+                userId,
+                manualRefresh: true,
+                statusResult
+            }),
+            updatedAt: Timestamp.now()
+        });
+
+        // Get updated transaction status
+        const updatedStatus = await getCrossChainTransactionStatus(dealData.crossChainTransactionId);
+
+        res.json({
+            message: 'Status refresh completed',
+            dealId,
+            statusCheck: statusResult,
+            currentStatus: updatedStatus,
+            updated: statusResult.updated || false
+        });
+
+    } catch (error) {
+        console.error('[CROSS-CHAIN] Error force refreshing status:', error);
+        res.status(500).json({ error: error.message || 'Internal server error' });
+    }
+});
+
+// Get scheduled jobs monitoring data
+router.get('/admin/scheduled-jobs-status', authenticateToken, async (req, res) => {
+    const userId = req.userId;
+
+    try {
+        const { db } = await getFirebaseServices();
+        
+        // Import database service functions
+        const {
+            getCrossChainDealsPendingMonitoring,
+            getCrossChainTransactionsPendingCheck,
+            getCrossChainDealsStuck,
+            getCrossChainDealsPastFinalApproval
+        } = await import('../../../services/databaseService.js');
+
+        // Get current job queues (only include deals where user is participant)
+        const [
+            pendingMonitoring,
+            pendingChecks,
+            stuckDeals,
+            pastFinalApproval
+        ] = await Promise.all([
+            getCrossChainDealsPendingMonitoring(),
+            getCrossChainTransactionsPendingCheck(),
+            getCrossChainDealsStuck(),
+            getCrossChainDealsPastFinalApproval()
+        ]);
+
+        // Filter by user participation
+        const filterByUser = (deals) => deals.filter(deal => 
+            deal.participants && deal.participants.includes(userId)
+        );
+
+        const userPendingMonitoring = filterByUser(pendingMonitoring);
+        const userStuckDeals = filterByUser(stuckDeals);
+        const userPastFinalApproval = filterByUser(pastFinalApproval);
+        const userPendingChecks = pendingChecks.filter(tx => 
+            tx.userId === userId || (tx.dealId && userPendingMonitoring.some(d => d.id === tx.dealId))
+        );
+
+        res.json({
+            summary: {
+                totalPendingMonitoring: userPendingMonitoring.length,
+                totalPendingChecks: userPendingChecks.length,
+                totalStuckDeals: userStuckDeals.length,
+                totalPastFinalApproval: userPastFinalApproval.length
+            },
+            queues: {
+                pendingMonitoring: userPendingMonitoring.map(deal => ({
+                    id: deal.id,
+                    status: deal.status,
+                    buyerNetwork: deal.buyerNetwork,
+                    sellerNetwork: deal.sellerNetwork,
+                    amount: deal.amount,
+                    lastActivity: deal.crossChainLastActivity?.toDate()?.toISOString(),
+                    createdAt: deal.createdAt?.toDate()?.toISOString()
+                })),
+                pendingChecks: userPendingChecks.map(tx => ({
+                    id: tx.id,
+                    dealId: tx.dealId,
+                    status: tx.status,
+                    sourceNetwork: tx.sourceNetwork,
+                    targetNetwork: tx.targetNetwork,
+                    lastUpdated: tx.lastUpdated?.toDate()?.toISOString(),
+                    createdAt: tx.createdAt?.toDate()?.toISOString()
+                })),
+                stuckDeals: userStuckDeals.map(deal => ({
+                    id: deal.id,
+                    status: deal.status,
+                    buyerNetwork: deal.buyerNetwork,
+                    sellerNetwork: deal.sellerNetwork,
+                    amount: deal.amount,
+                    lastActivity: deal.crossChainLastActivity?.toDate()?.toISOString(),
+                    stuckSince: deal.crossChainLastActivity?.toDate()?.toISOString()
+                })),
+                pastFinalApproval: userPastFinalApproval.map(deal => ({
+                    id: deal.id,
+                    status: deal.status,
+                    amount: deal.amount,
+                    finalApprovalDeadline: deal.finalApprovalDeadlineBackend?.toDate()?.toISOString(),
+                    overdueDays: Math.floor(
+                        (Date.now() - deal.finalApprovalDeadlineBackend?.toDate()?.getTime()) / (1000 * 60 * 60 * 24)
+                    )
+                }))
+            },
+            lastUpdated: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('[ADMIN] Error getting scheduled jobs status:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Manual trigger for scheduled job functions
+router.post('/admin/trigger-scheduled-job', authenticateToken, async (req, res) => {
+    const { jobType, dealId } = req.body;
+    const userId = req.userId;
+
+    try {
+        const { db } = await getFirebaseServices();
+        
+        // Validate job type
+        const validJobTypes = [
+            'check-pending-transactions',
+            'process-stuck-deals',
+            'process-final-approval-deadlines',
+            'check-specific-deal'
+        ];
+
+        if (!validJobTypes.includes(jobType)) {
+            return res.status(400).json({ 
+                error: `Invalid job type. Must be one of: ${validJobTypes.join(', ')}` 
+            });
+        }
+
+        // Import scheduled job functions
+        const {
+            checkAndProcessCrossChainTransactions,
+            checkAndProcessContractDeadlines
+        } = await import('../../../services/scheduledJobs.js');
+
+        const {
+            checkPendingTransactionStatus,
+            handleStuckCrossChainTransaction,
+            triggerCrossChainReleaseAfterApproval
+        } = await import('../../../services/crossChainService.js');
+
+        let result = { success: false, message: 'Unknown job type' };
+
+        // Execute the requested job
+        switch (jobType) {
+            case 'check-pending-transactions':
+                console.log(`[MANUAL-JOB] User ${userId} manually triggered pending transactions check`);
+                await checkAndProcessCrossChainTransactions();
+                result = { success: true, message: 'Pending transactions check completed' };
+                break;
+
+            case 'process-stuck-deals':
+                console.log(`[MANUAL-JOB] User ${userId} manually triggered stuck deals processing`);
+                await checkAndProcessCrossChainTransactions(); // This includes stuck deals processing
+                result = { success: true, message: 'Stuck deals processing completed' };
+                break;
+
+            case 'process-final-approval-deadlines':
+                console.log(`[MANUAL-JOB] User ${userId} manually triggered final approval deadlines check`);
+                await checkAndProcessContractDeadlines();
+                result = { success: true, message: 'Final approval deadlines check completed' };
+                break;
+
+            case 'check-specific-deal':
+                if (!dealId) {
+                    return res.status(400).json({ error: 'dealId is required for check-specific-deal' });
+                }
+
+                // Get the deal and verify user access
+                const dealDoc = await db.collection('deals').doc(dealId).get();
+                if (!dealDoc.exists) {
+                    return res.status(404).json({ error: 'Deal not found.' });
+                }
+
+                const dealData = dealDoc.data();
+                if (!dealData.participants.includes(userId)) {
+                    return res.status(403).json({ error: 'Access denied.' });
+                }
+
+                console.log(`[MANUAL-JOB] User ${userId} manually triggered check for deal ${dealId}`);
+
+                if (dealData.crossChainTransactionId) {
+                    const checkResult = await checkPendingTransactionStatus(dealData.crossChainTransactionId);
+                    result = { 
+                        success: true, 
+                        message: 'Deal-specific check completed',
+                        dealId,
+                        checkResult 
+                    };
+                } else {
+                    result = { 
+                        success: false, 
+                        message: 'Deal does not have a cross-chain transaction',
+                        dealId 
+                    };
+                }
+                break;
+        }
+
+        res.json({
+            message: 'Manual job trigger completed',
+            jobType,
+            dealId,
+            result,
+            triggeredBy: userId,
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('[MANUAL-JOB] Error triggering manual job:', error);
+        res.status(500).json({ error: error.message || 'Internal server error' });
+    }
+});
 
 export default router;

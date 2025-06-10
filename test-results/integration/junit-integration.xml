@@ -1,3 +1,43 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="jest tests" tests="0" failures="0" errors="0" time="0.228">
+<testsuites name="jest tests" tests="19" failures="0" errors="0" time="2.679">
+  <testsuite name="CrossChainContractDeployer Integration Tests" errors="0" failures="0" skipped="0" timestamp="2025-06-10T02:32:48" time="2.664" tests="19">
+    <testcase classname="CrossChainContractDeployer Integration Tests Service Initialization should initialize with correct configuration" name="CrossChainContractDeployer Integration Tests Service Initialization should initialize with correct configuration" time="0.001">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Service Initialization should load complete contract ABI" name="CrossChainContractDeployer Integration Tests Service Initialization should load complete contract ABI" time="0.001">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Parameter Validation Integration should validate real-world deployment parameters" name="CrossChainContractDeployer Integration Tests Parameter Validation Integration should validate real-world deployment parameters" time="0.002">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Parameter Validation Integration should handle mainnet addresses correctly" name="CrossChainContractDeployer Integration Tests Parameter Validation Integration should handle mainnet addresses correctly" time="0.001">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Parameter Validation Integration should validate cross-chain combinations" name="CrossChainContractDeployer Integration Tests Parameter Validation Integration should validate cross-chain combinations" time="0.004">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Deployment Cost Estimation should estimate deployment costs for real networks" name="CrossChainContractDeployer Integration Tests Deployment Cost Estimation should estimate deployment costs for real networks" time="0.015">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Deployment Cost Estimation should handle network errors gracefully" name="CrossChainContractDeployer Integration Tests Deployment Cost Estimation should handle network errors gracefully" time="0.001">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Contract Instance Creation should create contract instances with real providers" name="CrossChainContractDeployer Integration Tests Contract Instance Creation should create contract instances with real providers" time="0.002">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Contract Instance Creation should create contract instances with wallets" name="CrossChainContractDeployer Integration Tests Contract Instance Creation should create contract instances with wallets" time="0">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Contract Instance Creation should include all required function interfaces" name="CrossChainContractDeployer Integration Tests Contract Instance Creation should include all required function interfaces" time="0">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Mock Deployment Integration should perform mock deployment with valid parameters" name="CrossChainContractDeployer Integration Tests Mock Deployment Integration should perform mock deployment with valid parameters" time="0.535">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Mock Deployment Integration should handle token deployment correctly" name="CrossChainContractDeployer Integration Tests Mock Deployment Integration should handle token deployment correctly" time="0.447">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Mock Deployment Integration should fail deployment with invalid parameters" name="CrossChainContractDeployer Integration Tests Mock Deployment Integration should fail deployment with invalid parameters" time="0.003">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Standalone Function Integration should deploy using standalone function" name="CrossChainContractDeployer Integration Tests Standalone Function Integration should deploy using standalone function" time="0.43">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Standalone Function Integration should validate parameters in standalone function" name="CrossChainContractDeployer Integration Tests Standalone Function Integration should validate parameters in standalone function" time="0.001">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Real Network Integration (if available) should connect to real networks when available" name="CrossChainContractDeployer Integration Tests Real Network Integration (if available) should connect to real networks when available" time="0.116">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Real Network Integration (if available) should estimate realistic gas costs on real networks" name="CrossChainContractDeployer Integration Tests Real Network Integration (if available) should estimate realistic gas costs on real networks" time="0.002">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Error Handling and Edge Cases should handle network timeout gracefully" name="CrossChainContractDeployer Integration Tests Error Handling and Edge Cases should handle network timeout gracefully" time="0.032">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Integration Tests Error Handling and Edge Cases should handle concurrent deployment requests" name="CrossChainContractDeployer Integration Tests Error Handling and Edge Cases should handle concurrent deployment requests" time="0.536">
+    </testcase>
+  </testsuite>
 </testsuites>

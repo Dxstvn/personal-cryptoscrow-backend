@@ -149,3 +149,168 @@ export async function getDealById(dealId) {
     return null;
   }
 }
+
+/**
+ * Retrieves cross-chain deals that are pending monitoring (have active cross-chain transactions).
+ * @returns {Promise<Array<Object>>} A list of deal objects with cross-chain transactions.
+ */
+export async function getCrossChainDealsPendingMonitoring() {
+  try {
+    const db = await getDb();
+    const snapshot = await db.collection('deals')
+      .where('hasCrossChainTransaction', '==', true)
+      .where('status', 'in', ['CrossChainPending', 'CrossChainInProgress'])
+      .get();
+
+    if (snapshot.empty) {
+      return [];
+    }
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.error('[DBService] Error fetching cross-chain deals pending monitoring:', error);
+    return [];
+  }
+}
+
+/**
+ * Retrieves cross-chain transactions that need status checking.
+ * @returns {Promise<Array<Object>>} A list of transaction objects.
+ */
+export async function getCrossChainTransactionsPendingCheck() {
+  const threeHoursAgo = Timestamp.fromDate(new Date(Date.now() - 3 * 60 * 60 * 1000));
+  try {
+    const db = await getDb();
+    const snapshot = await db.collection('crossChainTransactions')
+      .where('status', 'in', ['prepared', 'in_progress'])
+      .where('lastUpdated', '<=', threeHoursAgo)
+      .get();
+
+    if (snapshot.empty) {
+      return [];
+    }
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.error('[DBService] Error fetching cross-chain transactions pending check:', error);
+    return [];
+  }
+}
+
+/**
+ * Retrieves cross-chain deals that are stuck (transactions failed or timed out).
+ * @returns {Promise<Array<Object>>} A list of deal objects with stuck cross-chain transactions.
+ */
+export async function getCrossChainDealsStuck() {
+  const twentyFourHoursAgo = Timestamp.fromDate(new Date(Date.now() - 24 * 60 * 60 * 1000));
+  try {
+    const db = await getDb();
+    const snapshot = await db.collection('deals')
+      .where('hasCrossChainTransaction', '==', true)
+      .where('status', '==', 'CrossChainInProgress')
+      .where('crossChainLastActivity', '<=', twentyFourHoursAgo)
+      .get();
+
+    if (snapshot.empty) {
+      return [];
+    }
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.error('[DBService] Error fetching stuck cross-chain deals:', error);
+    return [];
+  }
+}
+
+/**
+ * Retrieves cross-chain deals past their final approval deadlines that need processing.
+ * @returns {Promise<Array<Object>>} A list of deal objects.
+ */
+export async function getCrossChainDealsPastFinalApproval() {
+  const now = Timestamp.now();
+  try {
+    const db = await getDb();
+    const snapshot = await db.collection('deals')
+      .where('status', '==', 'CrossChainFinalApproval')
+      .where('hasCrossChainTransaction', '==', true)
+      .where('finalApprovalDeadlineBackend', '<=', now)
+      .get();
+
+    if (snapshot.empty) {
+      return [];
+    }
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.error('[DBService] Error fetching cross-chain deals past final approval:', error);
+    return [];
+  }
+}
+
+/**
+ * Retrieves cross-chain deals past their dispute resolution deadlines that need processing.
+ * @returns {Promise<Array<Object>>} A list of deal objects.
+ */
+export async function getCrossChainDealsPastDisputeDeadline() {
+  const now = Timestamp.now();
+  try {
+    const db = await getDb();
+    const snapshot = await db.collection('deals')
+      .where('status', '==', 'CrossChainInDispute')
+      .where('hasCrossChainTransaction', '==', true)
+      .where('disputeResolutionDeadlineBackend', '<=', now)
+      .get();
+
+    if (snapshot.empty) {
+      return [];
+    }
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.error('[DBService] Error fetching cross-chain deals past dispute deadline:', error);
+    return [];
+  }
+}
+
+/**
+ * Updates cross-chain deal status with specialized fields for cross-chain transactions.
+ * @param {string} dealId The ID of the deal to update.
+ * @param {object} updateData Cross-chain specific update data.
+ */
+export async function updateCrossChainDealStatus(dealId, updateData) {
+  if (!dealId || !updateData || !updateData.status || !updateData.timelineEventMessage) {
+    console.error("[DBService] Invalid parameters for updateCrossChainDealStatus:", { dealId, updateData });
+    return;
+  }
+  try {
+    const db = await getDb();
+    const dealRef = db.collection('deals').doc(dealId);
+    
+    const timelineEvent = {
+      event: updateData.timelineEventMessage,
+      timestamp: Timestamp.now(),
+      systemTriggered: true,
+      crossChainEvent: true,
+    };
+
+    if (updateData.crossChainTxHash) {
+      timelineEvent.transactionHash = updateData.crossChainTxHash;
+    }
+    if (updateData.bridgeStatus) {
+      timelineEvent.bridgeStatus = updateData.bridgeStatus;
+    }
+
+    const firestoreUpdateData = {
+      status: updateData.status,
+      updatedAt: Timestamp.now(),
+      timeline: FieldValue.arrayUnion(timelineEvent),
+      crossChainLastActivity: Timestamp.now(),
+    };
+
+    if (updateData.crossChainTxHash) firestoreUpdateData.crossChainTxHash = updateData.crossChainTxHash;
+    if (updateData.bridgeStatus) firestoreUpdateData.bridgeStatus = updateData.bridgeStatus;
+    if (updateData.processingError) firestoreUpdateData.processingError = updateData.processingError;
+    if (updateData.lastAutomaticProcessAttempt) firestoreUpdateData.lastAutomaticProcessAttempt = updateData.lastAutomaticProcessAttempt;
+    if (updateData.crossChainFailureReason) firestoreUpdateData.crossChainFailureReason = updateData.crossChainFailureReason;
+
+    await dealRef.update(firestoreUpdateData);
+    console.log(`[DBService] Cross-chain deal ${dealId} status updated to ${updateData.status}. Event: "${updateData.timelineEventMessage}"`);
+  } catch (error) {
+    console.error(`[DBService] Error updating cross-chain status for deal ${dealId} to ${updateData.status}:`, error);
+  }
+}

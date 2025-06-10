@@ -1,31 +1,177 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="jest tests" tests="13" failures="0" errors="0" time="11.664">
-  <testsuite name="🌉 REAL Cross-Chain Escrow Service Integration Tests" errors="0" failures="0" skipped="0" timestamp="2025-06-10T01:23:24" time="11.646" tests="13">
-    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🔗 Cross-Chain Service Core Capabilities should prepare cross-chain transaction with complete metadata" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🔗 Cross-Chain Service Core Capabilities should prepare cross-chain transaction with complete metadata" time="0.003">
+<testsuites name="jest tests" tests="45" failures="4" errors="0" time="1.53">
+  <testsuite name="CrossChainContractDeployer Unit Tests" errors="0" failures="4" skipped="0" timestamp="2025-06-10T03:16:06" time="0.449" tests="29">
+    <testcase classname="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class Constructor and Initialization should initialize with contract ABI loaded" name="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class Constructor and Initialization should initialize with contract ABI loaded" time="0.051">
     </testcase>
-    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🔗 Cross-Chain Service Core Capabilities should estimate cross-chain transaction fees using real LI.FI data" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🔗 Cross-Chain Service Core Capabilities should estimate cross-chain transaction fees using real LI.FI data" time="0">
+    <testcase classname="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class Constructor and Initialization should load essential ABI functions" name="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class Constructor and Initialization should load essential ABI functions" time="0.001">
+      <failure>Error: expect(received).toContain(expected) // indexOf
+
+Expected substring: &quot;receiveCrossChainDeposit&quot;
+Received string:    &quot;[\&quot;constructor(address _seller, address _buyer, uint256 _escrowAmount, address _serviceWallet)\&quot;,\&quot;function setConditions(bytes32[] memory conditionIds) external\&quot;,\&quot;function depositFunds() external payable\&quot;,\&quot;function buyerMarksConditionFulfilled(bytes32 conditionId) external\&quot;,\&quot;function startFinalApprovalPeriod() external\&quot;,\&quot;function releaseFundsAfterApprovalPeriod() external\&quot;,\&quot;function cancelEscrowAndRefundBuyer() external\&quot;,\&quot;function getContractState() external view returns (uint8)\&quot;,\&quot;function getBalance() external view returns (uint256)\&quot;,\&quot;function areAllConditionsMet() public view returns (bool)\&quot;,\&quot;function getSeller() external view returns (address)\&quot;,\&quot;function getBuyer() external view returns (address)\&quot;,\&quot;function getEscrowAmount() external view returns (uint256)\&quot;,\&quot;function getServiceWallet() external view returns (address)\&quot;,\&quot;event EscrowCreated(address indexed seller, address indexed buyer, uint256 amount)\&quot;,\&quot;event FundsDeposited(address indexed buyer, uint256 amount)\&quot;,\&quot;event FundsReleased(address indexed seller, uint256 amount)\&quot;,\&quot;event EscrowCancelled(address indexed buyer, uint256 refundAmount)\&quot;]&quot;
+    at Object.toContain (/Users/dustinjasmin/personal-cryptoscrow-backend/tests/unit/crossChainContractDeployer.test.js:57:27)
+    at Promise.then.completed (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/utils.js:298:28)
+    at new Promise (&lt;anonymous&gt;)
+    at callAsyncCircusFn (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/utils.js:231:10)
+    at _callCircusTest (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:316:40)
+    at _runTest (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:252:3)
+    at _runTestsForDescribeBlock (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:126:9)
+    at _runTestsForDescribeBlock (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:121:9)
+    at _runTestsForDescribeBlock (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:121:9)
+    at _runTestsForDescribeBlock (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:121:9)
+    at run (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:71:3)
+    at runAndTransformResultsToJestFormat (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/legacy-code-todo-rewrite/jestAdapterInit.js:122:21)
+    at jestAdapter (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/legacy-code-todo-rewrite/jestAdapter.js:79:19)
+    at runTestInternal (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-runner/build/runTest.js:367:16)
+    at runTest (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-runner/build/runTest.js:444:34)</failure>
     </testcase>
-    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🔗 Cross-Chain Service Core Capabilities should get bridge information for cross-chain transactions" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🔗 Cross-Chain Service Core Capabilities should get bridge information for cross-chain transactions" time="0">
+    <testcase classname="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class Constructor and Initialization should load essential ABI events" name="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class Constructor and Initialization should load essential ABI events" time="0">
+      <failure>Error: expect(received).toContain(expected) // indexOf
+
+Expected substring: &quot;CrossChainDepositReceived&quot;
+Received string:    &quot;[\&quot;constructor(address _seller, address _buyer, uint256 _escrowAmount, address _serviceWallet)\&quot;,\&quot;function setConditions(bytes32[] memory conditionIds) external\&quot;,\&quot;function depositFunds() external payable\&quot;,\&quot;function buyerMarksConditionFulfilled(bytes32 conditionId) external\&quot;,\&quot;function startFinalApprovalPeriod() external\&quot;,\&quot;function releaseFundsAfterApprovalPeriod() external\&quot;,\&quot;function cancelEscrowAndRefundBuyer() external\&quot;,\&quot;function getContractState() external view returns (uint8)\&quot;,\&quot;function getBalance() external view returns (uint256)\&quot;,\&quot;function areAllConditionsMet() public view returns (bool)\&quot;,\&quot;function getSeller() external view returns (address)\&quot;,\&quot;function getBuyer() external view returns (address)\&quot;,\&quot;function getEscrowAmount() external view returns (uint256)\&quot;,\&quot;function getServiceWallet() external view returns (address)\&quot;,\&quot;event EscrowCreated(address indexed seller, address indexed buyer, uint256 amount)\&quot;,\&quot;event FundsDeposited(address indexed buyer, uint256 amount)\&quot;,\&quot;event FundsReleased(address indexed seller, uint256 amount)\&quot;,\&quot;event EscrowCancelled(address indexed buyer, uint256 refundAmount)\&quot;]&quot;
+    at Object.toContain (/Users/dustinjasmin/personal-cryptoscrow-backend/tests/unit/crossChainContractDeployer.test.js:78:27)
+    at Promise.then.completed (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/utils.js:298:28)
+    at new Promise (&lt;anonymous&gt;)
+    at callAsyncCircusFn (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/utils.js:231:10)
+    at _callCircusTest (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:316:40)
+    at _runTest (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:252:3)
+    at _runTestsForDescribeBlock (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:126:9)
+    at _runTestsForDescribeBlock (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:121:9)
+    at _runTestsForDescribeBlock (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:121:9)
+    at _runTestsForDescribeBlock (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:121:9)
+    at run (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:71:3)
+    at runAndTransformResultsToJestFormat (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/legacy-code-todo-rewrite/jestAdapterInit.js:122:21)
+    at jestAdapter (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/legacy-code-todo-rewrite/jestAdapter.js:79:19)
+    at runTestInternal (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-runner/build/runTest.js:367:16)
+    at runTest (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-runner/build/runTest.js:444:34)</failure>
     </testcase>
-    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🔗 Cross-Chain Service Core Capabilities should check network EVM compatibility correctly" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🔗 Cross-Chain Service Core Capabilities should check network EVM compatibility correctly" time="0.001">
+    <testcase classname="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should validate correct parameters" name="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should validate correct parameters" time="0.002">
     </testcase>
-    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 💫 Complete Cross-Chain Escrow Flow Tests should execute complete cross-chain escrow flow: Buyer on Polygon → Ethereum Escrow → Seller on Arbitrum (Complete Flow)" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 💫 Complete Cross-Chain Escrow Flow Tests should execute complete cross-chain escrow flow: Buyer on Polygon → Ethereum Escrow → Seller on Arbitrum (Complete Flow)" time="0.001">
+    <testcase classname="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should reject invalid seller address" name="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should reject invalid seller address" time="0.001">
     </testcase>
-    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 💫 Complete Cross-Chain Escrow Flow Tests should execute complete cross-chain escrow flow: Buyer on Ethereum → Ethereum Escrow → Seller on Polygon (Partial Cross-Chain)" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 💫 Complete Cross-Chain Escrow Flow Tests should execute complete cross-chain escrow flow: Buyer on Ethereum → Ethereum Escrow → Seller on Polygon (Partial Cross-Chain)" time="0.001">
+    <testcase classname="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should reject invalid buyer address" name="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should reject invalid buyer address" time="0.003">
     </testcase>
-    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 💫 Complete Cross-Chain Escrow Flow Tests should execute complete cross-chain escrow flow: Buyer on Arbitrum → Ethereum Escrow → Seller on Optimism (Multi-Bridge)" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 💫 Complete Cross-Chain Escrow Flow Tests should execute complete cross-chain escrow flow: Buyer on Arbitrum → Ethereum Escrow → Seller on Optimism (Multi-Bridge)" time="0.001">
+    <testcase classname="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should reject same seller and buyer addresses" name="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should reject same seller and buyer addresses" time="0.001">
     </testcase>
-    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 💫 Complete Cross-Chain Escrow Flow Tests should handle bridge status monitoring for active transactions" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 💫 Complete Cross-Chain Escrow Flow Tests should handle bridge status monitoring for active transactions" time="0.001">
+    <testcase classname="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should reject zero or negative escrow amount" name="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should reject zero or negative escrow amount" time="0.001">
     </testcase>
-    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🌐 Real Tenderly Virtual TestNet Integration should simulate cross-chain escrow deposit with Tenderly transaction" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🌐 Real Tenderly Virtual TestNet Integration should simulate cross-chain escrow deposit with Tenderly transaction" time="1.689">
+    <testcase classname="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should reject unsupported buyer source chain" name="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should reject unsupported buyer source chain" time="0.001">
     </testcase>
-    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🌐 Real Tenderly Virtual TestNet Integration should demonstrate complete cross-chain escrow orchestration" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🌐 Real Tenderly Virtual TestNet Integration should demonstrate complete cross-chain escrow orchestration" time="7.691">
+    <testcase classname="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should reject unsupported seller target chain" name="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should reject unsupported seller target chain" time="0">
     </testcase>
-    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🛡️ Cross-Chain Service Error Handling &amp; Edge Cases should handle invalid network combinations gracefully" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🛡️ Cross-Chain Service Error Handling &amp; Edge Cases should handle invalid network combinations gracefully" time="0">
+    <testcase classname="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should validate all supported chains" name="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should validate all supported chains" time="0.001">
     </testcase>
-    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🛡️ Cross-Chain Service Error Handling &amp; Edge Cases should handle invalid addresses gracefully" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🛡️ Cross-Chain Service Error Handling &amp; Edge Cases should handle invalid addresses gracefully" time="0">
+    <testcase classname="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should accumulate multiple validation errors" name="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class validateDeploymentParams should accumulate multiple validation errors" time="0.001">
     </testcase>
-    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🛡️ Cross-Chain Service Error Handling &amp; Edge Cases should handle missing parameters gracefully" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🛡️ Cross-Chain Service Error Handling &amp; Edge Cases should handle missing parameters gracefully" time="0">
+    <testcase classname="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class estimateDeploymentCost should estimate deployment cost with valid RPC URL" name="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class estimateDeploymentCost should estimate deployment cost with valid RPC URL" time="0.001">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class estimateDeploymentCost should return fallback values on RPC error" name="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class estimateDeploymentCost should return fallback values on RPC error" time="0">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class createContractInstance should create contract instance with valid parameters" name="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class createContractInstance should create contract instance with valid parameters" time="0.002">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class createContractInstance should create contract instance with wallet" name="CrossChainContractDeployer Unit Tests CrossChainContractDeployer Class createContractInstance should create contract instance with wallet" time="0.019">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Unit Tests Standalone Function Tests deployCrossChainPropertyEscrowContract should validate parameters before deployment" name="CrossChainContractDeployer Unit Tests Standalone Function Tests deployCrossChainPropertyEscrowContract should validate parameters before deployment" time="0.004">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Unit Tests Standalone Function Tests deployCrossChainPropertyEscrowContract should handle missing serviceWalletAddress parameter" name="CrossChainContractDeployer Unit Tests Standalone Function Tests deployCrossChainPropertyEscrowContract should handle missing serviceWalletAddress parameter" time="0.08">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Unit Tests Input Validation Edge Cases should handle null and undefined values in validation" name="CrossChainContractDeployer Unit Tests Input Validation Edge Cases should handle null and undefined values in validation" time="0">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Unit Tests Input Validation Edge Cases should handle very large escrow amounts" name="CrossChainContractDeployer Unit Tests Input Validation Edge Cases should handle very large escrow amounts" time="0">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Unit Tests Input Validation Edge Cases should handle checksummed addresses correctly" name="CrossChainContractDeployer Unit Tests Input Validation Edge Cases should handle checksummed addresses correctly" time="0.001">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Unit Tests Input Validation Edge Cases should validate chain names case sensitively" name="CrossChainContractDeployer Unit Tests Input Validation Edge Cases should validate chain names case sensitively" time="0">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Unit Tests Error Handling should handle ABI loading errors gracefully" name="CrossChainContractDeployer Unit Tests Error Handling should handle ABI loading errors gracefully" time="0">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Unit Tests Error Handling should provide meaningful error messages" name="CrossChainContractDeployer Unit Tests Error Handling should provide meaningful error messages" time="0">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Unit Tests Contract ABI Structure should have valid ABI structure" name="CrossChainContractDeployer Unit Tests Contract ABI Structure should have valid ABI structure" time="0.001">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Unit Tests Contract ABI Structure should include required cross-chain functions" name="CrossChainContractDeployer Unit Tests Contract ABI Structure should include required cross-chain functions" time="0">
+      <failure>Error: expect(received).toContain(expected) // indexOf
+
+Expected substring: &quot;receiveCrossChainDeposit&quot;
+Received string:    &quot;[\&quot;constructor(address _seller, address _buyer, uint256 _escrowAmount, address _serviceWallet)\&quot;,\&quot;function setConditions(bytes32[] memory conditionIds) external\&quot;,\&quot;function depositFunds() external payable\&quot;,\&quot;function buyerMarksConditionFulfilled(bytes32 conditionId) external\&quot;,\&quot;function startFinalApprovalPeriod() external\&quot;,\&quot;function releaseFundsAfterApprovalPeriod() external\&quot;,\&quot;function cancelEscrowAndRefundBuyer() external\&quot;,\&quot;function getContractState() external view returns (uint8)\&quot;,\&quot;function getBalance() external view returns (uint256)\&quot;,\&quot;function areAllConditionsMet() public view returns (bool)\&quot;,\&quot;function getSeller() external view returns (address)\&quot;,\&quot;function getBuyer() external view returns (address)\&quot;,\&quot;function getEscrowAmount() external view returns (uint256)\&quot;,\&quot;function getServiceWallet() external view returns (address)\&quot;,\&quot;event EscrowCreated(address indexed seller, address indexed buyer, uint256 amount)\&quot;,\&quot;event FundsDeposited(address indexed buyer, uint256 amount)\&quot;,\&quot;event FundsReleased(address indexed seller, uint256 amount)\&quot;,\&quot;event EscrowCancelled(address indexed buyer, uint256 refundAmount)\&quot;]&quot;
+    at toContain (/Users/dustinjasmin/personal-cryptoscrow-backend/tests/unit/crossChainContractDeployer.test.js:464:27)
+    at Array.forEach (&lt;anonymous&gt;)
+    at Object.forEach (/Users/dustinjasmin/personal-cryptoscrow-backend/tests/unit/crossChainContractDeployer.test.js:463:25)
+    at Promise.then.completed (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/utils.js:298:28)
+    at new Promise (&lt;anonymous&gt;)
+    at callAsyncCircusFn (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/utils.js:231:10)
+    at _callCircusTest (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:316:40)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at _runTest (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:252:3)
+    at _runTestsForDescribeBlock (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:126:9)
+    at _runTestsForDescribeBlock (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:121:9)
+    at _runTestsForDescribeBlock (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:121:9)
+    at run (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:71:3)
+    at runAndTransformResultsToJestFormat (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/legacy-code-todo-rewrite/jestAdapterInit.js:122:21)
+    at jestAdapter (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/legacy-code-todo-rewrite/jestAdapter.js:79:19)
+    at runTestInternal (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-runner/build/runTest.js:367:16)
+    at runTest (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-runner/build/runTest.js:444:34)</failure>
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Unit Tests Contract ABI Structure should include required cross-chain events" name="CrossChainContractDeployer Unit Tests Contract ABI Structure should include required cross-chain events" time="0">
+      <failure>Error: expect(received).toContain(expected) // indexOf
+
+Expected substring: &quot;CrossChainDepositReceived&quot;
+Received string:    &quot;[\&quot;constructor(address _seller, address _buyer, uint256 _escrowAmount, address _serviceWallet)\&quot;,\&quot;function setConditions(bytes32[] memory conditionIds) external\&quot;,\&quot;function depositFunds() external payable\&quot;,\&quot;function buyerMarksConditionFulfilled(bytes32 conditionId) external\&quot;,\&quot;function startFinalApprovalPeriod() external\&quot;,\&quot;function releaseFundsAfterApprovalPeriod() external\&quot;,\&quot;function cancelEscrowAndRefundBuyer() external\&quot;,\&quot;function getContractState() external view returns (uint8)\&quot;,\&quot;function getBalance() external view returns (uint256)\&quot;,\&quot;function areAllConditionsMet() public view returns (bool)\&quot;,\&quot;function getSeller() external view returns (address)\&quot;,\&quot;function getBuyer() external view returns (address)\&quot;,\&quot;function getEscrowAmount() external view returns (uint256)\&quot;,\&quot;function getServiceWallet() external view returns (address)\&quot;,\&quot;event EscrowCreated(address indexed seller, address indexed buyer, uint256 amount)\&quot;,\&quot;event FundsDeposited(address indexed buyer, uint256 amount)\&quot;,\&quot;event FundsReleased(address indexed seller, uint256 amount)\&quot;,\&quot;event EscrowCancelled(address indexed buyer, uint256 refundAmount)\&quot;]&quot;
+    at toContain (/Users/dustinjasmin/personal-cryptoscrow-backend/tests/unit/crossChainContractDeployer.test.js:478:27)
+    at Array.forEach (&lt;anonymous&gt;)
+    at Object.forEach (/Users/dustinjasmin/personal-cryptoscrow-backend/tests/unit/crossChainContractDeployer.test.js:477:22)
+    at Promise.then.completed (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/utils.js:298:28)
+    at new Promise (&lt;anonymous&gt;)
+    at callAsyncCircusFn (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/utils.js:231:10)
+    at _callCircusTest (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:316:40)
+    at processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at _runTest (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:252:3)
+    at _runTestsForDescribeBlock (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:126:9)
+    at _runTestsForDescribeBlock (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:121:9)
+    at _runTestsForDescribeBlock (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:121:9)
+    at run (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/run.js:71:3)
+    at runAndTransformResultsToJestFormat (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/legacy-code-todo-rewrite/jestAdapterInit.js:122:21)
+    at jestAdapter (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-circus/build/legacy-code-todo-rewrite/jestAdapter.js:79:19)
+    at runTestInternal (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-runner/build/runTest.js:367:16)
+    at runTest (/Users/dustinjasmin/personal-cryptoscrow-backend/node_modules/jest-runner/build/runTest.js:444:34)</failure>
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Unit Tests Network Configuration should support all documented chains" name="CrossChainContractDeployer Unit Tests Network Configuration should support all documented chains" time="0">
+    </testcase>
+    <testcase classname="CrossChainContractDeployer Unit Tests Network Configuration should handle environment variable mapping" name="CrossChainContractDeployer Unit Tests Network Configuration should handle environment variable mapping" time="0.001">
+    </testcase>
+  </testsuite>
+  <testsuite name="SmartContractBridgeService Unit Tests" errors="0" failures="0" skipped="0" timestamp="2025-06-10T03:16:07" time="0.048" tests="16">
+    <testcase classname="SmartContractBridgeService Unit Tests Environment Configuration should handle missing environment variables" name="SmartContractBridgeService Unit Tests Environment Configuration should handle missing environment variables" time="0.001">
+    </testcase>
+    <testcase classname="SmartContractBridgeService Unit Tests Environment Configuration should handle missing bridge private key" name="SmartContractBridgeService Unit Tests Environment Configuration should handle missing bridge private key" time="0.001">
+    </testcase>
+    <testcase classname="SmartContractBridgeService Unit Tests Environment Configuration should have proper test environment variables set" name="SmartContractBridgeService Unit Tests Environment Configuration should have proper test environment variables set" time="0">
+    </testcase>
+    <testcase classname="SmartContractBridgeService Unit Tests Input Validation should validate deposit parameters structure" name="SmartContractBridgeService Unit Tests Input Validation should validate deposit parameters structure" time="0">
+    </testcase>
+    <testcase classname="SmartContractBridgeService Unit Tests Input Validation should validate release parameters structure" name="SmartContractBridgeService Unit Tests Input Validation should validate release parameters structure" time="0.001">
+    </testcase>
+    <testcase classname="SmartContractBridgeService Unit Tests Input Validation should validate bridge parameters structure" name="SmartContractBridgeService Unit Tests Input Validation should validate bridge parameters structure" time="0">
+    </testcase>
+    <testcase classname="SmartContractBridgeService Unit Tests Contract ABI Validation should have correct function signatures in ABI" name="SmartContractBridgeService Unit Tests Contract ABI Validation should have correct function signatures in ABI" time="0.002">
+    </testcase>
+    <testcase classname="SmartContractBridgeService Unit Tests Contract ABI Validation should have correct event signatures in ABI" name="SmartContractBridgeService Unit Tests Contract ABI Validation should have correct event signatures in ABI" time="0">
+    </testcase>
+    <testcase classname="SmartContractBridgeService Unit Tests Network Configuration should support expected blockchain networks" name="SmartContractBridgeService Unit Tests Network Configuration should support expected blockchain networks" time="0.001">
+    </testcase>
+    <testcase classname="SmartContractBridgeService Unit Tests Network Configuration should handle network-specific RPC URLs" name="SmartContractBridgeService Unit Tests Network Configuration should handle network-specific RPC URLs" time="0">
+    </testcase>
+    <testcase classname="SmartContractBridgeService Unit Tests Error Messages should provide clear error messages for common failures" name="SmartContractBridgeService Unit Tests Error Messages should provide clear error messages for common failures" time="0.001">
+    </testcase>
+    <testcase classname="SmartContractBridgeService Unit Tests Gas Configuration should have reasonable gas limits for different operations" name="SmartContractBridgeService Unit Tests Gas Configuration should have reasonable gas limits for different operations" time="0">
+    </testcase>
+    <testcase classname="SmartContractBridgeService Unit Tests Timing Configuration should have reasonable timeout values" name="SmartContractBridgeService Unit Tests Timing Configuration should have reasonable timeout values" time="0">
+    </testcase>
+    <testcase classname="SmartContractBridgeService Unit Tests Contract States should define correct contract state values" name="SmartContractBridgeService Unit Tests Contract States should define correct contract state values" time="0.001">
+    </testcase>
+    <testcase classname="SmartContractBridgeService Unit Tests Address Validation should recognize valid Ethereum addresses" name="SmartContractBridgeService Unit Tests Address Validation should recognize valid Ethereum addresses" time="0">
+    </testcase>
+    <testcase classname="SmartContractBridgeService Unit Tests Address Validation should recognize invalid address formats" name="SmartContractBridgeService Unit Tests Address Validation should recognize invalid address formats" time="0">
     </testcase>
   </testsuite>
 </testsuites>

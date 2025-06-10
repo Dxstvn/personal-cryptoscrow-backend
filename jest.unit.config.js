@@ -22,7 +22,7 @@ const config = {
 
   // Transform files for ES modules
   transform: {
-    '^.+\\.js$': ['babel-jest', { presets: [['@babel/preset-env', { modules: 'commonjs' }]] }],
+    '^.+\\.js$': ['babel-jest'],
   },
 
   // Module file extensions

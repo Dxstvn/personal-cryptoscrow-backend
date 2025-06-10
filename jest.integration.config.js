@@ -10,16 +10,9 @@ const config = {
   // File extensions to consider
   moduleFileExtensions: ['js', 'json'],
   
-  // Transform files with babel for ES modules - same as unit config
+  // Transform files with babel for ES modules - updated for ES module compatibility
   transform: {
-    '^.+\\.js$': ['babel-jest', { 
-      presets: [
-        ['@babel/preset-env', { 
-          targets: { node: 'current' },
-          modules: 'commonjs'
-        }]
-      ]
-    }],
+    '^.+\\.js$': ['babel-jest'],
   },
   
   // Module name mapping for imports

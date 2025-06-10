@@ -1,5 +1,5 @@
 import { getAdminApp } from '../api/routes/auth/admin.js';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import LiFiBridgeService from './lifiService.js';
 
 // Helper function to get database
@@ -1009,6 +1009,569 @@ export async function getCrossChainTransactionsForDeal(dealId) {
   }
 }
 
+/**
+ * Check and update status of pending cross-chain transactions - for scheduled jobs
+ */
+export async function checkPendingTransactionStatus(transactionId) {
+  try {
+    console.log(`[CROSS-CHAIN-SCHEDULER] Checking status for transaction ${transactionId}`);
+    
+    const db = await getDb();
+    const txDoc = await db.collection('crossChainTransactions').doc(transactionId).get();
+    
+    if (!txDoc.exists) {
+      console.warn(`[CROSS-CHAIN-SCHEDULER] Transaction ${transactionId} not found`);
+      return { success: false, error: 'Transaction not found' };
+    }
+
+    const transaction = txDoc.data();
+    
+    // Skip if already completed or failed
+    if (transaction.status === 'completed' || transaction.status === 'failed') {
+      return { success: true, message: `Transaction already ${transaction.status}` };
+    }
+
+    // Check if there are any monitoring steps
+    const monitoringStep = transaction.steps?.find(s => s.action === 'monitor_bridge' && s.status === 'in_progress');
+    
+    if (monitoringStep?.executionId) {
+      try {
+        const status = await lifiService.getTransactionStatus(monitoringStep.executionId, transaction.dealId);
+        
+        let statusUpdate = {
+          bridgeStatus: status.status,
+          lastStatusCheck: new Date(),
+          lastUpdated: new Date()
+        };
+
+        if (status.status === 'DONE') {
+          statusUpdate.status = 'completed';
+          statusUpdate.completedAt = new Date();
+          
+          // Mark all remaining steps as completed
+          const updatedSteps = transaction.steps.map(step => {
+            if (step.status === 'pending' || step.status === 'in_progress') {
+              return { ...step, status: 'completed', completedAt: new Date() };
+            }
+            return step;
+          });
+          statusUpdate.steps = updatedSteps;
+          
+        } else if (status.status === 'FAILED') {
+          statusUpdate.status = 'failed';
+          statusUpdate.failedAt = new Date();
+          statusUpdate.error = status.substatusMessage || 'Bridge transaction failed';
+        }
+
+        await db.collection('crossChainTransactions').doc(transactionId).update(statusUpdate);
+        
+        console.log(`[CROSS-CHAIN-SCHEDULER] Updated transaction ${transactionId} status to ${status.status}`);
+        return { success: true, status: status.status, updated: true };
+        
+      } catch (statusError) {
+        console.error(`[CROSS-CHAIN-SCHEDULER] Failed to check bridge status for ${transactionId}:`, statusError);
+        return { success: false, error: statusError.message };
+      }
+    }
+
+    return { success: true, message: 'No monitoring step found or status check not needed' };
+    
+  } catch (error) {
+    console.error(`[CROSS-CHAIN-SCHEDULER] Error checking transaction status ${transactionId}:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Trigger cross-chain release after final approval deadline - for scheduled jobs
+ */
+export async function triggerCrossChainReleaseAfterApproval(dealId) {
+  try {
+    console.log(`[CROSS-CHAIN-SCHEDULER] Processing cross-chain auto-release for deal ${dealId}`);
+    
+    const db = await getDb();
+    const dealDoc = await db.collection('deals').doc(dealId).get();
+    
+    if (!dealDoc.exists) {
+      throw new Error(`Deal ${dealId} not found`);
+    }
+
+    const dealData = dealDoc.data();
+    
+    // Get active cross-chain transactions for this deal
+    const transactions = await getCrossChainTransactionsForDeal(dealId);
+    const activeTransaction = transactions.find(tx => 
+      tx.status === 'completed' && tx.needsBridge
+    );
+
+    if (!activeTransaction) {
+      console.warn(`[CROSS-CHAIN-SCHEDULER] No completed cross-chain transaction found for deal ${dealId}`);
+      return { 
+        success: false, 
+        error: 'No completed cross-chain transaction found',
+        requiresManualIntervention: true
+      };
+    }
+
+    // Check if all cross-chain conditions are fulfilled
+    const crossChainConditions = dealData.conditions?.filter(c => 
+      c.type === 'CROSS_CHAIN' || c.id.includes('cross_chain')
+    ) || [];
+
+    const allCrossChainConditionsFulfilled = crossChainConditions.every(c => 
+      c.status === 'FULFILLED_BY_BUYER'
+    );
+
+    if (!allCrossChainConditionsFulfilled) {
+      console.warn(`[CROSS-CHAIN-SCHEDULER] Cross-chain conditions not all fulfilled for deal ${dealId}`);
+      return { 
+        success: false, 
+        error: 'Cross-chain conditions not fulfilled',
+        requiresManualIntervention: true
+      };
+    }
+
+    // Update deal status to indicate funds are released cross-chain
+    const updateData = {
+      status: 'CrossChainFundsReleased',
+      crossChainAutoReleaseAt: FieldValue.serverTimestamp(),
+      crossChainLastActivity: FieldValue.serverTimestamp(),
+      timeline: FieldValue.arrayUnion({
+        event: `Cross-chain funds auto-released after final approval deadline`,
+        timestamp: FieldValue.serverTimestamp(),
+        systemTriggered: true,
+        crossChainEvent: true,
+        transactionId: activeTransaction.id
+      }),
+      updatedAt: FieldValue.serverTimestamp()
+    };
+
+    await db.collection('deals').doc(dealId).update(updateData);
+    
+    console.log(`[CROSS-CHAIN-SCHEDULER] Successfully processed cross-chain auto-release for deal ${dealId}`);
+    return { 
+      success: true, 
+      transactionId: activeTransaction.id,
+      message: 'Cross-chain auto-release processed successfully'
+    };
+    
+  } catch (error) {
+    console.error(`[CROSS-CHAIN-SCHEDULER] Error processing cross-chain auto-release for deal ${dealId}:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Handle stuck cross-chain transactions - for scheduled jobs
+ */
+export async function handleStuckCrossChainTransaction(transactionId) {
+  try {
+    console.log(`[CROSS-CHAIN-SCHEDULER] Handling stuck transaction ${transactionId}`);
+    
+    const db = await getDb();
+    const txDoc = await db.collection('crossChainTransactions').doc(transactionId).get();
+    
+    if (!txDoc.exists) {
+      return { success: false, error: 'Transaction not found' };
+    }
+
+    const transaction = txDoc.data();
+    
+    // Check if transaction is actually stuck (no updates for 24+ hours)
+    const lastUpdateTime = transaction.lastUpdated?.toDate?.() || transaction.createdAt?.toDate?.() || new Date();
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    
+    if (lastUpdateTime > twentyFourHoursAgo) {
+      return { success: true, message: 'Transaction not actually stuck - recent activity found' };
+    }
+
+    // Try to get latest status from bridge if monitoring step exists
+    const monitoringStep = transaction.steps?.find(s => s.action === 'monitor_bridge');
+    
+    if (monitoringStep?.executionId) {
+      try {
+        const latestStatus = await lifiService.getTransactionStatus(monitoringStep.executionId, transaction.dealId);
+        
+        if (latestStatus.status === 'DONE' || latestStatus.status === 'FAILED') {
+          // Transaction was actually completed or failed - update it
+          await checkPendingTransactionStatus(transactionId);
+          return { 
+            success: true, 
+            message: `Transaction was ${latestStatus.status} - status updated`,
+            actualStatus: latestStatus.status
+          };
+        }
+      } catch (statusError) {
+        console.warn(`[CROSS-CHAIN-SCHEDULER] Could not get status for stuck transaction ${transactionId}:`, statusError.message);
+      }
+    }
+
+    // Mark transaction as stuck and requiring manual intervention
+    const updateData = {
+      status: 'stuck',
+      stuckAt: FieldValue.serverTimestamp(),
+      lastUpdated: FieldValue.serverTimestamp(),
+      metadata: {
+        ...(transaction.metadata || {}),
+        markedAsStuck: true,
+        stuckReason: 'No activity for 24+ hours',
+        requiresManualIntervention: true
+      }
+    };
+
+    await db.collection('crossChainTransactions').doc(transactionId).update(updateData);
+
+    // Update associated deal if exists
+    if (transaction.dealId) {
+      const dealRef = db.collection('deals').doc(transaction.dealId);
+      await dealRef.update({
+        status: 'CrossChainStuck',
+        crossChainLastActivity: FieldValue.serverTimestamp(),
+        timeline: FieldValue.arrayUnion({
+          event: `Cross-chain transaction marked as stuck - manual intervention required`,
+          timestamp: FieldValue.serverTimestamp(),
+          systemTriggered: true,
+          crossChainEvent: true,
+          transactionId,
+          requiresAction: true
+        }),
+        updatedAt: FieldValue.serverTimestamp()
+      });
+    }
+
+    console.log(`[CROSS-CHAIN-SCHEDULER] Marked transaction ${transactionId} as stuck`);
+    return { 
+      success: true, 
+      message: 'Transaction marked as stuck - manual intervention required',
+      requiresManualIntervention: true
+    };
+    
+  } catch (error) {
+    console.error(`[CROSS-CHAIN-SCHEDULER] Error handling stuck transaction ${transactionId}:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Retry failed cross-chain transaction step - for scheduled jobs
+ */
+export async function retryCrossChainTransactionStep(transactionId, stepNumber) {
+  try {
+    console.log(`[CROSS-CHAIN-SCHEDULER] Retrying step ${stepNumber} for transaction ${transactionId}`);
+    
+    // Use the existing executeCrossChainStep function with retry logic
+    const result = await executeCrossChainStep(transactionId, stepNumber);
+    
+    if (result.success && result.status !== 'failed') {
+      console.log(`[CROSS-CHAIN-SCHEDULER] Successfully retried step ${stepNumber} for transaction ${transactionId}`);
+      return { success: true, result };
+    } else {
+      console.warn(`[CROSS-CHAIN-SCHEDULER] Retry failed for step ${stepNumber} of transaction ${transactionId}:`, result.error);
+      return { success: false, error: result.error || 'Retry failed' };
+    }
+  } catch (error) {
+    console.error(`[CROSS-CHAIN-SCHEDULER] Error retrying step ${stepNumber} for transaction ${transactionId}:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Simplified cross-chain release function - works like blockchainService.triggerReleaseAfterApproval
+ */
+export async function triggerCrossChainReleaseAfterApprovalSimple(contractAddress, dealId) {
+  try {
+    console.log(`[CROSS-CHAIN-SIMPLE] Triggering cross-chain release for contract ${contractAddress}, deal ${dealId}`);
+    
+    // Get deal info from database
+    const db = await getDb();
+    const dealDoc = await db.collection('deals').doc(dealId).get();
+    
+    if (!dealDoc.exists) {
+      throw new Error(`Deal ${dealId} not found`);
+    }
+
+    const dealData = dealDoc.data();
+    
+    // Check if this is actually a cross-chain deal
+    if (!dealData.isCrossChain) {
+      console.warn(`[CROSS-CHAIN-SIMPLE] Deal ${dealId} is not cross-chain, skipping`);
+      return { success: false, error: 'Not a cross-chain deal' };
+    }
+
+    // If it has a real smart contract, use the bridge service
+    if (contractAddress && !dealData.isMockDeployment) {
+      // Import smart contract bridge service
+      const SmartContractBridgeService = (await import('./smartContractBridgeService.js')).default;
+      const bridgeService = new SmartContractBridgeService();
+      
+      const releaseResult = await bridgeService.initiateCrossChainRelease({
+        contractAddress,
+        targetChain: dealData.sellerNetwork,
+        targetAddress: dealData.sellerWalletAddress,
+        dealId
+      });
+
+      return {
+        success: true,
+        receipt: {
+          transactionHash: releaseResult.contractTransactionHash,
+          blockNumber: releaseResult.blockNumber
+        },
+        bridgeTransactionId: releaseResult.bridgeTransactionId,
+        message: 'Cross-chain release initiated via smart contract'
+      };
+         } else {
+       // For deals without real contracts, mark as completed in database
+       await db.collection('deals').doc(dealId).update({
+         status: 'CrossChainFundsReleased',
+         fundsReleasedToSeller: true,
+         timeline: FieldValue.arrayUnion({
+           event: `Cross-chain funds released (no smart contract)`,
+           timestamp: FieldValue.serverTimestamp(),
+           system: true,
+           crossChainDirectRelease: true
+         }),
+         updatedAt: FieldValue.serverTimestamp()
+       });
+
+       return {
+         success: true,
+         receipt: {
+           transactionHash: `cross-chain-release-${dealId}-${Date.now()}`,
+           blockNumber: null
+         },
+         message: 'Cross-chain release completed directly'
+       };
+     }
+
+  } catch (error) {
+    console.error(`[CROSS-CHAIN-SIMPLE] Error in triggerCrossChainReleaseAfterApproval:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Simplified cross-chain cancellation function - works like blockchainService.triggerCancelAfterDisputeDeadline
+ */
+export async function triggerCrossChainCancelAfterDisputeDeadline(contractAddress, dealId) {
+  try {
+    console.log(`[CROSS-CHAIN-SIMPLE] Triggering cross-chain cancellation for contract ${contractAddress}, deal ${dealId}`);
+    
+    // Get deal info from database
+    const db = await getDb();
+    const dealDoc = await db.collection('deals').doc(dealId).get();
+    
+    if (!dealDoc.exists) {
+      throw new Error(`Deal ${dealId} not found`);
+    }
+
+    const dealData = dealDoc.data();
+    
+    // Check if this is actually a cross-chain deal
+    if (!dealData.isCrossChain) {
+      console.warn(`[CROSS-CHAIN-SIMPLE] Deal ${dealId} is not cross-chain, skipping`);
+      return { success: false, error: 'Not a cross-chain deal' };
+    }
+
+    // For cross-chain deals, cancellation means refunding to buyer on their original network
+    // This is more complex than regular EVM cancellation
+    
+    if (contractAddress && !dealData.isMockDeployment) {
+      // If there's a real smart contract, try to cancel through it
+      try {
+        // Import ethers and create contract instance
+        const { ethers } = await import('ethers');
+        const { getDb } = await import('./databaseService.js');
+        
+        // Create provider and contract instance
+        const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
+        const wallet = new ethers.Wallet(process.env.BACKEND_WALLET_PRIVATE_KEY, provider);
+        
+        // Load contract ABI (assuming it's the same as PropertyEscrow)
+        const CrossChainContractDeployer = (await import('./crossChainContractDeployer.js')).default;
+        const deployer = new CrossChainContractDeployer();
+        const contract = new ethers.Contract(contractAddress, deployer.contractABI, wallet);
+        
+        // Call the cancel function
+        const tx = await contract.cancelEscrowAndRefundBuyer();
+        const receipt = await tx.wait();
+        
+        // Update deal status
+        await db.collection('deals').doc(dealId).update({
+          status: 'CrossChainCancelledAfterDisputeDeadline',
+          autoCancelTxHash: tx.hash,
+          timeline: FieldValue.arrayUnion({
+            event: `Cross-chain escrow cancelled via smart contract. Tx: ${tx.hash}`,
+            timestamp: FieldValue.serverTimestamp(),
+            system: true,
+            contractCancellation: true
+          }),
+          updatedAt: FieldValue.serverTimestamp()
+        });
+
+        return {
+          success: true,
+          receipt: {
+            transactionHash: tx.hash,
+            blockNumber: receipt.blockNumber
+          },
+          message: 'Cross-chain cancellation completed via smart contract'
+        };
+        
+      } catch (contractError) {
+        console.error(`[CROSS-CHAIN-SIMPLE] Smart contract cancellation failed:`, contractError);
+        // Fall through to manual cancellation
+      }
+    }
+
+    // Manual cancellation process for deals without smart contracts or when contract calls fail
+    await db.collection('deals').doc(dealId).update({
+      status: 'CrossChainCancelledAfterDisputeDeadline',
+      timeline: FieldValue.arrayUnion({
+        event: `Cross-chain deal cancelled after dispute deadline (manual process)`,
+        timestamp: FieldValue.serverTimestamp(),
+        system: true,
+        manualCancellation: true,
+        note: 'Buyer should withdraw funds from source network manually'
+      }),
+      updatedAt: FieldValue.serverTimestamp()
+    });
+
+    return {
+      success: true,
+      receipt: {
+        transactionHash: `manual-cancel-${dealId}-${Date.now()}`,
+        blockNumber: null
+      },
+      message: 'Cross-chain cancellation marked - buyer should withdraw manually'
+    };
+
+  } catch (error) {
+    console.error(`[CROSS-CHAIN-SIMPLE] Error in triggerCrossChainCancelAfterDisputeDeadline:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Check if cross-chain deal is ready for automated processing
+ */
+export async function isCrossChainDealReady(dealId) {
+  try {
+    const db = await getDb();
+    const dealDoc = await db.collection('deals').doc(dealId).get();
+    
+    if (!dealDoc.exists) {
+      return { ready: false, reason: 'Deal not found' };
+    }
+
+    const dealData = dealDoc.data();
+    
+    if (!dealData.isCrossChain) {
+      return { ready: false, reason: 'Not a cross-chain deal' };
+    }
+
+    // Check if cross-chain transaction exists and is completed
+    if (dealData.crossChainTransactionId) {
+      const crossChainStatus = await getCrossChainTransactionStatus(dealData.crossChainTransactionId);
+      
+      if (crossChainStatus.status !== 'completed') {
+        return { 
+          ready: false, 
+          reason: `Cross-chain transaction not completed: ${crossChainStatus.status}` 
+        };
+      }
+    }
+
+    // Check if all cross-chain conditions are fulfilled
+    const crossChainConditions = dealData.conditions?.filter(c => c.type === 'CROSS_CHAIN') || [];
+    const unfulfilledConditions = crossChainConditions.filter(c => c.status !== 'FULFILLED_BY_BUYER');
+    
+    if (unfulfilledConditions.length > 0) {
+      return { 
+        ready: false, 
+        reason: `Cross-chain conditions not fulfilled: ${unfulfilledConditions.map(c => c.id).join(', ')}` 
+      };
+    }
+
+    return { ready: true, reason: 'All cross-chain requirements met' };
+
+  } catch (error) {
+    console.error(`[CROSS-CHAIN-SIMPLE] Error checking if deal ${dealId} is ready:`, error);
+    return { ready: false, reason: error.message };
+  }
+}
+
+/**
+ * Auto-complete cross-chain transaction steps if possible
+ */
+export async function autoCompleteCrossChainSteps(dealId) {
+  try {
+    console.log(`[CROSS-CHAIN-SIMPLE] Auto-completing cross-chain steps for deal ${dealId}`);
+    
+    const db = await getDb();
+    const dealDoc = await db.collection('deals').doc(dealId).get();
+    
+    if (!dealDoc.exists || !dealDoc.data().crossChainTransactionId) {
+      return { success: false, error: 'No cross-chain transaction found' };
+    }
+
+    const dealData = dealDoc.data();
+    const transactionId = dealData.crossChainTransactionId;
+    
+    // Check current transaction status
+    const currentStatus = await getCrossChainTransactionStatus(transactionId);
+    
+    if (currentStatus.status === 'completed') {
+      return { success: true, message: 'Cross-chain transaction already completed' };
+    }
+
+    // Try to complete pending steps
+    let completedSteps = 0;
+    let failedSteps = 0;
+
+    for (const step of currentStatus.steps || []) {
+      if (step.status === 'pending') {
+        try {
+          const stepResult = await executeCrossChainStep(transactionId, step.step);
+          
+          if (stepResult.status === 'completed') {
+            completedSteps++;
+          } else if (stepResult.status === 'failed') {
+            failedSteps++;
+          }
+        } catch (stepError) {
+          console.warn(`[CROSS-CHAIN-SIMPLE] Failed to auto-complete step ${step.step}:`, stepError.message);
+          failedSteps++;
+        }
+      }
+    }
+
+    // Update deal timeline
+    await db.collection('deals').doc(dealId).update({
+      timeline: FieldValue.arrayUnion({
+        event: `Auto-completion attempted: ${completedSteps} steps completed, ${failedSteps} steps failed`,
+        timestamp: FieldValue.serverTimestamp(),
+        system: true,
+        autoCompletion: true,
+        completedSteps,
+        failedSteps
+      }),
+      updatedAt: FieldValue.serverTimestamp()
+    });
+
+    return { 
+      success: completedSteps > 0, 
+      completedSteps, 
+      failedSteps,
+      message: `Auto-completed ${completedSteps} steps, ${failedSteps} failed`
+    };
+
+  } catch (error) {
+    console.error(`[CROSS-CHAIN-SIMPLE] Error auto-completing steps for deal ${dealId}:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
 export default {
   areNetworksEVMCompatible,
   getBridgeInfo,
@@ -1017,5 +1580,15 @@ export default {
   executeCrossChainStep,
   getCrossChainTransactionStatus,
   linkTransactionToDeal,
-  getCrossChainTransactionsForDeal
+  getCrossChainTransactionsForDeal,
+  // ✅ NEW: Simplified functions that work like blockchainService
+  triggerCrossChainReleaseAfterApprovalSimple,
+  triggerCrossChainCancelAfterDisputeDeadline,
+  isCrossChainDealReady,
+  autoCompleteCrossChainSteps,
+  // Existing scheduled job functions
+  checkPendingTransactionStatus,
+  triggerCrossChainReleaseAfterApproval,
+  handleStuckCrossChainTransaction,
+  retryCrossChainTransactionStep
 }; 
