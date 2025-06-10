@@ -9,7 +9,8 @@ import {
   getCrossChainTransactionStatus,
   estimateTransactionFees,
   areNetworksEVMCompatible,
-  getBridgeInfo
+  getBridgeInfo,
+  getOptimalBridgeRoute
 } from '../../../services/crossChainService.js';
 
 const router = express.Router();
@@ -191,7 +192,7 @@ router.post('/register', authenticateToken, async (req, res) => {
       name,
       network,
       isPrimary: isPrimary || false,
-      addedAt: FieldValue.serverTimestamp(),
+      addedAt: new Date(),
       ...(publicKey && { publicKey })
     };
 
@@ -418,7 +419,7 @@ router.put('/balance', authenticateToken, async (req, res) => {
     // Find and update wallet balance
     const updatedWallets = currentWallets.map(w => {
       if (w.address?.toLowerCase() === address.toLowerCase() && w.network === network) {
-        return { ...w, balance, lastBalanceUpdate: FieldValue.serverTimestamp() };
+        return { ...w, balance, lastBalanceUpdate: new Date() };
       }
       return w;
     });
@@ -482,7 +483,7 @@ router.get('/preferences', authenticateToken, async (req, res) => {
 router.post('/detection', authenticateToken, async (req, res) => {
   try {
     const userId = req.userId;
-    const { detectedWallets } = req.body;
+    const { detectedWallets, walletDetails } = req.body;
 
     if (!detectedWallets) {
       return res.status(400).json({ error: 'Detected wallets data is required' });
@@ -490,7 +491,7 @@ router.post('/detection', authenticateToken, async (req, res) => {
 
     const { db } = await getFirebaseServices();
     
-    // Store detection result in user's profile
+    // Enhanced storage with chain compatibility info
     const userRef = db.collection('users').doc(userId);
     await userRef.update({
       lastWalletDetection: {
@@ -500,24 +501,91 @@ router.post('/detection', authenticateToken, async (req, res) => {
         bitcoinWallets: detectedWallets.bitcoinWallets?.length || 0,
         totalDetected: (detectedWallets.evmWallets?.length || 0) + 
                       (detectedWallets.solanaWallets?.length || 0) + 
-                      (detectedWallets.bitcoinWallets?.length || 0)
+                      (detectedWallets.bitcoinWallets?.length || 0),
+        // New: Store detailed wallet capabilities
+        walletCapabilities: walletDetails || {}
       },
       updatedAt: FieldValue.serverTimestamp()
     });
 
-    console.log(`[WALLET] Received wallet detection for user ${userId}:`, {
+    // Check LI.FI compatibility for detected wallets
+    const compatibilityCheck = await checkLiFiCompatibility(detectedWallets);
+
+    console.log(`[WALLET] Enhanced wallet detection for user ${userId}:`, {
       evm: detectedWallets.evmWallets?.length || 0,
       solana: detectedWallets.solanaWallets?.length || 0,
-      bitcoin: detectedWallets.bitcoinWallets?.length || 0
+      bitcoin: detectedWallets.bitcoinWallets?.length || 0,
+      lifiCompatible: compatibilityCheck.compatible
     });
 
     res.status(200).json({
-      message: 'Wallet detection data received successfully'
+      message: 'Wallet detection data received successfully',
+      lifiCompatibility: compatibilityCheck,
+      supportedChains: compatibilityCheck.supportedChains || []
     });
 
   } catch (error) {
     console.error('[WALLET] Error processing wallet detection:', error);
     res.status(500).json({ error: 'Internal server error while processing wallet detection' });
+  }
+});
+
+// New: Dynamic wallet capability endpoint - GET /api/wallets/capabilities/:walletAddress
+router.get('/capabilities/:walletAddress', authenticateToken, async (req, res) => {
+  try {
+    const { walletAddress } = req.params;
+    const { network } = req.query;
+
+    // Validate wallet address
+    const validation = validateWalletAddress(walletAddress, network);
+    if (!validation.valid) {
+      return res.status(400).json({ 
+        success: false, 
+        error: validation.error 
+      });
+    }
+
+    // Check what chains this wallet can access through LI.FI
+    const capabilities = await analyzeDynamicWalletCapabilities(walletAddress, network);
+
+    res.json({
+      success: true,
+      wallet: walletAddress,
+      network: network,
+      capabilities,
+      availableBridges: capabilities.bridges || [],
+      supportedChains: capabilities.chains || []
+    });
+
+  } catch (error) {
+    console.error('[WALLET] Error analyzing wallet capabilities:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to analyze wallet capabilities' 
+    });
+  }
+});
+
+// New: Get LI.FI supported chains - GET /api/wallets/supported-chains
+router.get('/supported-chains', async (req, res) => {
+  try {
+    // This will eventually call LI.FI API
+    const supportedChains = await getLiFiSupportedChains();
+    
+    res.json({
+      success: true,
+      chains: supportedChains,
+      bridgeCount: 14,
+      dexCount: 33,
+      lastUpdated: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('[WALLET] Error fetching supported chains:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch supported chains'
+    });
   }
 });
 
@@ -690,6 +758,473 @@ router.get('/cross-chain/networks', async (req, res) => {
       success: false,
       message: 'Failed to get networks',
       error: error.message
+    });
+  }
+});
+
+// Helper functions for enhanced wallet detection
+async function checkLiFiCompatibility(detectedWallets) {
+  try {
+    // Import and use actual LI.FI service
+    const { initializeLiFiChains } = await import('../../../services/crossChainService.js');
+    
+    const supportedChains = await initializeLiFiChains();
+    
+    return {
+      compatible: true,
+      supportedChains: supportedChains.map(chain => chain.name.toLowerCase()),
+      bridgeCount: 14, // LI.FI aggregates 14+ bridges
+      dexCount: 33,    // LI.FI aggregates 33+ DEXs
+      evmSupported: (detectedWallets.evmWallets?.length || 0) > 0,
+      solanaSupported: (detectedWallets.solanaWallets?.length || 0) > 0,
+      chainsAvailable: supportedChains.length
+    };
+  } catch (error) {
+    console.error('[WALLET] LI.FI compatibility check failed:', error);
+    // Fallback to basic compatibility
+    return {
+      compatible: true,
+      supportedChains: ['ethereum', 'polygon', 'bsc', 'arbitrum', 'optimism'],
+      bridgeCount: 14,
+      dexCount: 33,
+      evmSupported: (detectedWallets.evmWallets?.length || 0) > 0,
+      solanaSupported: (detectedWallets.solanaWallets?.length || 0) > 0,
+      error: 'Using fallback data - LI.FI service unavailable'
+    };
+  }
+}
+
+async function analyzeDynamicWalletCapabilities(walletAddress, network) {
+  try {
+    // Import LI.FI service for real capability analysis
+    const LiFiBridgeService = await import('../../../services/lifiService.js');
+    const lifiService = new LiFiBridgeService.default();
+    
+    const capabilities = {
+      network,
+      walletAddress,
+      canBridge: true,
+      estimatedTime: '15-45 minutes'
+    };
+
+    // Get real supported chains from LI.FI
+    const supportedChains = await lifiService.getSupportedChains();
+    const currentChainId = getChainIdFromNetwork(network);
+    
+    // Find current chain in LI.FI data
+    const currentChain = supportedChains.find(chain => 
+      chain.chainId === currentChainId || 
+      chain.name.toLowerCase() === network.toLowerCase()
+    );
+
+    if (currentChain) {
+      // Get chains that can bridge to/from current network
+      const compatibleChains = supportedChains
+        .filter(chain => chain.chainId !== currentChainId)
+        .map(chain => chain.name.toLowerCase())
+        .slice(0, 10); // Limit to top 10 for performance
+
+      capabilities.chains = compatibleChains;
+      capabilities.bridges = ['lifi', 'across', 'stargate', 'hop', 'connext']; // LI.FI aggregated bridges
+      capabilities.nativeToken = currentChain.nativeCurrency?.symbol || 'ETH';
+      capabilities.lifiSupported = true;
+    } else {
+      // Fallback for unsupported networks
+      capabilities.chains = getDefaultCompatibleChains(network);
+      capabilities.bridges = ['lifi'];
+      capabilities.lifiSupported = false;
+      capabilities.warning = 'Network not fully supported by LI.FI';
+    }
+
+    // Add real fee estimation if possible
+    try {
+      if (capabilities.chains.length > 0) {
+        const sampleRoute = await lifiService.estimateBridgeFees({
+          fromChainId: network,
+          toChainId: capabilities.chains[0],
+          fromTokenAddress: '0x0000000000000000000000000000000000000000', // Native token
+          amount: '1000000000000000000', // 1 ETH equivalent
+          fromAddress: walletAddress
+        });
+        
+        capabilities.estimatedFees = `$${sampleRoute.totalFees.toFixed(2)}`;
+        capabilities.estimatedTime = `${Math.round(sampleRoute.estimatedTime / 60)} minutes`;
+      }
+    } catch (feeError) {
+      console.warn('[WALLET] Fee estimation failed:', feeError.message);
+      capabilities.estimatedFees = 'Unavailable';
+    }
+
+    return capabilities;
+  } catch (error) {
+    console.error('[WALLET] Dynamic capability analysis failed:', error);
+    // Fallback to static analysis
+    return getStaticWalletCapabilities(walletAddress, network);
+  }
+}
+
+async function getLiFiSupportedChains() {
+  try {
+    // Import and use actual LI.FI service
+    const LiFiBridgeService = await import('../../../services/lifiService.js');
+    const lifiService = new LiFiBridgeService.default();
+    
+    const chains = await lifiService.getSupportedChains();
+    
+    return chains.map(chain => ({
+      chainId: chain.chainId,
+      name: chain.name,
+      symbol: chain.nativeCurrency?.symbol || 'ETH',
+      isEVM: chain.chainId < 1000000, // Simple heuristic for EVM chains
+      bridgeSupported: chain.bridgeSupported,
+      dexSupported: chain.dexSupported
+    }));
+  } catch (error) {
+    console.error('[WALLET] Failed to get LI.FI supported chains:', error);
+    // Return fallback chain list
+    return [
+      { chainId: 1, name: 'Ethereum', symbol: 'ETH', isEVM: true, bridgeSupported: true },
+      { chainId: 137, name: 'Polygon', symbol: 'MATIC', isEVM: true, bridgeSupported: true },
+      { chainId: 56, name: 'BSC', symbol: 'BNB', isEVM: true, bridgeSupported: true },
+      { chainId: 42161, name: 'Arbitrum', symbol: 'ETH', isEVM: true, bridgeSupported: true },
+      { chainId: 10, name: 'Optimism', symbol: 'ETH', isEVM: true, bridgeSupported: true },
+      { chainId: 43114, name: 'Avalanche', symbol: 'AVAX', isEVM: true, bridgeSupported: true },
+      { chainId: 250, name: 'Fantom', symbol: 'FTM', isEVM: true, bridgeSupported: true },
+      { name: 'Solana', symbol: 'SOL', isEVM: false, bridgeSupported: true }
+    ];
+  }
+}
+
+// Helper functions
+function getChainIdFromNetwork(network) {
+  const networkMapping = {
+    'ethereum': 1,
+    'polygon': 137,
+    'bsc': 56,
+    'arbitrum': 42161,
+    'optimism': 10,
+    'avalanche': 43114,
+    'fantom': 250
+  };
+  return networkMapping[network.toLowerCase()] || 1;
+}
+
+function getDefaultCompatibleChains(network) {
+  // Static fallback compatibility mapping
+  const chainMappings = {
+    'ethereum': ['polygon', 'bsc', 'arbitrum', 'optimism', 'avalanche'],
+    'polygon': ['ethereum', 'bsc', 'arbitrum', 'avalanche'],
+    'bsc': ['ethereum', 'polygon', 'avalanche'],
+    'arbitrum': ['ethereum', 'polygon', 'optimism'],
+    'optimism': ['ethereum', 'arbitrum', 'polygon'],
+    'avalanche': ['ethereum', 'polygon', 'bsc'],
+    'solana': ['ethereum', 'polygon', 'bsc'],
+    'fantom': ['ethereum', 'polygon']
+  };
+  return chainMappings[network.toLowerCase()] || ['ethereum'];
+}
+
+function getStaticWalletCapabilities(walletAddress, network) {
+  // Fallback static analysis
+  return {
+    network,
+    walletAddress,
+    canBridge: true,
+    estimatedTime: '15-45 minutes',
+    chains: getDefaultCompatibleChains(network),
+    bridges: ['lifi'],
+    estimatedFees: 'Estimate unavailable',
+    lifiSupported: false,
+    fallbackMode: true
+  };
+}
+
+// New: Get optimal bridge route between buyer and seller wallets - POST /api/wallets/optimal-route
+router.post('/optimal-route', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { 
+      buyerWallet, 
+      sellerWallet, 
+      amount, 
+      tokenAddress, 
+      dealId 
+    } = req.body;
+
+    // Validate required fields
+    if (!buyerWallet || !sellerWallet || !amount) {
+      return res.status(400).json({
+        success: false,
+        error: 'Buyer wallet, seller wallet, and amount are required'
+      });
+    }
+
+    // Validate wallet addresses
+    const buyerValidation = validateWalletAddress(buyerWallet.address, buyerWallet.network);
+    const sellerValidation = validateWalletAddress(sellerWallet.address, sellerWallet.network);
+
+    if (!buyerValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid buyer wallet: ${buyerValidation.error}`
+      });
+    }
+
+    if (!sellerValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid seller wallet: ${sellerValidation.error}`
+      });
+    }
+
+    // Import cross-chain service
+    const { getOptimalBridgeRoute, estimateTransactionFees } = await import('../../../services/crossChainService.js');
+
+    let route = null;
+    let feeEstimate = null;
+
+    // Check if bridge is needed
+    if (buyerWallet.network !== sellerWallet.network) {
+      try {
+        // Get optimal route using LI.FI
+        route = await getOptimalBridgeRoute({
+          sourceNetwork: buyerWallet.network,
+          targetNetwork: sellerWallet.network,
+          amount,
+          tokenAddress: tokenAddress || '0x0000000000000000000000000000000000000000',
+          fromAddress: buyerWallet.address,
+          toAddress: sellerWallet.address,
+          dealId: dealId || `route-${Date.now()}`
+        });
+
+        // Estimate fees
+        feeEstimate = await estimateTransactionFees(
+          buyerWallet.network,
+          sellerWallet.network,
+          amount,
+          tokenAddress,
+          buyerWallet.address
+        );
+
+      } catch (error) {
+        console.error('[WALLET] Optimal route finding failed:', error);
+        return res.status(400).json({
+          success: false,
+          error: `No bridge route available: ${error.message}`,
+          fallback: {
+            route: null,
+            bridgeNeeded: true,
+            supported: false
+          }
+        });
+      }
+    } else {
+      // Same network - no bridge needed
+      feeEstimate = await estimateTransactionFees(
+        buyerWallet.network,
+        sellerWallet.network,
+        amount,
+        tokenAddress,
+        buyerWallet.address
+      );
+    }
+
+    res.json({
+      success: true,
+      buyerWallet: {
+        address: buyerWallet.address,
+        network: buyerWallet.network
+      },
+      sellerWallet: {
+        address: sellerWallet.address,
+        network: sellerWallet.network
+      },
+      bridgeNeeded: buyerWallet.network !== sellerWallet.network,
+      route,
+      feeEstimate,
+      escrowNetwork: 'ethereum', // Always use Ethereum for escrow contracts
+      totalTime: route?.estimatedTime || feeEstimate?.estimatedTime || '1-5 minutes',
+      confidence: route?.confidence || feeEstimate?.confidence || '95%'
+    });
+
+  } catch (error) {
+    console.error('[WALLET] Error finding optimal route:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to find optimal route'
+    });
+  }
+});
+
+// New: Prepare cross-chain escrow transaction - POST /api/wallets/prepare-escrow
+router.post('/prepare-escrow', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.userId;
+    const {
+      buyerWallet,
+      sellerWallet,
+      amount,
+      tokenAddress,
+      propertyAddress,
+      dealId
+    } = req.body;
+
+    // Validate required fields
+    if (!buyerWallet || !sellerWallet || !amount || !dealId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Buyer wallet, seller wallet, amount, and deal ID are required'
+      });
+    }
+
+    // Import cross-chain service
+    const { prepareCrossChainTransaction } = await import('../../../services/crossChainService.js');
+
+    console.log(`[WALLET] Preparing escrow transaction for deal ${dealId}`);
+
+    // Prepare the cross-chain transaction using LI.FI
+    const transaction = await prepareCrossChainTransaction({
+      fromAddress: buyerWallet.address,
+      toAddress: sellerWallet.address,
+      amount,
+      tokenAddress: tokenAddress || '0x0000000000000000000000000000000000000000',
+      sourceNetwork: buyerWallet.network,
+      targetNetwork: sellerWallet.network,
+      dealId,
+      userId,
+      propertyAddress
+    });
+
+    res.json({
+      success: true,
+      transaction: {
+        id: transaction.id,
+        dealId: transaction.dealId,
+        fromAddress: transaction.fromAddress,
+        toAddress: transaction.toAddress,
+        amount: transaction.amount,
+        sourceNetwork: transaction.sourceNetwork,
+        targetNetwork: transaction.targetNetwork,
+        needsBridge: transaction.needsBridge,
+        bridgeInfo: transaction.bridgeInfo,
+        feeEstimate: transaction.feeEstimate,
+        steps: transaction.steps,
+        status: transaction.status
+      },
+      nextSteps: {
+        userAction: transaction.needsBridge 
+          ? 'Initiate bridge transfer through your wallet'
+          : 'Execute direct transfer',
+        estimatedTime: transaction.feeEstimate?.estimatedTime || '15-45 minutes'
+      }
+    });
+
+  } catch (error) {
+    console.error('[WALLET] Error preparing escrow transaction:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to prepare escrow transaction',
+      details: error.message
+    });
+  }
+});
+
+// New: Get user's preferred wallets for escrow - GET /api/wallets/preferred-for-escrow
+router.get('/preferred-for-escrow', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { amount, counterpartyNetwork } = req.query;
+
+    const { db } = await getFirebaseServices();
+    const userDoc = await db.collection('users').doc(userId).get();
+    
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: 'User profile not found' });
+    }
+
+    const userData = userDoc.data();
+    const wallets = userData.wallets || [];
+
+    if (wallets.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No wallets found. Please connect a wallet first.'
+      });
+    }
+
+    // Analyze wallets for escrow suitability
+    const walletAnalysis = await Promise.all(
+      wallets.map(async (wallet) => {
+        try {
+          const capabilities = await analyzeDynamicWalletCapabilities(wallet.address, wallet.network);
+          
+          // Calculate suitability score
+          let suitabilityScore = 0;
+          
+          // Primary wallet bonus
+          if (wallet.isPrimary) suitabilityScore += 20;
+          
+          // LI.FI support bonus
+          if (capabilities.lifiSupported) suitabilityScore += 30;
+          
+          // Counterparty compatibility
+          if (counterpartyNetwork && capabilities.chains.includes(counterpartyNetwork.toLowerCase())) {
+            suitabilityScore += 25;
+          }
+          
+          // Fee efficiency (estimated)
+          if (capabilities.estimatedFees && capabilities.estimatedFees !== 'Unavailable') {
+            const feeAmount = parseFloat(capabilities.estimatedFees.replace('$', ''));
+            if (feeAmount < 10) suitabilityScore += 15;
+            else if (feeAmount < 50) suitabilityScore += 10;
+            else suitabilityScore += 5;
+          }
+
+          // Speed bonus
+          if (capabilities.estimatedTime.includes('15-45')) suitabilityScore += 10;
+
+          return {
+            ...wallet,
+            capabilities,
+            suitabilityScore,
+            recommended: suitabilityScore >= 50
+          };
+        } catch (error) {
+          console.warn(`[WALLET] Failed to analyze wallet ${wallet.address}:`, error);
+          return {
+            ...wallet,
+            capabilities: { error: 'Analysis failed' },
+            suitabilityScore: 0,
+            recommended: false
+          };
+        }
+      })
+    );
+
+    // Sort by suitability score
+    const sortedWallets = walletAnalysis.sort((a, b) => b.suitabilityScore - a.suitabilityScore);
+    
+    // Get the best wallet for escrow
+    const recommendedWallet = sortedWallets[0];
+
+    res.json({
+      success: true,
+      wallets: sortedWallets,
+      recommended: recommendedWallet,
+      totalWallets: wallets.length,
+      analysis: {
+        amount: amount || 'Not specified',
+        counterpartyNetwork: counterpartyNetwork || 'Not specified',
+        bestScore: recommendedWallet?.suitabilityScore || 0,
+        lifiCompatibleWallets: sortedWallets.filter(w => w.capabilities.lifiSupported).length
+      }
+    });
+
+  } catch (error) {
+    console.error('[WALLET] Error analyzing preferred wallets:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to analyze wallet preferences'
     });
   }
 });

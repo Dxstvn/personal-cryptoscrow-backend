@@ -124,8 +124,16 @@ export const config = {
   ALCHEMY_API_KEY: process.env.ALCHEMY_API_KEY,
 };
 
-// Initialize AWS secrets loading
-await loadAWSSecrets();
+// Export the loadAWSSecrets function for manual initialization
+export { loadAWSSecrets };
+
+// Initialize AWS secrets loading conditionally - avoid top-level await in test environments
+if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'e2e_test') {
+  // Only load AWS secrets in non-test environments
+  loadAWSSecrets().catch(error => {
+    console.error('Failed to initialize AWS secrets:', error);
+  });
+}
 
 // Log environment loading status (only in development)
 if (config.NODE_ENV === 'development') {
@@ -134,4 +142,6 @@ if (config.NODE_ENV === 'development') {
   console.log('🔧 Production environment variables loaded');
 } else if (config.NODE_ENV === 'staging') {
   console.log('🔧 Staging environment variables loaded');
+} else if (config.NODE_ENV === 'test') {
+  console.log('🧪 Test environment variables loaded (AWS secrets skipped)');
 } 

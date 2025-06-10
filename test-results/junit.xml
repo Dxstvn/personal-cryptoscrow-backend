@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="jest tests" tests="13" failures="0" errors="0" time="11.664">
+  <testsuite name="🌉 REAL Cross-Chain Escrow Service Integration Tests" errors="0" failures="0" skipped="0" timestamp="2025-06-10T01:23:24" time="11.646" tests="13">
+    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🔗 Cross-Chain Service Core Capabilities should prepare cross-chain transaction with complete metadata" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🔗 Cross-Chain Service Core Capabilities should prepare cross-chain transaction with complete metadata" time="0.003">
+    </testcase>
+    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🔗 Cross-Chain Service Core Capabilities should estimate cross-chain transaction fees using real LI.FI data" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🔗 Cross-Chain Service Core Capabilities should estimate cross-chain transaction fees using real LI.FI data" time="0">
+    </testcase>
+    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🔗 Cross-Chain Service Core Capabilities should get bridge information for cross-chain transactions" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🔗 Cross-Chain Service Core Capabilities should get bridge information for cross-chain transactions" time="0">
+    </testcase>
+    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🔗 Cross-Chain Service Core Capabilities should check network EVM compatibility correctly" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🔗 Cross-Chain Service Core Capabilities should check network EVM compatibility correctly" time="0.001">
+    </testcase>
+    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 💫 Complete Cross-Chain Escrow Flow Tests should execute complete cross-chain escrow flow: Buyer on Polygon → Ethereum Escrow → Seller on Arbitrum (Complete Flow)" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 💫 Complete Cross-Chain Escrow Flow Tests should execute complete cross-chain escrow flow: Buyer on Polygon → Ethereum Escrow → Seller on Arbitrum (Complete Flow)" time="0.001">
+    </testcase>
+    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 💫 Complete Cross-Chain Escrow Flow Tests should execute complete cross-chain escrow flow: Buyer on Ethereum → Ethereum Escrow → Seller on Polygon (Partial Cross-Chain)" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 💫 Complete Cross-Chain Escrow Flow Tests should execute complete cross-chain escrow flow: Buyer on Ethereum → Ethereum Escrow → Seller on Polygon (Partial Cross-Chain)" time="0.001">
+    </testcase>
+    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 💫 Complete Cross-Chain Escrow Flow Tests should execute complete cross-chain escrow flow: Buyer on Arbitrum → Ethereum Escrow → Seller on Optimism (Multi-Bridge)" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 💫 Complete Cross-Chain Escrow Flow Tests should execute complete cross-chain escrow flow: Buyer on Arbitrum → Ethereum Escrow → Seller on Optimism (Multi-Bridge)" time="0.001">
+    </testcase>
+    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 💫 Complete Cross-Chain Escrow Flow Tests should handle bridge status monitoring for active transactions" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 💫 Complete Cross-Chain Escrow Flow Tests should handle bridge status monitoring for active transactions" time="0.001">
+    </testcase>
+    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🌐 Real Tenderly Virtual TestNet Integration should simulate cross-chain escrow deposit with Tenderly transaction" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🌐 Real Tenderly Virtual TestNet Integration should simulate cross-chain escrow deposit with Tenderly transaction" time="1.689">
+    </testcase>
+    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🌐 Real Tenderly Virtual TestNet Integration should demonstrate complete cross-chain escrow orchestration" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🌐 Real Tenderly Virtual TestNet Integration should demonstrate complete cross-chain escrow orchestration" time="7.691">
+    </testcase>
+    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🛡️ Cross-Chain Service Error Handling &amp; Edge Cases should handle invalid network combinations gracefully" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🛡️ Cross-Chain Service Error Handling &amp; Edge Cases should handle invalid network combinations gracefully" time="0">
+    </testcase>
+    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🛡️ Cross-Chain Service Error Handling &amp; Edge Cases should handle invalid addresses gracefully" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🛡️ Cross-Chain Service Error Handling &amp; Edge Cases should handle invalid addresses gracefully" time="0">
+    </testcase>
+    <testcase classname="🌉 REAL Cross-Chain Escrow Service Integration Tests 🛡️ Cross-Chain Service Error Handling &amp; Edge Cases should handle missing parameters gracefully" name="🌉 REAL Cross-Chain Escrow Service Integration Tests 🛡️ Cross-Chain Service Error Handling &amp; Edge Cases should handle missing parameters gracefully" time="0">
+    </testcase>
+  </testsuite>
+</testsuites>

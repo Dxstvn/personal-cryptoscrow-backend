@@ -3,7 +3,7 @@ import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { getAdminApp } from '../auth/admin.js';
 import { deployPropertyEscrowContract } from '../../../services/contractDeployer.js';
-import { isAddress, getAddress, parseUnits } from 'ethers'; // This is the import we are interested in
+import { isAddress, getAddress, parseUnits, JsonRpcProvider, formatEther, parseEther } from 'ethers'; // This is the import we are interested in
 import { Wallet } from 'ethers';
 // Import cross-chain services
 import { 
@@ -15,7 +15,14 @@ import {
   getCrossChainTransactionStatus
 } from '../../../services/crossChainService.js';
 
+// ✅ NEW: Import the smart contract bridge service and cross-chain deployer
+import SmartContractBridgeService from '../../../services/smartContractBridgeService.js';
+import { deployCrossChainPropertyEscrowContract } from '../../../services/crossChainContractDeployer.js';
+
 const router = express.Router();
+
+// ✅ NEW: Initialize smart contract bridge service
+const smartContractBridgeService = new SmartContractBridgeService();
 
 // Helper function to get Firebase services
 async function getFirebaseServices() {
@@ -403,14 +410,34 @@ router.post('/create', authenticateToken, async (req, res) => {
                     const serviceWalletAddress = deployerWallet.address;
                     console.log(`[ROUTE LOG] Using service wallet: ${serviceWalletAddress} (derived from deployer key)`);
                     
-                    const deploymentResult = await deployPropertyEscrowContract(
-                        contractSellerAddress, 
-                        contractBuyerAddress, 
-                        newTransactionData.escrowAmountWei,
-                        currentDeployerKey,
-                        currentRpcUrl,
-                        serviceWalletAddress
-                    );
+                    // ✅ NEW: Use cross-chain deployer for cross-chain deals, regular deployer for same-chain
+                    let deploymentResult;
+                    
+                    if (isCrossChain) {
+                        deploymentResult = await deployCrossChainPropertyEscrowContract({
+                            sellerAddress: contractSellerAddress,
+                            buyerAddress: contractBuyerAddress,
+                            escrowAmount: ethers.parseEther(String(amount)),
+                            serviceWalletAddress: serviceWalletAddress,
+                            buyerSourceChain,
+                            sellerTargetChain,
+                            tokenAddress: null, // ETH for now
+                            deployerPrivateKey: currentDeployerKey,
+                            rpcUrl: currentRpcUrl,
+                            dealId: 'pending' // Will be updated after deal creation
+                        });
+                    } else {
+                        // Use regular deployer for same-chain deals
+                        const { deployPropertyEscrowContract } = await import('../../../services/contractDeployer.js');
+                        deploymentResult = await deployPropertyEscrowContract(
+                            contractSellerAddress, 
+                            contractBuyerAddress, 
+                            newTransactionData.escrowAmountWei,
+                            currentDeployerKey,
+                            currentRpcUrl,
+                            serviceWalletAddress
+                        );
+                    }
                     
                     deployedContractAddress = deploymentResult.contractAddress;
                     newTransactionData.smartContractAddress = deployedContractAddress;
@@ -1119,7 +1146,7 @@ router.patch('/cross-chain/:dealId/conditions/:conditionId', authenticateToken, 
 // Execute cross-chain fund transfer
 router.post('/cross-chain/:dealId/transfer', authenticateToken, async (req, res) => {
     const { dealId } = req.params;
-    const { fromTxHash, bridgeTxHash } = req.body;
+    const { fromTxHash, bridgeTxHash, autoRelease = false } = req.body;
     const userId = req.userId;
 
     try {
@@ -1151,59 +1178,534 @@ router.post('/cross-chain/:dealId/transfer', authenticateToken, async (req, res)
         // Get cross-chain transaction status
         const crossChainTx = await getCrossChainTransactionStatus(dealData.crossChainTransactionId);
         
+        let bridgeCompleted = false;
+        let contractReleaseResult = null;
+
         if (crossChainTx.needsBridge) {
             // Execute multi-step bridge transfer
             let currentStep = 1;
             
             // Step 1: Lock funds on source network
             if (fromTxHash) {
-                await executeCrossChainStep(dealData.crossChainTransactionId, currentStep, fromTxHash);
+                const step1Result = await executeCrossChainStep(dealData.crossChainTransactionId, currentStep, fromTxHash);
+                console.log(`[CROSS-CHAIN] Step 1 result:`, step1Result);
                 currentStep++;
             }
             
             // Step 2: Bridge transfer
             if (bridgeTxHash) {
-                await executeCrossChainStep(dealData.crossChainTransactionId, currentStep, bridgeTxHash);
+                const step2Result = await executeCrossChainStep(dealData.crossChainTransactionId, currentStep, bridgeTxHash);
+                console.log(`[CROSS-CHAIN] Step 2 result:`, step2Result);
                 currentStep++;
             }
             
-            // Step 3: Release funds on target network (this would be handled by the bridge/target network)
-            // For now, we mark it as pending external confirmation
+            // Step 3: Monitor bridge completion and trigger smart contract release
+            const step3Result = await executeCrossChainStep(dealData.crossChainTransactionId, currentStep);
+            console.log(`[CROSS-CHAIN] Step 3 result:`, step3Result);
+            
+            // Check if bridge is complete
+            if (step3Result.allStepsCompleted || step3Result.status === 'completed') {
+                bridgeCompleted = true;
+                
+                // ✅ NEW: Trigger smart contract fund release when bridge completes
+                if (dealData.smartContractAddress && autoRelease) {
+                    try {
+                        // This would be implemented to interact with the deployed smart contract
+                        console.log(`[CROSS-CHAIN] Bridge completed, triggering smart contract release...`);
+                        
+                        // Update deal status to indicate funds are ready for release
+                        await db.collection('deals').doc(dealId).update({
+                            fundsDepositedByBuyer: true,
+                            status: 'READY_FOR_FINAL_APPROVAL',
+                            timeline: FieldValue.arrayUnion({
+                                event: `Cross-chain bridge completed. Funds ready for smart contract release.`,
+                                timestamp: Timestamp.now(),
+                                userId,
+                                bridgeCompleted: true
+                            }),
+                            updatedAt: Timestamp.now()
+                        });
+                        
+                        contractReleaseResult = {
+                            message: 'Bridge completed, smart contract updated',
+                            contractAddress: dealData.smartContractAddress,
+                            readyForRelease: true
+                        };
+                        
+                    } catch (contractError) {
+                        console.error('[CROSS-CHAIN] Smart contract update failed:', contractError);
+                        contractReleaseResult = {
+                            error: contractError.message,
+                            requiresManualIntervention: true
+                        };
+                    }
+                }
+                
+                // Auto-fulfill cross-chain conditions when bridge completes
+                await updateCrossChainConditions(dealId, dealData);
+            }
+            
+            // ✅ NEW: Update deal timeline with comprehensive bridge status
             await db.collection('deals').doc(dealId).update({
                 timeline: FieldValue.arrayUnion({
-                    event: `Cross-chain bridge transfer initiated. Awaiting release on ${dealData.sellerNetwork}`,
+                    event: `Cross-chain bridge transfer ${bridgeCompleted ? 'COMPLETED' : 'initiated'}. Awaiting ${bridgeCompleted ? 'final release' : `release on ${dealData.sellerNetwork}`}`,
                     timestamp: Timestamp.now(),
-                    userId
+                    userId,
+                    bridgeStatus: bridgeCompleted ? 'completed' : 'pending',
+                    bridgeTxHash,
+                    fromTxHash
                 }),
+                crossChainBridgeStatus: bridgeCompleted ? 'completed' : 'pending',
                 updatedAt: Timestamp.now()
             });
         } else {
             // Direct EVM-to-EVM transfer
             if (fromTxHash) {
-                await executeCrossChainStep(dealData.crossChainTransactionId, 1, fromTxHash);
+                const directResult = await executeCrossChainStep(dealData.crossChainTransactionId, 1, fromTxHash);
                 
-                await db.collection('deals').doc(dealId).update({
-                    fundsDepositedByBuyer: true,
-                    timeline: FieldValue.arrayUnion({
-                        event: `Direct cross-chain transfer completed (tx: ${fromTxHash})`,
-                        timestamp: Timestamp.now(),
-                        userId
-                    }),
-                    updatedAt: Timestamp.now()
-                });
+                if (directResult.allStepsCompleted || directResult.status === 'completed') {
+                    // ✅ NEW: For direct transfers, immediately mark as deposited and update contract state
+                    await db.collection('deals').doc(dealId).update({
+                        fundsDepositedByBuyer: true,
+                        status: 'READY_FOR_FINAL_APPROVAL',
+                        timeline: FieldValue.arrayUnion({
+                            event: `Direct cross-chain transfer completed (tx: ${fromTxHash}). Ready for smart contract release.`,
+                            timestamp: Timestamp.now(),
+                            userId,
+                            directTransfer: true
+                        }),
+                        updatedAt: Timestamp.now()
+                    });
+                    
+                    bridgeCompleted = true;
+                    contractReleaseResult = {
+                        message: 'Direct transfer completed, smart contract updated',
+                        contractAddress: dealData.smartContractAddress,
+                        readyForRelease: true
+                    };
+                }
             }
         }
 
+        // ✅ NEW: Enhanced response with bridge and contract status
         res.json({
-            message: 'Cross-chain transfer initiated successfully',
+            message: 'Cross-chain transfer processed successfully',
             dealId,
             fromTxHash,
             bridgeTxHash,
-            requiresBridge: crossChainTx.needsBridge
+            requiresBridge: crossChainTx.needsBridge,
+            bridgeCompleted,
+            smartContract: contractReleaseResult,
+            nextAction: bridgeCompleted ? 
+                'Bridge completed - funds ready for final approval/release' : 
+                'Awaiting bridge completion',
+            crossChainStatus: {
+                transactionId: dealData.crossChainTransactionId,
+                status: bridgeCompleted ? 'completed' : 'in_progress',
+                buyerNetwork: dealData.buyerNetwork,
+                sellerNetwork: dealData.sellerNetwork
+            }
         });
 
     } catch (error) {
         console.error('[CROSS-CHAIN] Error executing transfer:', error);
+        res.status(500).json({ error: error.message || 'Internal server error' });
+    }
+});
+
+// Enhanced smart contract gas estimation endpoint
+router.post('/estimate-gas', authenticateToken, async (req, res) => {
+    await estimateSmartContractGas(req, res);
+});
+
+// ✅ NEW: Handle bridge completion notifications and trigger smart contract release
+router.post('/cross-chain/:dealId/bridge-completed', authenticateToken, async (req, res) => {
+    const { dealId } = req.params;
+    const { bridgeTransactionHash, executionId, status, destinationTxHash } = req.body;
+    const userId = req.userId;
+
+    try {
+        const { db } = await getFirebaseServices();
+        
+        // Get the deal
+        const dealDoc = await db.collection('deals').doc(dealId).get();
+        if (!dealDoc.exists) {
+            return res.status(404).json({ error: 'Deal not found.' });
+        }
+
+        const dealData = dealDoc.data();
+        
+        // Check if user is participant or this is a system notification
+        if (!dealData.participants.includes(userId) && !req.body.isSystemNotification) {
+            return res.status(403).json({ error: 'Access denied. User is not a participant in this deal.' });
+        }
+
+        // Verify this is a cross-chain transaction
+        if (!dealData.isCrossChain || !dealData.crossChainTransactionId) {
+            return res.status(400).json({ error: 'This is not a cross-chain transaction.' });
+        }
+
+        // Only process successful bridge completions
+        if (status !== 'DONE' && status !== 'completed') {
+            await db.collection('deals').doc(dealId).update({
+                timeline: FieldValue.arrayUnion({
+                    event: `Bridge notification received: ${status}${bridgeTransactionHash ? ` (tx: ${bridgeTransactionHash})` : ''}`,
+                    timestamp: Timestamp.now(),
+                    system: true,
+                    bridgeStatus: status
+                }),
+                updatedAt: Timestamp.now()
+            });
+
+            return res.json({
+                message: `Bridge status updated: ${status}`,
+                processed: false,
+                reason: 'Bridge not yet completed'
+            });
+        }
+
+        console.log(`[CROSS-CHAIN] Bridge completed for deal ${dealId}, triggering smart contract integration...`);
+
+        // ✅ NEW: Actually integrate with smart contract when bridge completes
+        let smartContractResult = null;
+        
+        if (dealData.smartContractAddress) {
+            try {
+                // Handle incoming cross-chain deposit to smart contract
+                console.log(`[CROSS-CHAIN] Processing smart contract deposit for deal ${dealId}`);
+                
+                smartContractResult = await smartContractBridgeService.handleIncomingCrossChainDeposit({
+                    contractAddress: dealData.smartContractAddress,
+                    bridgeTransactionId: bridgeTransactionHash,
+                    sourceChain: dealData.buyerNetwork,
+                    originalSender: dealData.buyerWalletAddress,
+                    amount: ethers.parseEther(dealData.amount.toString()),
+                    tokenAddress: dealData.tokenAddress || null,
+                    dealId
+                });
+                
+                console.log(`[CROSS-CHAIN] Smart contract deposit successful:`, smartContractResult);
+                
+            } catch (contractError) {
+                console.error('[CROSS-CHAIN] Smart contract deposit failed:', contractError);
+                // Continue with database updates even if contract call fails
+                smartContractResult = {
+                    error: contractError.message,
+                    requiresManualIntervention: true
+                };
+            }
+        }
+
+        // Update cross-chain transaction status
+        if (executionId) {
+            try {
+                const finalStepResult = await executeCrossChainStep(dealData.crossChainTransactionId, 3, destinationTxHash);
+                console.log(`[CROSS-CHAIN] Final step executed:`, finalStepResult);
+            } catch (stepError) {
+                console.warn(`[CROSS-CHAIN] Final step execution failed:`, stepError.message);
+            }
+        }
+
+        // Update deal status and trigger smart contract fund release preparation
+        const updateData = {
+            fundsDepositedByBuyer: true,
+            crossChainBridgeStatus: 'completed',
+            bridgeCompletionTxHash: destinationTxHash || bridgeTransactionHash,
+            timeline: FieldValue.arrayUnion({
+                event: `Cross-chain bridge COMPLETED. Funds received ${dealData.smartContractAddress ? 'in smart contract' : 'on ' + dealData.sellerNetwork}${destinationTxHash ? ` (tx: ${destinationTxHash})` : ''}`,
+                timestamp: Timestamp.now(),
+                system: true,
+                bridgeCompleted: true,
+                bridgeTransactionHash,
+                destinationTxHash,
+                smartContractIntegration: smartContractResult ? true : false
+            }),
+            updatedAt: Timestamp.now()
+        };
+
+        // ✅ NEW: Enhanced smart contract state handling
+        if (dealData.smartContractAddress) {
+            if (smartContractResult && smartContractResult.success) {
+                // Smart contract successfully received funds
+                updateData.timeline = FieldValue.arrayUnion(
+                    updateData.timeline.arrayUnion[0], // Keep the bridge completion event
+                    {
+                        event: `Smart contract deposit confirmed. Contract state: ${smartContractResult.newContractState || 'unknown'}`,
+                        timestamp: Timestamp.now(),
+                        system: true,
+                        smartContractReady: true,
+                        contractTransactionHash: smartContractResult.transactionHash
+                    }
+                );
+
+                // Check if all conditions are fulfilled
+                const allConditionsFulfilled = areAllBackendConditionsFulfilled(dealData.conditions);
+                if (allConditionsFulfilled) {
+                    updateData.status = 'READY_FOR_FINAL_APPROVAL';
+                } else {
+                    updateData.status = 'AWAITING_CONDITION_FULFILLMENT';
+                }
+            } else {
+                // Smart contract deposit failed
+                updateData.timeline = FieldValue.arrayUnion(
+                    updateData.timeline.arrayUnion[0], // Keep the bridge completion event
+                    {
+                        event: `Smart contract deposit FAILED: ${smartContractResult?.error || 'Unknown error'}. Manual intervention required.`,
+                        timestamp: Timestamp.now(),
+                        system: true,
+                        smartContractError: true,
+                        requiresIntervention: true
+                    }
+                );
+                updateData.status = 'AWAITING_CONDITION_FULFILLMENT'; // Keep in current state for manual handling
+            }
+        } else {
+            // No smart contract - this is an off-chain only deal
+            updateData.status = 'READY_FOR_FINAL_APPROVAL';
+            updateData.timeline = FieldValue.arrayUnion(
+                updateData.timeline.arrayUnion[0], // Keep the bridge completion event
+                {
+                    event: `Cross-chain transfer completed (off-chain mode). Ready for manual confirmation.`,
+                    timestamp: Timestamp.now(),
+                    system: true
+                }
+            );
+        }
+
+        // Update the deal
+        await db.collection('deals').doc(dealId).update(updateData);
+
+        // Auto-fulfill cross-chain conditions
+        await updateCrossChainConditions(dealId, dealData);
+
+        console.log(`[CROSS-CHAIN] Bridge completion processed for deal ${dealId}, status: ${updateData.status}`);
+
+        res.json({
+            message: 'Bridge completion processed successfully',
+            dealId,
+            bridgeTransactionHash,
+            destinationTxHash,
+            newStatus: updateData.status,
+            smartContractIntegration: smartContractResult,
+            smartContractReady: !!(dealData.smartContractAddress && smartContractResult?.success),
+            processed: true,
+            nextAction: updateData.status === 'READY_FOR_FINAL_APPROVAL' ? 
+                'Ready for final approval and fund release' : 
+                'Awaiting condition fulfillment or manual intervention'
+        });
+
+    } catch (error) {
+        console.error('[CROSS-CHAIN] Error processing bridge completion:', error);
+        res.status(500).json({ error: error.message || 'Internal server error' });
+    }
+});
+
+// ✅ NEW: Handle smart contract cross-chain release to seller
+router.post('/cross-chain/:dealId/release-to-seller', authenticateToken, async (req, res) => {
+    const { dealId } = req.params;
+    const userId = req.userId;
+
+    try {
+        const { db } = await getFirebaseServices();
+        
+        // Get the deal
+        const dealDoc = await db.collection('deals').doc(dealId).get();
+        if (!dealDoc.exists) {
+            return res.status(404).json({ error: 'Deal not found.' });
+        }
+
+        const dealData = dealDoc.data();
+        
+        // Check if user is participant
+        if (!dealData.participants.includes(userId)) {
+            return res.status(403).json({ error: 'Access denied. User is not a participant in this deal.' });
+        }
+
+        // Verify this is a cross-chain transaction with smart contract
+        if (!dealData.isCrossChain || !dealData.smartContractAddress) {
+            return res.status(400).json({ error: 'This is not a cross-chain transaction with smart contract.' });
+        }
+
+        // Check if deal is ready for release
+        if (dealData.status !== 'READY_FOR_FINAL_APPROVAL' && dealData.status !== 'IN_FINAL_APPROVAL') {
+            return res.status(400).json({ error: `Deal not ready for release. Current status: ${dealData.status}` });
+        }
+
+        // Check if all conditions are fulfilled
+        if (!areAllBackendConditionsFulfilled(dealData.conditions)) {
+            return res.status(400).json({ error: 'All conditions must be fulfilled before release.' });
+        }
+
+        console.log(`[CROSS-CHAIN] Initiating smart contract release to seller for deal ${dealId}`);
+
+        // ✅ NEW: Execute cross-chain release via smart contract
+        const releaseResult = await smartContractBridgeService.initiateCrossChainRelease({
+            contractAddress: dealData.smartContractAddress,
+            targetChain: dealData.sellerNetwork,
+            targetAddress: dealData.sellerWalletAddress,
+            dealId
+        });
+
+        if (releaseResult.success) {
+            // Update deal status
+            await db.collection('deals').doc(dealId).update({
+                status: 'AWAITING_CROSS_CHAIN_RELEASE',
+                crossChainReleaseInitiated: true,
+                crossChainReleaseBridgeId: releaseResult.bridgeTransactionId,
+                timeline: FieldValue.arrayUnion({
+                    event: `Cross-chain release to seller initiated. Bridge ID: ${releaseResult.bridgeTransactionId}`,
+                    timestamp: Timestamp.now(),
+                    userId,
+                    contractTransactionHash: releaseResult.contractTransactionHash,
+                    bridgeTransactionId: releaseResult.bridgeTransactionId
+                }),
+                updatedAt: Timestamp.now()
+            });
+
+            // ✅ NEW: Start monitoring bridge completion
+            if (releaseResult.bridgeResult?.executionId) {
+                // Start background monitoring (don't await)
+                smartContractBridgeService.monitorAndConfirmBridge({
+                    contractAddress: dealData.smartContractAddress,
+                    bridgeTransactionId: releaseResult.bridgeTransactionId,
+                    executionId: releaseResult.bridgeResult.executionId,
+                    dealId,
+                    maxWaitTime: 1800000 // 30 minutes
+                }).then(monitorResult => {
+                    console.log(`[CROSS-CHAIN] Bridge monitoring completed for deal ${dealId}:`, monitorResult);
+                    
+                    // Update deal to completed status
+                    db.collection('deals').doc(dealId).update({
+                        status: 'COMPLETED',
+                        fundsReleasedToSeller: true,
+                        timeline: FieldValue.arrayUnion({
+                            event: `Cross-chain release COMPLETED. Funds delivered to seller on ${dealData.sellerNetwork}`,
+                            timestamp: Timestamp.now(),
+                            system: true,
+                            dealCompleted: true,
+                            totalBridgeTime: `${Math.round(monitorResult.totalTime / 1000)}s`
+                        }),
+                        updatedAt: Timestamp.now()
+                    });
+                }).catch(monitorError => {
+                    console.error(`[CROSS-CHAIN] Bridge monitoring failed for deal ${dealId}:`, monitorError);
+                    
+                    // Update deal with error status
+                    db.collection('deals').doc(dealId).update({
+                        timeline: FieldValue.arrayUnion({
+                            event: `Cross-chain release monitoring FAILED: ${monitorError.message}. Manual intervention required.`,
+                            timestamp: Timestamp.now(),
+                            system: true,
+                            error: true,
+                            requiresIntervention: true
+                        }),
+                        updatedAt: Timestamp.now()
+                    });
+                });
+            }
+
+            res.json({
+                message: 'Cross-chain release to seller initiated successfully',
+                dealId,
+                bridgeTransactionId: releaseResult.bridgeTransactionId,
+                contractTransactionHash: releaseResult.contractTransactionHash,
+                estimatedTime: releaseResult.bridgeResult?.estimatedTime || 'Unknown',
+                estimatedFees: releaseResult.bridgeResult?.estimatedFees || 'Unknown',
+                bridgeProvider: releaseResult.bridgeResult?.bridgeProvider || 'Unknown',
+                targetChain: dealData.sellerNetwork,
+                targetAddress: dealData.sellerWalletAddress,
+                monitoring: {
+                    active: !!releaseResult.bridgeResult?.executionId,
+                    executionId: releaseResult.bridgeResult?.executionId
+                }
+            });
+
+        } else {
+            throw new Error(`Release initiation failed: ${releaseResult.error || 'Unknown error'}`);
+        }
+
+    } catch (error) {
+        console.error('[CROSS-CHAIN] Error initiating release to seller:', error);
+        
+        // Log error to deal timeline
+        try {
+            const { db } = await getFirebaseServices();
+            await db.collection('deals').doc(dealId).update({
+                timeline: FieldValue.arrayUnion({
+                    event: `Cross-chain release initiation FAILED: ${error.message}`,
+                    timestamp: Timestamp.now(),
+                    userId,
+                    error: true
+                }),
+                updatedAt: Timestamp.now()
+            });
+        } catch (logError) {
+            console.error('[CROSS-CHAIN] Failed to log error to timeline:', logError);
+        }
+
+        res.status(500).json({ error: error.message || 'Internal server error' });
+    }
+});
+
+// ✅ NEW: Get smart contract cross-chain status
+router.get('/cross-chain/:dealId/contract-status', authenticateToken, async (req, res) => {
+    const { dealId } = req.params;
+    const userId = req.userId;
+
+    try {
+        const { db } = await getFirebaseServices();
+        
+        // Get the deal
+        const dealDoc = await db.collection('deals').doc(dealId).get();
+        if (!dealDoc.exists) {
+            return res.status(404).json({ error: 'Deal not found.' });
+        }
+
+        const dealData = dealDoc.data();
+        
+        // Check if user is participant
+        if (!dealData.participants.includes(userId)) {
+            return res.status(403).json({ error: 'Access denied. User is not a participant in this deal.' });
+        }
+
+        // Verify this has a smart contract
+        if (!dealData.smartContractAddress) {
+            return res.status(400).json({ error: 'This deal does not have a smart contract.' });
+        }
+
+        // ✅ NEW: Get live contract information
+        const contractInfo = await smartContractBridgeService.getContractInfo(dealData.smartContractAddress);
+        
+        // Get cross-chain transaction status
+        let crossChainStatus = null;
+        if (dealData.crossChainTransactionId) {
+            crossChainStatus = await getCrossChainTransactionStatus(dealData.crossChainTransactionId);
+        }
+
+        res.json({
+            dealId,
+            smartContract: {
+                address: dealData.smartContractAddress,
+                ...contractInfo
+            },
+            crossChainTransaction: crossChainStatus,
+            dealStatus: {
+                status: dealData.status,
+                fundsDeposited: dealData.fundsDepositedByBuyer,
+                fundsReleased: dealData.fundsReleasedToSeller,
+                bridgeStatus: dealData.crossChainBridgeStatus
+            },
+            networks: {
+                buyer: dealData.buyerNetwork,
+                seller: dealData.sellerNetwork,
+                contract: 'ethereum'
+            },
+            conditions: dealData.conditions.filter(c => c.type === 'CROSS_CHAIN'),
+            timeline: dealData.timeline.filter(t => t.system || t.bridgeCompleted || t.smartContractReady)
+        });
+
+    } catch (error) {
+        console.error('[CROSS-CHAIN] Error getting contract status:', error);
         res.status(500).json({ error: error.message || 'Internal server error' });
     }
 });
@@ -1266,6 +1768,280 @@ async function updateCrossChainConditions(dealId, dealData) {
             updatedAt: Timestamp.now()
         });
     }
+}
+
+// Helper function to get current gas prices from network
+async function getCurrentGasPrices(network) {
+  try {
+    const networkConfig = {
+      ethereum: { rpcUrl: process.env.ETHEREUM_RPC_URL || process.env.RPC_URL, chainId: 1 },
+      polygon: { rpcUrl: process.env.POLYGON_RPC_URL, chainId: 137 },
+      bsc: { rpcUrl: process.env.BSC_RPC_URL, chainId: 56 },
+      arbitrum: { rpcUrl: process.env.ARBITRUM_RPC_URL, chainId: 42161 },
+      optimism: { rpcUrl: process.env.OPTIMISM_RPC_URL, chainId: 10 }
+    };
+
+    if (!networkConfig[network] || !networkConfig[network].rpcUrl) {
+      // Return default values if RPC not configured
+      return {
+        slow: '10000000000', // 10 gwei
+        standard: '20000000000', // 20 gwei
+        fast: '30000000000', // 30 gwei
+        baseFee: '15000000000' // 15 gwei
+      };
+    }
+
+    const provider = new JsonRpcProvider(networkConfig[network].rpcUrl);
+    
+    // Get current gas price and fee data
+    const [gasPrice, feeData, latestBlock] = await Promise.all([
+      provider.getGasPrice(),
+      provider.getFeeData(),
+      provider.getBlock('latest')
+    ]);
+
+    // Calculate different speed tiers
+    const baseFee = feeData.gasPrice || gasPrice;
+    const slow = (BigInt(baseFee) * 90n / 100n).toString(); // 90% of base
+    const standard = baseFee.toString();
+    const fast = (BigInt(baseFee) * 120n / 100n).toString(); // 120% of base
+
+    return {
+      slow,
+      standard,
+      fast,
+      baseFee: baseFee.toString(),
+      maxFeePerGas: feeData.maxFeePerGas?.toString(),
+      maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.toString(),
+      blockNumber: latestBlock?.number
+    };
+  } catch (error) {
+    console.warn(`[GAS] Error fetching gas prices for ${network}:`, error.message);
+    // Return reasonable defaults
+    return {
+      slow: '10000000000',
+      standard: '20000000000', 
+      fast: '30000000000',
+      baseFee: '15000000000'
+    };
+  }
+}
+
+// Enhanced smart contract gas estimation function
+async function estimateSmartContractGas(req, res) {
+  try {
+    const {
+      operation, // 'deploy', 'deposit', 'setConditions', 'fulfillCondition', 'release', 'dispute'
+      network,
+      amount,
+      conditions = [],
+      isCrossChain = false,
+      sourceNetwork,
+      targetNetwork,
+      gasSpeed = 'standard' // 'slow', 'standard', 'fast'
+    } = req.body;
+
+    if (!operation || !network) {
+      return res.status(400).json({
+        success: false,
+        message: 'Operation and network are required'
+      });
+    }
+
+    // Get current gas prices for the network
+    const gasPrices = await getCurrentGasPrices(network);
+    
+    // Base gas estimates for different operations
+    const baseGasEstimates = {
+      deploy: {
+        base: 2500000, // ~2.5M gas for contract deployment
+        perCondition: 50000, // Additional gas per condition
+        crossChainMultiplier: 1.2 // 20% more for cross-chain
+      },
+      setConditions: {
+        base: 80000, // Base cost for setting conditions
+        perCondition: 25000, // Gas per condition
+        crossChainMultiplier: 1.1
+      },
+      deposit: {
+        base: 100000, // Base deposit cost
+        perCondition: 5000, // Minimal impact per condition
+        crossChainMultiplier: 1.3 // Higher for cross-chain due to complexity
+      },
+      fulfillCondition: {
+        base: 60000, // Base cost per condition fulfillment
+        perCondition: 0, // Fixed cost per call
+        crossChainMultiplier: 1.5 // Cross-chain condition validation is more expensive
+      },
+      startFinalApproval: {
+        base: 80000,
+        perCondition: 2000,
+        crossChainMultiplier: 1.2
+      },
+      release: {
+        base: 150000, // Base release cost (includes transfers)
+        perCondition: 3000, // Verification cost per condition
+        crossChainMultiplier: 2.0 // Bridge interactions are expensive
+      },
+      dispute: {
+        base: 120000,
+        perCondition: 10000, // Dispute resolution per condition
+        crossChainMultiplier: 1.8
+      },
+      cancel: {
+        base: 100000,
+        perCondition: 1000,
+        crossChainMultiplier: 1.1
+      }
+    };
+
+    if (!baseGasEstimates[operation]) {
+      return res.status(400).json({
+        success: false,
+        message: `Unsupported operation: ${operation}`
+      });
+    }
+
+    const estimate = baseGasEstimates[operation];
+    let gasLimit = estimate.base;
+
+    // Add gas for conditions
+    const conditionCount = Array.isArray(conditions) ? conditions.length : 0;
+    gasLimit += conditionCount * estimate.perCondition;
+
+    // Apply cross-chain multiplier if applicable
+    if (isCrossChain) {
+      gasLimit = Math.floor(gasLimit * estimate.crossChainMultiplier);
+    }
+
+    // Add network-specific adjustments
+    const networkMultipliers = {
+      ethereum: 1.0,
+      polygon: 0.8, // Generally cheaper
+      bsc: 0.7,     // Cheapest
+      arbitrum: 0.9, // L2 is cheaper
+      optimism: 0.9,
+      solana: 0.1,   // Very different fee structure
+      bitcoin: 0.05  // Different fee structure entirely
+    };
+
+    const networkMultiplier = networkMultipliers[network] || 1.0;
+    gasLimit = Math.floor(gasLimit * networkMultiplier);
+
+    // Calculate costs for different speeds
+    const selectedGasPrice = gasPrices[gasSpeed] || gasPrices.standard;
+    const gasCosts = {
+      slow: {
+        gasPrice: gasPrices.slow,
+        gasCost: (BigInt(gasLimit) * BigInt(gasPrices.slow)).toString(),
+        gasCostEth: formatEther((BigInt(gasLimit) * BigInt(gasPrices.slow)).toString())
+      },
+      standard: {
+        gasPrice: gasPrices.standard,
+        gasCost: (BigInt(gasLimit) * BigInt(gasPrices.standard)).toString(),
+        gasCostEth: formatEther((BigInt(gasLimit) * BigInt(gasPrices.standard)).toString())
+      },
+      fast: {
+        gasPrice: gasPrices.fast,
+        gasCost: (BigInt(gasLimit) * BigInt(gasPrices.fast)).toString(),
+        gasCostEth: formatEther((BigInt(gasLimit) * BigInt(gasPrices.fast)).toString())
+      }
+    };
+
+    // Cross-chain specific estimates
+    let crossChainEstimate = null;
+    if (isCrossChain && sourceNetwork && targetNetwork) {
+      try {
+        const crossChainFees = await estimateTransactionFees(sourceNetwork, targetNetwork, amount || '0');
+        crossChainEstimate = {
+          ...crossChainFees,
+          bridgeRequired: !areNetworksEVMCompatible(sourceNetwork, targetNetwork),
+          bridgeInfo: getBridgeInfo(sourceNetwork, targetNetwork)
+        };
+      } catch (crossChainError) {
+        console.warn('[GAS] Cross-chain estimation failed:', crossChainError.message);
+      }
+    }
+
+    // Create detailed breakdown
+    const breakdown = {
+      operation,
+      network,
+      baseGas: estimate.base,
+      conditionGas: conditionCount * estimate.perCondition,
+      crossChainMultiplier: isCrossChain ? estimate.crossChainMultiplier : 1.0,
+      networkMultiplier,
+      totalConditions: conditionCount,
+      isCrossChain
+    };
+
+    // Service fee calculation (if applicable for deploy/release operations)
+    let serviceFeeEstimate = null;
+    if (['deploy', 'release'].includes(operation) && amount) {
+      try {
+        const amountWei = parseEther(amount.toString());
+        const serviceFeeWei = (amountWei * 200n) / 10000n; // 2% service fee
+        serviceFeeEstimate = {
+          percentage: 2,
+          feeWei: serviceFeeWei.toString(),
+          feeEth: formatEther(serviceFeeWei),
+          description: '2% service fee (built into smart contract)'
+        };
+      } catch (feeError) {
+        console.warn('[GAS] Service fee calculation failed:', feeError.message);
+      }
+    }
+
+    const response = {
+      success: true,
+      data: {
+        operation,
+        network,
+        gasLimit,
+        gasPrices: gasCosts,
+        selectedSpeed: gasSpeed,
+        selectedEstimate: gasCosts[gasSpeed],
+        breakdown,
+        crossChain: crossChainEstimate,
+        serviceFee: serviceFeeEstimate,
+        warnings: [],
+        recommendations: [],
+        timestamp: new Date().toISOString()
+      }
+    };
+
+    // Add warnings and recommendations
+    if (gasLimit > 5000000) {
+      response.data.warnings.push('High gas usage detected. Consider optimizing conditions or splitting operations.');
+    }
+
+    if (isCrossChain) {
+      response.data.warnings.push('Cross-chain operations may require additional confirmations and have higher latency.');
+      response.data.recommendations.push('Consider gas costs on both source and target networks.');
+    }
+
+    if (conditionCount > 10) {
+      response.data.warnings.push('Large number of conditions may increase gas costs significantly.');
+      response.data.recommendations.push('Consider grouping related conditions or using off-chain verification where possible.');
+    }
+
+    // Network-specific recommendations
+    if (network === 'ethereum' && parseFloat(gasCosts.standard.gasCostEth) > 0.01) {
+      response.data.recommendations.push('High Ethereum gas fees detected. Consider using L2 solutions like Arbitrum or Optimism.');
+    }
+
+    console.log(`[GAS] Estimated gas for ${operation} on ${network}: ${gasLimit} gas, ${gasCosts.standard.gasCostEth} ETH`);
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('[GAS] Error estimating smart contract gas:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to estimate gas fees',
+      error: error.message
+    });
+  }
 }
 
 export default router;

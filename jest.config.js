@@ -4,28 +4,105 @@
 const config = {
   rootDir: '.',
   testEnvironment: 'node',
-  // If you have global setup/teardown files and they are in CommonJS (.cjs), ensure they are compatible
-  // or convert them to ESM if possible, though Jest should handle .cjs fine.
+  
+  // Global setup/teardown files
   globalSetup: './test-setup/globalSetup.cjs', 
   globalTeardown: './test-setup/globalTeardown.cjs',
-  clearMocks: true,
+  
+  // File extensions to consider
+  moduleFileExtensions: ['js', 'json'],
+  
+  // Module name mapping for imports
+  moduleNameMapper: {
+    '^@/(.*)$': '<rootDir>/src/$1',
+    '^@tests/(.*)$': '<rootDir>/tests/$1'
+  },
+  
+  // Test file patterns
+  testMatch: [
+    '<rootDir>/tests/**/*.test.js',
+    '<rootDir>/tests/**/*.spec.js'
+  ],
+  
+  // Files to ignore
+  testPathIgnorePatterns: [
+    '<rootDir>/node_modules/',
+    '<rootDir>/dist/',
+    '<rootDir>/build/'
+  ],
+  
+  // Setup files
+  setupFilesAfterEnv: ['<rootDir>/tests/setup.js'],
+  
+  // Coverage configuration
   collectCoverage: true,
   collectCoverageFrom: [
     'src/**/*.js',
     '!src/**/__tests__/**',
     '!src/**/*.test.js',
+    '!src/**/*.spec.js',
     '!src/**/*.config.js',
+    '!**/node_modules/**'
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['json', 'text', 'lcov', 'clover'],
-
-  // Increase timeouts for integration tests that need emulators
-  testTimeout: 90000, // 90 seconds for integration tests with emulator startup
-  setupFilesAfterEnv: [],
-
-  // No 'extensionsToTreatAsEsm' needed when type: "module" is in package.json for .js files.
-  // No 'transform' needed if Babel is removed and we rely on native Node ESM support via --experimental-vm-modules.
-  // Jest will use its default mechanisms.
+  coverageThreshold: {
+    global: {
+      branches: 80,
+      functions: 80,
+      lines: 80,
+      statements: 80
+    }
+  },
+  
+  // Test environment variables
+  testEnvironmentOptions: {
+    NODE_ENV: 'test'
+  },
+  
+  // Timeout for tests
+  testTimeout: 90000,
+  
+  // Projects for different test types
+  projects: [
+    {
+      displayName: 'unit',
+      testMatch: ['<rootDir>/tests/unit/**/*.test.js'],
+      testEnvironment: 'node',
+      testTimeout: 30000,
+      setupFilesAfterEnv: ['<rootDir>/tests/setup.js']
+    },
+    {
+      displayName: 'integration',
+      testMatch: ['<rootDir>/tests/integration/**/*.test.js'],
+      testEnvironment: 'node',
+      testTimeout: 90000,
+      setupFilesAfterEnv: ['<rootDir>/tests/setup.js']
+    }
+  ],
+  
+  // Mock handling
+  clearMocks: true,
+  resetMocks: true,
+  restoreMocks: true,
+  
+  // Verbose output
+  verbose: true,
+  
+  // Error handling
+  errorOnDeprecated: true,
+  
+  // Watch options
+  watchPathIgnorePatterns: ['<rootDir>/node_modules/'],
+  
+  // Reporters
+  reporters: [
+    'default',
+    ['jest-junit', {
+      outputDirectory: 'test-results',
+      outputName: 'junit.xml'
+    }]
+  ]
 };
 
 export default config;

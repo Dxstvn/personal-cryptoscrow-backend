@@ -20,6 +20,19 @@ const config = {
   testTimeout: 10000, // 10 seconds
   setupFilesAfterEnv: [],
 
+  // Transform files for ES modules
+  transform: {
+    '^.+\\.js$': ['babel-jest', { presets: [['@babel/preset-env', { modules: 'commonjs' }]] }],
+  },
+
+  // Module file extensions
+  moduleFileExtensions: ['js', 'json'],
+
+  // Module name mapping
+  moduleNameMapper: {
+    '^@/(.*)$': '<rootDir>/src/$1',
+  },
+
   // Only run unit tests
   testMatch: [
     '**/unit/**/*.test.js',
