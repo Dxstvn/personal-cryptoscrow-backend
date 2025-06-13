@@ -10,11 +10,28 @@ export default {
   ],
   globalSetup: '<rootDir>/test/e2e/setup/global-setup.js',
   globalTeardown: '<rootDir>/test/e2e/setup/global-teardown.js',
+  // Environment variables for E2E tests
+  setupFiles: [
+    '<rootDir>/test/e2e/setup/env-setup.js'
+  ],
   testTimeout: 120000, // 2 minutes for real network operations
   maxWorkers: 1, // Run tests sequentially to avoid conflicts
   verbose: true,
   detectOpenHandles: true,
   forceExit: true,
+  openHandlesTimeout: 10000, // Wait 10 seconds for handles to close (increased)
+  workerIdleMemoryLimit: '512MB',
+  // Additional cleanup options
+  clearMocks: true,
+  resetMocks: true,
+  restoreMocks: true,
+  resetModules: true, // Reset modules between tests
+  // Aggressive cleanup
+  testEnvironmentOptions: {
+    // Node.js specific options for better cleanup
+    NODE_ENV: 'test'
+  },
+  // Coverage settings
   coverageDirectory: '<rootDir>/coverage/e2e',
   collectCoverageFrom: [
     'src/**/*.js',
@@ -33,10 +50,12 @@ export default {
     '<rootDir>/coverage/',
     '<rootDir>/dist/'
   ],
-  clearMocks: true,
-  resetMocks: true,
-  restoreMocks: true,
   reporters: [
     'default'
-  ]
+  ],
+  // Error handling
+  errorOnDeprecated: false, // Don't fail on deprecation warnings during cleanup
+  silent: false,
+  // Custom test sequencer for better resource management - temporarily disabled
+  // testSequencer: '<rootDir>/test/e2e/setup/test-sequencer.js'
 }; 

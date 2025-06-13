@@ -14,14 +14,10 @@ describe('REAL Complete Escrow Flow with Universal LiFi Integration', () => {
     console.log('🧪 Setting up Complete Escrow Flow Test...');
     
     // Validate Tenderly configuration
-    try {
-      validateTenderlyConfig();
-      console.log('✅ Tenderly configuration validated');
-    } catch (error) {
-      console.warn('⚠️ Tenderly validation failed:', error.message);
-    }
+    validateTenderlyConfig();
+    console.log('✅ Tenderly configuration validated');
 
-    // Setup test accounts
+    // Fund test accounts
     try {
       testAccounts = await fundTestAccounts();
       console.log('✅ Test accounts setup complete');
@@ -35,10 +31,24 @@ describe('REAL Complete Escrow Flow with Universal LiFi Integration', () => {
     }
 
     // Setup authentication tokens for E2E testing
-    authTokens = {
-      buyer: 'mock-buyer-auth-token',
-      seller: 'mock-seller-auth-token'
-    };
+    try {
+      const { admin } = await import('../../../src/api/routes/auth/admin.js');
+      
+      // Use the existing mock user setup from global setup
+      authTokens = {
+        buyer: 'mock-buyer-auth-token',
+        seller: 'mock-seller-auth-token'
+      };
+      
+      console.log('✅ Test users and auth tokens created');
+      
+    } catch (error) {
+      console.warn('⚠️ Auth setup failed, using mock tokens:', error.message);
+      authTokens = {
+        buyer: 'mock-buyer-auth-token',
+        seller: 'mock-seller-auth-token'
+      };
+    }
 
     console.log('✅ Complete escrow flow test setup complete');
   });
@@ -53,7 +63,7 @@ describe('REAL Complete Escrow Flow with Universal LiFi Integration', () => {
       initiatedBy: 'BUYER',
       propertyAddress: '789 Complete Flow Test Street, E2E City',
       amount: 2.5,
-      otherPartyEmail: 'seller-complete@e2etest.com',
+      otherPartyEmail: 'seller-samechain@e2etest.com',
       buyerWalletAddress: testAccounts[0].address,
       sellerWalletAddress: testAccounts[1].address,
       buyerNetworkHint: 'ethereum',
@@ -149,7 +159,7 @@ describe('REAL Complete Escrow Flow with Universal LiFi Integration', () => {
       initiatedBy: 'BUYER',
       propertyAddress: '456 Cross-Chain Test Ave, Multi-Network City',
       amount: 1.8,
-      otherPartyEmail: 'seller-crosschain-complete@e2etest.com',
+      otherPartyEmail: 'seller-crosschain@e2etest.com',
       buyerWalletAddress: testAccounts[0].address,
       sellerWalletAddress: testAccounts[1].address,
       buyerNetworkHint: 'ethereum',

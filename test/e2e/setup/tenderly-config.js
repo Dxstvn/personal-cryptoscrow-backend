@@ -16,55 +16,53 @@ if (process.env.ETHEREUM_TESTNET_ID && !process.env.TENDERLY_VIRTUAL_TESTNET_ID)
   }
 }
 
+// Tenderly configuration for E2E testing
 export const tenderlyConfig = {
   accessKey: process.env.TENDERLY_ACCESS_KEY,
   accountSlug: process.env.TENDERLY_ACCOUNT_SLUG,
   projectSlug: process.env.TENDERLY_PROJECT_SLUG,
-  virtualTestnetId: process.env.TENDERLY_VIRTUAL_TESTNET_ID,
-  rpcUrl: process.env.RPC_URL,
-  
-  // Additional network-specific RPC URLs available
-  networks: {
-    ethereum: process.env.TENDERLY_ETHEREUM_MAINNET,
-    polygon: process.env.TENDERLY_POLYGON,
-    arbitrum: process.env.TENDERLY_ARBITRUM_ONE,
-    base: process.env.TENDERLY_BASE,
-    optimism: process.env.TENDERLY_OPTIMISM
-  },
-  
-  // Testnet dashboard URLs
-  testnetUrls: {
-    ethereum: process.env.ETHEREUM_TESTNET_ID,
-    polygon: process.env.POLYGON_TESTNET_ID,
-    arbitrum: process.env.ARBITRUM_ONE_TESTNET_ID,
-    base: process.env.BASE_TESTNET_ID,
-    optimism: process.env.OPTIMISM_TESTNET_ID
-  }
+  rpcUrl: process.env.TENDERLY_ETHEREUM_MAINNET || process.env.RPC_URL || 'https://virtual.mainnet.rpc.tenderly.co/51eccaa8-2319-4c5d-8c94-10fff0684681',
+  virtualTestNetId: process.env.TENDERLY_VIRTUAL_TESTNET_ID || 'df424811-49e2-43ab-a750-67055d314d37',
+  forkId: process.env.TENDERLY_FORK_ID
 };
 
-// Validate all required credentials are present
 export function validateTenderlyConfig() {
-  const required = ['accessKey', 'accountSlug', 'projectSlug', 'rpcUrl'];
+  const required = ['accessKey', 'accountSlug', 'projectSlug'];
   const missing = required.filter(key => !tenderlyConfig[key]);
   
   if (missing.length > 0) {
-    throw new Error(`Missing Tenderly config: ${missing.join(', ')}`);
+    const errorMsg = `Missing required Tenderly configuration: ${missing.join(', ')}`;
+    console.error('❌', errorMsg);
+    throw new Error(errorMsg);
+  }
+  
+  // Validate RPC URL format
+  if (!tenderlyConfig.rpcUrl || !tenderlyConfig.rpcUrl.startsWith('http')) {
+    console.warn('⚠️ Invalid or missing RPC URL, using default Tenderly URL');
+    tenderlyConfig.rpcUrl = 'https://virtual.mainnet.rpc.tenderly.co/51eccaa8-2319-4c5d-8c94-10fff0684681';
   }
   
   console.log('✅ Tenderly configuration validated');
   return true;
 }
 
-// Log configuration status (with masked keys for security)
 export function logConfigStatus() {
   console.log('🔧 Tenderly Configuration Status:');
-  console.log(`   Access Key: ${tenderlyConfig.accessKey ? 'SET' : 'NOT SET'}`);
-  console.log(`   Account Slug: ${tenderlyConfig.accountSlug || 'NOT SET'}`);
-  console.log(`   Project Slug: ${tenderlyConfig.projectSlug || 'NOT SET'}`);
-  console.log(`   RPC URL: ${tenderlyConfig.rpcUrl ? 'SET' : 'NOT SET'}`);
-  console.log(`   Virtual TestNet ID: ${tenderlyConfig.virtualTestnetId || 'NOT SET'}`);
+  console.log('   Access Key:', tenderlyConfig.accessKey ? 'SET' : 'MISSING');
+  console.log('   Account Slug:', tenderlyConfig.accountSlug || 'MISSING');
+  console.log('   Project Slug:', tenderlyConfig.projectSlug || 'MISSING');
+  console.log('   RPC URL:', tenderlyConfig.rpcUrl ? 'SET' : 'MISSING');
+  console.log('   Virtual TestNet ID:', tenderlyConfig.virtualTestNetId || 'MISSING');
   
   if (tenderlyConfig.rpcUrl) {
-    console.log(`   Full RPC URL: ${tenderlyConfig.rpcUrl.substring(0, 50)}...`);
+    // Only show first part for security, but confirm it's using HTTPS
+    const isHttps = tenderlyConfig.rpcUrl.startsWith('https://');
+    const urlPreview = tenderlyConfig.rpcUrl.substring(0, 25) + '...';
+    console.log(`   Full RPC URL: ${urlPreview} (${isHttps ? 'HTTPS ✅' : 'HTTP ⚠️'})`);
   }
+}
+
+export function getTenderlyRpcUrl() {
+  validateTenderlyConfig();
+  return tenderlyConfig.rpcUrl;
 } 

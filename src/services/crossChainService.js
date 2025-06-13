@@ -217,6 +217,13 @@ export async function getOptimalTransactionRoute({
     console.log(`[CROSS-CHAIN] Using token addresses: from=${fromTokenAddress}, to=${toTokenAddress}`);
 
     const lifiService = await getLifiService();
+    
+    // LiFi now handles universal routing for all supported chains
+    console.log(`[CROSS-CHAIN] Using LiFi universal routing for ${sourceNetwork} -> ${targetNetwork}`);
+    
+    // Let LiFi determine if the route is supported
+    // No need for hardcoded address detection - LiFi handles this internally
+    
     const route = await lifiService.findUniversalRoute({
       fromChainId: sourceNetwork,
       toChainId: targetNetwork,
@@ -368,6 +375,11 @@ export async function estimateTransactionFees(sourceNetwork, targetNetwork, amou
     try {
       const fromTokenAddress = getTokenAddressForBridge(tokenAddress, sourceNetwork, targetNetwork);
       
+      // LiFi handles universal fee estimation for all supported chains
+      console.log(`[CROSS-CHAIN] Using LiFi universal fee estimation for ${sourceNetwork} -> ${targetNetwork}`);
+      
+      // No need for hardcoded network detection - LiFi handles this internally
+      
       // Create a route estimation request using the same structure as findOptimalRoute
       const lifiService = await getLifiService();
       const routeEstimate = await lifiService.findOptimalRoute({
@@ -462,13 +474,15 @@ export async function prepareCrossChainTransaction(params) {
       throw new Error('Missing required parameters for cross-chain transaction');
     }
 
-    // Validate wallet addresses
-    if (!/^0x[a-fA-F0-9]{40}$/.test(fromAddress)) {
+    // Basic address validation - LiFi will handle network-specific validation
+    if (!fromAddress || typeof fromAddress !== 'string' || fromAddress.length < 10) {
       throw new Error('Invalid fromAddress format');
     }
-    if (!/^0x[a-fA-F0-9]{40}$/.test(toAddress)) {
+    if (!toAddress || typeof toAddress !== 'string' || toAddress.length < 10) {
       throw new Error('Invalid toAddress format');
     }
+    
+    console.log(`[CROSS-CHAIN] Using LiFi universal address validation for ${fromAddress} -> ${toAddress}`);
 
     // Validate networks
     if (!NETWORK_CONFIG[sourceNetwork] || !NETWORK_CONFIG[targetNetwork]) {

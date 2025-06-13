@@ -95,7 +95,9 @@
     "stop:production": "pm2 stop cryptoescrow-backend",
     "restart:staging": "pm2 restart cryptoescrow-backend-staging",
     "restart:production": "pm2 restart cryptoescrow-backend",
-    "deploy:staging": "bash scripts/deploy-staging.sh"
+    "deploy:staging": "bash scripts/deploy-staging.sh",
+    "test:cross-chain": "node test-cross-chain-complete-flow.js",
+    "test:cross-chain:setup": "node setup-cross-chain-test-env.js"
   },
   "repository": {
     "type": "git",

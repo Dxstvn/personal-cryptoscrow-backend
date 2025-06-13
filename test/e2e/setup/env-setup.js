@@ -7,6 +7,18 @@ dotenv.config({ path: '.env.testnets' });
 // Override NODE_ENV for E2E tests
 process.env.NODE_ENV = 'e2e_test';
 
+// Set Firebase emulator configuration for E2E tests
+process.env.FIRESTORE_EMULATOR_HOST = 'localhost:5004';
+process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9099';
+process.env.FIREBASE_STORAGE_EMULATOR_HOST = 'localhost:9199';
+process.env.FIREBASE_PROJECT_ID = 'test-project-e2e';
+process.env.FIREBASE_STORAGE_BUCKET = 'test-project-e2e.appspot.com';
+
+console.log('🔧 E2E Firebase Configuration:');
+console.log(`   Project ID: ${process.env.FIREBASE_PROJECT_ID}`);
+console.log(`   Firestore: ${process.env.FIRESTORE_EMULATOR_HOST}`);
+console.log(`   Auth: ${process.env.FIREBASE_AUTH_EMULATOR_HOST}`);
+
 // Map Tenderly variables to expected names for E2E tests
 if (process.env.TENDERLY_ETHEREUM_MAINNET && !process.env.RPC_URL) {
   process.env.RPC_URL = process.env.TENDERLY_ETHEREUM_MAINNET;

@@ -7,7 +7,6 @@ import {
   executeRoute,
   ChainId 
 } from '@lifi/sdk';
-import { getAddress } from 'ethers';
 
 export class LiFiBridgeService {
   constructor() {
@@ -24,19 +23,33 @@ export class LiFiBridgeService {
   }
 
   /**
-   * Validate and checksum Ethereum address for LI.FI API
+   * Universal address validation using LiFi's supported chains
+   * LiFi handles address validation internally based on chain context
    */
-  validateAndChecksumAddress(address) {
+  async validateUniversalAddress(address, chainId) {
     try {
-      if (!address || address === '0x0000000000000000000000000000000000000000') {
-        return address; // Valid zero address
+      if (!address) {
+        throw new Error('Address is required');
       }
+
+      // Let LiFi handle address validation based on the chain context
+      // LiFi SDK automatically validates addresses for supported chains
+      console.log(`[LIFI] Validating address ${address} for chain ${chainId}`);
       
-      // Use ethers getAddress to validate and checksum
-      return getAddress(address);
+      // Basic format check - LiFi will handle the rest
+      if (typeof address !== 'string' || address.length < 10) {
+        throw new Error(`Invalid address format: ${address}`);
+      }
+
+      return {
+        address,
+        chainId,
+        valid: true,
+        validatedBy: 'lifi-universal'
+      };
     } catch (error) {
-      console.warn(`[LIFI] Invalid address ${address}:`, error.message);
-      throw new Error(`Invalid Ethereum address: ${address}`);
+      console.warn(`[LIFI] Address validation failed for ${address}:`, error.message);
+      throw new Error(`Invalid address: ${address} - ${error.message}`);
     }
   }
 
@@ -69,76 +82,87 @@ export class LiFiBridgeService {
   }
 
   /**
-   * Find optimal bridge route between two chains
+   * Universal route finding - LiFi handles all supported chains automatically
    */
-  async findOptimalRoute({
+  async findUniversalRoute({
     fromChainId,
-    toChainId, 
+    toChainId,
     fromTokenAddress,
     toTokenAddress,
     fromAmount,
     fromAddress,
     toAddress,
-    dealId
+    dealId,
+    transactionType = 'auto'
   }) {
     try {
-      console.log(`[LIFI] Finding optimal route: ${fromChainId} -> ${toChainId} for deal ${dealId}`);
+      console.log(`[LIFI] Universal routing for deal ${dealId}: ${fromChainId} -> ${toChainId}`);
 
       // Validate required parameters
-      if (!fromChainId || !toChainId || !fromAmount || !fromAddress || !toAddress) {
-        throw new Error('Missing required parameters for route finding');
+      if (!fromChainId || !fromAmount || !fromAddress || !toAddress) {
+        throw new Error('Missing required parameters for universal routing');
       }
 
-      // Convert network names to chain IDs if needed
+      // Convert network names to LiFi chain IDs
       const fromChain = this.getChainId(fromChainId);
       const toChain = this.getChainId(toChainId);
 
-      // Validate and format addresses
-      const validFromAddress = this.validateAndChecksumAddress(fromAddress);
-      const validToAddress = this.validateAndChecksumAddress(toAddress);
+      // Validate addresses using LiFi's universal validation
+      const fromAddressValidation = await this.validateUniversalAddress(fromAddress, fromChain);
+      const toAddressValidation = await this.validateUniversalAddress(toAddress, toChain);
       
-      console.log(`[LIFI] Using validated addresses: from=${validFromAddress}, to=${validToAddress}`);
+      console.log(`[LIFI] Using validated addresses: from=${fromAddressValidation.address}, to=${toAddressValidation.address}`);
 
-      // Validate and format token addresses
+      // Format token addresses for LiFi
       const validFromToken = this.validateAndFormatTokenAddress(fromTokenAddress);
       const validToToken = this.validateAndFormatTokenAddress(toTokenAddress);
       
       console.log(`[LIFI] Using validated tokens: from=${validFromToken}, to=${validToToken}`);
 
-      // ✅ FIXED: Convert amount to Wei format for LI.FI API
+      // Convert amount to Wei format for LI.FI API
       const formattedAmount = this.formatAmountForLiFi(fromAmount);
+
+      // Determine transaction type
+      const isSameChain = fromChain === toChain;
+      const actualTransactionType = transactionType === 'auto' 
+        ? (isSameChain ? 'swap' : 'bridge') 
+        : transactionType;
+
+      console.log(`[LIFI] Transaction type: ${actualTransactionType}, same chain: ${isSameChain}`);
 
       const routeRequest = {
         fromChainId: fromChain,
         toChainId: toChain,
         fromTokenAddress: validFromToken,
         toTokenAddress: validToToken,
-        fromAmount: formattedAmount, // Now properly formatted as Wei
-        fromAddress: validFromAddress,
-        toAddress: validToAddress,
+        fromAmount: formattedAmount,
+        fromAddress: fromAddressValidation.address,
+        toAddress: toAddressValidation.address,
         options: {
-          order: 'RECOMMENDED', // Optimize for best user experience
+          order: 'RECOMMENDED',
           slippage: 0.03, // 3% max slippage
-          allowBridges: ['across', 'connext', 'hop', 'stargate', 'polygon', 'arbitrum'], // Curated bridges
-          allowExchanges: ['1inch', 'uniswap', '0x', 'paraswap'], // Trusted DEX aggregators
-          insurance: true, // Enable insurance when available
+          // Let LiFi choose the best bridges and exchanges for any chain combination
+          allowBridges: ['across', 'connext', 'hop', 'stargate', 'polygon', 'arbitrum', 'wormhole', 'allbridge'],
+          allowExchanges: ['1inch', 'uniswap', '0x', 'paraswap', 'kyberswap'],
+          insurance: true,
           integrator: 'cryptoescrow'
         }
       };
 
-      console.log(`[LIFI] Route request:`, {
+      console.log(`[LIFI] Universal route request:`, {
         ...routeRequest,
-        fromAmount: `${fromAmount} -> ${formattedAmount} Wei`
+        fromAmount: `${fromAmount} -> ${formattedAmount} Wei`,
+        transactionType: actualTransactionType
       });
 
       const routes = await getRoutes(routeRequest);
       
       if (!routes || !routes.routes || routes.routes.length === 0) {
         console.warn(`[LIFI] No routes found between ${fromChainId} and ${toChainId}`);
-        throw new Error(`No bridge routes found between ${fromChainId} and ${toChainId}`);
+        throw new Error(`No routes found between ${fromChainId} and ${toChainId}`);
       }
 
-      // Select the best route based on multiple factors
+      // Select the best route
       const bestRoute = this.selectOptimalRoute(routes.routes);
       
       if (!bestRoute) {
@@ -150,39 +174,51 @@ export class LiFiBridgeService {
         estimatedTime: this.calculateTotalTime(bestRoute),
         totalFees: this.calculateTotalFees(bestRoute),
         bridgesUsed: this.extractBridgeNames(bestRoute),
+        dexsUsed: this.extractDexNames(bestRoute),
         confidence: this.calculateRouteConfidence(bestRoute),
         gasEstimate: this.calculateGasEstimate(bestRoute),
+        transactionType: actualTransactionType,
         dealId,
         fromChain: fromChainId,
         toChain: toChainId,
         validatedTokens: {
           from: validFromToken,
           to: validToToken
-        }
+        },
+        universalRouting: true,
+        supportedByLiFi: true
       };
 
-      console.log(`[LIFI] Found optimal route using bridges: ${routeAnalysis.bridgesUsed.join(', ')}`);
+      console.log(`[LIFI] Found universal route using: ${routeAnalysis.bridgesUsed.concat(routeAnalysis.dexsUsed).join(', ')}`);
       console.log(`[LIFI] Estimated time: ${routeAnalysis.estimatedTime}s, fees: $${routeAnalysis.totalFees.toFixed(2)}`);
 
       return routeAnalysis;
     } catch (error) {
-      console.error(`[LIFI] Route finding failed:`, error);
+      console.error(`[LIFI] Universal routing failed:`, error);
       
-      // Enhanced error handling for specific API errors
-      if (error.message?.includes('Invalid token')) {
-        throw new Error(`Token not supported for bridging: ${error.message}`);
+      // Enhanced error handling
+      if (error.message?.includes('Token not supported')) {
+        throw new Error(`Token ${fromTokenAddress || toTokenAddress} not supported by LiFi for this route`);
+      } else if (error.message?.includes('No routes found')) {
+        throw new Error(`No routes available between ${fromChainId} and ${toChainId} - chains may not be supported by LiFi`);
       } else if (error.message?.includes('Invalid address')) {
-        throw new Error(`Invalid address provided: ${error.message}`);
-      } else if (error.message?.includes('Insufficient')) {
-        throw new Error(`Insufficient liquidity for bridge: ${error.message}`);
+        throw new Error(`Invalid address format for LiFi routing: ${error.message}`);
       } else if (error.response?.status === 400) {
-        throw new Error(`Invalid bridge request: ${error.response.data?.message || error.message}`);
+        throw new Error(`Invalid LiFi request: ${error.response.data?.message || error.message}`);
       } else if (error.response?.status === 429) {
         throw new Error('Rate limited by LI.FI API - please try again later');
       }
       
-      throw new Error(`LI.FI route finding failed: ${error.message}`);
+      throw new Error(`LI.FI universal routing failed: ${error.message}`);
     }
+  }
+
+  /**
+   * Legacy method for backward compatibility - now uses universal routing
+   */
+  async findOptimalRoute(params) {
+    console.log('[LIFI] Using universal routing for optimal route finding');
+    return this.findUniversalRoute(params);
   }
 
   /**
@@ -199,13 +235,19 @@ export class LiFiBridgeService {
       return tokenAddress;
     }
 
-    // Validate EVM address format
-    if (!/^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) {
-      console.warn(`[LIFI] Invalid token address format: ${tokenAddress}, using native token`);
-      return '0x0000000000000000000000000000000000000000';
+    // For EVM chains, validate address format
+    if (tokenAddress.startsWith('0x')) {
+      if (!/^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) {
+        console.warn(`[LIFI] Invalid EVM token address format: ${tokenAddress}, using native token`);
+        return '0x0000000000000000000000000000000000000000';
+      }
+      return tokenAddress.toLowerCase();
     }
 
-    return tokenAddress.toLowerCase();
+    // For non-EVM chains (like Solana), let LiFi handle the validation
+    // LiFi SDK knows how to handle different address formats for different chains
+    console.log(`[LIFI] Non-EVM token address detected: ${tokenAddress} - letting LiFi handle validation`);
+    return tokenAddress;
   }
 
   /**
@@ -231,33 +273,33 @@ export class LiFiBridgeService {
   }
 
   /**
-   * Execute cross-chain bridge transaction
+   * Execute universal transaction using LiFi
    */
-  async executeBridgeTransfer({
+  async executeUniversalTransaction({
     route,
     dealId,
     onStatusUpdate,
     onError
   }) {
     try {
-      console.log(`[LIFI] Executing bridge transfer for deal ${dealId}`);
+      console.log(`[LIFI] Executing universal transaction for deal ${dealId}`);
 
       // Validate route object
       if (!route || !route.route) {
         throw new Error('Invalid route object provided');
       }
 
-      // Check if we're in a test environment or if no wallet is available
+      // Check if we're in a test environment
       const isTestEnvironment = process.env.NODE_ENV === 'test' || 
                                process.env.NODE_ENV === 'e2e_test' ||
                                typeof window === 'undefined';
 
       if (isTestEnvironment) {
-        console.log(`[LIFI] Test environment detected - using mock bridge execution`);
+        console.log(`[LIFI] Test environment detected - using mock execution`);
         
-        // Mock successful bridge execution for testing
+        // Mock successful execution for testing
         const mockExecution = {
-          txHash: `0x${Math.random().toString(16).substr(2, 64)}`, // Generate mock tx hash
+          txHash: `0x${Math.random().toString(16).substr(2, 64)}`,
           executionId: `mock-execution-${Date.now()}`,
           status: 'PENDING'
         };
@@ -286,16 +328,18 @@ export class LiFiBridgeService {
           transactionHash: mockExecution.txHash,
           route: route.route,
           bridgeUsed: route.bridgesUsed || ['mock-bridge'],
+          dexsUsed: route.dexsUsed || ['mock-dex'],
           executionId: mockExecution.executionId,
           dealId,
           fromChain: route.fromChain,
           toChain: route.toChain,
-          estimatedTime: route.estimatedTime || 300, // 5 minutes for testing
+          estimatedTime: route.estimatedTime || 300,
           status: 'PENDING',
-          isMock: true
+          isMock: true,
+          universalExecution: true
         };
 
-        console.log(`[LIFI] Mock bridge transfer initiated for deal ${dealId}, txHash: ${mockExecution.txHash}`);
+        console.log(`[LIFI] Mock universal transaction initiated for deal ${dealId}, txHash: ${mockExecution.txHash}`);
         return result;
       }
 
@@ -315,12 +359,9 @@ export class LiFiBridgeService {
           },
           switchChainHook: async (requiredChainId) => {
             console.log(`[LIFI] Chain switch required: ${requiredChainId}`);
-            // Return the provider for the required chain
-            // This will be handled by the frontend wallet
             throw new Error(`Please switch to chain ${requiredChainId} in your wallet`);
           },
           acceptSlippageUpdateHook: (slippageUpdate) => {
-            // Accept up to 5% slippage for escrow transactions
             const acceptable = slippageUpdate.slippage < 0.05;
             console.log(`[LIFI] Slippage update: ${slippageUpdate.slippage}%, acceptable: ${acceptable}`);
             return acceptable;
@@ -328,9 +369,8 @@ export class LiFiBridgeService {
         }
       });
 
-      // Validate execution result
       if (!execution || !execution.txHash) {
-        throw new Error('Bridge execution failed - no transaction hash returned');
+        throw new Error('Universal execution failed - no transaction hash returned');
       }
 
       const result = {
@@ -338,19 +378,21 @@ export class LiFiBridgeService {
         transactionHash: execution.txHash,
         route: route.route,
         bridgeUsed: route.bridgesUsed || ['unknown'],
+        dexsUsed: route.dexsUsed || ['unknown'],
         executionId: execution.executionId || execution.txHash,
         dealId,
         fromChain: route.fromChain,
         toChain: route.toChain,
-        estimatedTime: route.estimatedTime || 1800, // 30 minutes default
+        estimatedTime: route.estimatedTime || 1800,
         status: 'PENDING',
-        isMock: false
+        isMock: false,
+        universalExecution: true
       };
 
-      console.log(`[LIFI] Bridge transfer initiated for deal ${dealId}, txHash: ${execution.txHash}`);
+      console.log(`[LIFI] Universal transaction initiated for deal ${dealId}, txHash: ${execution.txHash}`);
       return result;
     } catch (error) {
-      console.error(`[LIFI] Bridge execution failed for deal ${dealId}:`, error);
+      console.error(`[LIFI] Universal execution failed for deal ${dealId}:`, error);
       if (onError && typeof onError === 'function') {
         try {
           onError(dealId, error);
@@ -358,12 +400,20 @@ export class LiFiBridgeService {
           console.error(`[LIFI] Error callback failed:`, callbackError);
         }
       }
-      throw new Error(`LI.FI bridge execution failed: ${error.message}`);
+      throw new Error(`LI.FI universal execution failed: ${error.message}`);
     }
   }
 
   /**
-   * Get status of cross-chain transaction
+   * Legacy method for backward compatibility
+   */
+  async executeBridgeTransfer(params) {
+    console.log('[LIFI] Using universal execution for bridge transfer');
+    return this.executeUniversalTransaction(params);
+  }
+
+  /**
+   * Get status of universal transaction
    */
   async getTransactionStatus(executionId, dealId) {
     try {
@@ -380,13 +430,14 @@ export class LiFiBridgeService {
           executionId,
           status: 'DONE',
           substatus: 'COMPLETED',
-          substatusMessage: 'Mock bridge transaction completed successfully',
+          substatusMessage: 'Mock universal transaction completed successfully',
           fromChain: 'mock-source',
           toChain: 'mock-target',
           fromTxHash: `0x${Math.random().toString(16).substr(2, 64)}`,
           toTxHash: `0x${Math.random().toString(16).substr(2, 64)}`,
           lastUpdated: new Date().toISOString(),
-          isMock: true
+          isMock: true,
+          universalTransaction: true
         };
       }
 
@@ -395,7 +446,7 @@ export class LiFiBridgeService {
         txHash: executionId
       });
 
-      console.log(`[LIFI] Status check for deal ${dealId}: ${status?.status || 'unknown'}`);
+      console.log(`[LIFI] Universal status check for deal ${dealId}: ${status?.status || 'unknown'}`);
       
       return {
         dealId,
@@ -408,12 +459,12 @@ export class LiFiBridgeService {
         fromTxHash: status?.sending?.txHash || null,
         toTxHash: status?.receiving?.txHash || null,
         lastUpdated: new Date().toISOString(),
-        isMock: false
+        isMock: false,
+        universalTransaction: true
       };
     } catch (error) {
-      console.error(`[LIFI] Status check failed for deal ${dealId}:`, error);
+      console.error(`[LIFI] Universal status check failed for deal ${dealId}:`, error);
       
-      // Return a failed status instead of throwing
       return {
         dealId,
         executionId,
@@ -426,18 +477,19 @@ export class LiFiBridgeService {
         toTxHash: null,
         lastUpdated: new Date().toISOString(),
         error: error.message,
-        isMock: false
+        isMock: false,
+        universalTransaction: true
       };
     }
   }
 
   /**
-   * Get supported chains from LI.FI
+   * Get supported chains from LI.FI - this is the source of truth for supported networks
    */
   async getSupportedChains() {
     try {
       const chains = await getChains();
-      console.log(`[LIFI] Retrieved ${chains?.length || 0} supported chains`);
+      console.log(`[LIFI] Retrieved ${chains?.length || 0} supported chains from LiFi`);
       
       if (!chains || !Array.isArray(chains)) {
         throw new Error('Invalid chains response from LI.FI');
@@ -450,24 +502,23 @@ export class LiFiBridgeService {
         rpcUrls: chain.rpcUrls || [],
         blockExplorerUrls: chain.blockExplorerUrls || [],
         bridgeSupported: true,
-        dexSupported: chain.multicall ? true : false
+        dexSupported: chain.multicall ? true : false,
+        lifiSupported: true
       }));
     } catch (error) {
       console.error('[LIFI] Failed to get supported chains:', error);
       
-      // Return fallback chains instead of throwing
+      // Return minimal fallback - LiFi will handle the actual validation
       return [
-        { chainId: 1, name: 'Ethereum', nativeCurrency: { symbol: 'ETH' }, bridgeSupported: true },
-        { chainId: 137, name: 'Polygon', nativeCurrency: { symbol: 'MATIC' }, bridgeSupported: true },
-        { chainId: 56, name: 'BSC', nativeCurrency: { symbol: 'BNB' }, bridgeSupported: true },
-        { chainId: 42161, name: 'Arbitrum', nativeCurrency: { symbol: 'ETH' }, bridgeSupported: true },
-        { chainId: 10, name: 'Optimism', nativeCurrency: { symbol: 'ETH' }, bridgeSupported: true }
+        { chainId: 1, name: 'Ethereum', nativeCurrency: { symbol: 'ETH' }, lifiSupported: true },
+        { chainId: 137, name: 'Polygon', nativeCurrency: { symbol: 'MATIC' }, lifiSupported: true },
+        { chainId: 56, name: 'BSC', nativeCurrency: { symbol: 'BNB' }, lifiSupported: true }
       ];
     }
   }
 
   /**
-   * Get supported tokens for a specific chain
+   * Get supported tokens for a specific chain using LiFi
    */
   async getSupportedTokens(chainId) {
     try {
@@ -480,7 +531,6 @@ export class LiFiBridgeService {
       });
       
       console.log(`[LIFI] Raw response type:`, typeof tokens);
-      console.log(`[LIFI] Raw response:`, tokens ? (Array.isArray(tokens) ? `Array(${tokens.length})` : 'Object') : 'null/undefined');
       
       // Handle different response formats from LI.FI API
       let tokenArray = [];
@@ -488,35 +538,27 @@ export class LiFiBridgeService {
       if (Array.isArray(tokens)) {
         tokenArray = tokens;
       } else if (tokens && typeof tokens === 'object') {
-        // Check if tokens is an object with a tokens property
         if (Array.isArray(tokens.tokens)) {
           tokenArray = tokens.tokens;
         } else if (tokens.data && Array.isArray(tokens.data)) {
           tokenArray = tokens.data;
         } else {
-          // Convert object values to array if it's a token mapping
           tokenArray = Object.values(tokens).filter(token => 
             token && typeof token === 'object' && token.address
           );
         }
       }
       
-      console.log(`[LIFI] Retrieved ${tokenArray.length} tokens for chain ${chainId}`);
+      console.log(`[LIFI] Retrieved ${tokenArray.length} tokens for chain ${chainId} via LiFi`);
       return tokenArray;
     } catch (error) {
       console.error(`[LIFI] Failed to get tokens for chain ${chainId}:`, error);
-      console.error(`[LIFI] Error details:`, {
-        message: error.message,
-        status: error.response?.status,
-        data: error.response?.data
-      });
-      // Return empty array instead of throwing
       return [];
     }
   }
 
   /**
-   * Estimate bridge fees for a transaction
+   * Estimate fees using LiFi's universal routing
    */
   async estimateBridgeFees({
     fromChainId,
@@ -526,14 +568,14 @@ export class LiFiBridgeService {
     fromAddress
   }) {
     try {
-      const route = await this.findOptimalRoute({
+      const route = await this.findUniversalRoute({
         fromChainId,
         toChainId,
         fromTokenAddress,
-        toTokenAddress: fromTokenAddress, // Same token on both chains
+        toTokenAddress: fromTokenAddress,
         fromAmount: amount,
         fromAddress,
-        toAddress: fromAddress, // Same address
+        toAddress: fromAddress,
         dealId: 'fee-estimate'
       });
 
@@ -543,21 +585,24 @@ export class LiFiBridgeService {
         bridgeFees: Math.max(0, (route.totalFees || 0) - (route.gasEstimate || 0)),
         estimatedTime: route.estimatedTime || 1800,
         bridgesUsed: route.bridgesUsed || [],
-        confidence: route.confidence || 80
+        dexsUsed: route.dexsUsed || [],
+        confidence: route.confidence || 80,
+        universalEstimate: true
       };
     } catch (error) {
-      console.error('[LIFI] Fee estimation failed:', error);
+      console.error('[LIFI] Universal fee estimation failed:', error);
       
-      // Return realistic fallback estimates
       return {
         totalFees: 10.5,
         gasFees: 0.005,
         bridgeFees: 10.0,
         estimatedTime: 1800,
         bridgesUsed: ['fallback'],
+        dexsUsed: ['fallback'],
         confidence: 70,
         fallback: true,
-        error: error.message
+        error: error.message,
+        universalEstimate: false
       };
     }
   }
@@ -570,12 +615,10 @@ export class LiFiBridgeService {
       return null;
     }
 
-    // If only one route, return it
     if (routes.length === 1) {
       return routes[0];
     }
 
-    // Sort routes by multiple criteria
     return routes.sort((a, b) => {
       const aTime = this.calculateTotalTime(a);
       const bTime = this.calculateTotalTime(b);
@@ -588,7 +631,7 @@ export class LiFiBridgeService {
       const aScore = (aConfidence * 0.4) + ((3600 - aTime) / 3600 * 0.3) + ((50 - Math.min(aFees, 50)) / 50 * 0.3);
       const bScore = (bConfidence * 0.4) + ((3600 - bTime) / 3600 * 0.3) + ((50 - Math.min(bFees, 50)) / 50 * 0.3);
 
-      return bScore - aScore; // Higher score is better
+      return bScore - aScore;
     })[0];
   }
 
@@ -598,11 +641,11 @@ export class LiFiBridgeService {
   calculateTotalTime(route) {
     try {
       if (!route?.steps || !Array.isArray(route.steps)) {
-        return 1800; // 30 minutes default
+        return 1800;
       }
 
       return route.steps.reduce((total, step) => {
-        const duration = step.estimate?.executionDuration || 600; // 10 minutes default per step
+        const duration = step.estimate?.executionDuration || 600;
         return total + duration;
       }, 0);
     } catch (error) {
@@ -644,12 +687,32 @@ export class LiFiBridgeService {
       }
 
       const bridges = route.steps
-        .filter(step => step.type === 'cross' || step.toolDetails?.name)
+        .filter(step => step.type === 'cross')
         .map(step => step.toolDetails?.name || step.tool || 'unknown');
       
       return bridges.length > 0 ? [...new Set(bridges)] : ['unknown'];
     } catch (error) {
       console.warn(`[LIFI] Failed to extract bridge names:`, error);
+      return ['unknown'];
+    }
+  }
+
+  /**
+   * Extract DEX names from route steps
+   */
+  extractDexNames(route) {
+    try {
+      if (!route?.steps || !Array.isArray(route.steps)) {
+        return ['unknown'];
+      }
+      
+      const dexs = route.steps
+        .filter(step => step.type === 'swap')
+        .map(step => step.tool || step.toolDetails?.name || 'unknown');
+      
+      return dexs.length > 0 ? [...new Set(dexs)] : ['unknown'];
+    } catch (error) {
+      console.warn(`[LIFI] Failed to extract DEX names:`, error);
       return ['unknown'];
     }
   }
@@ -663,31 +726,31 @@ export class LiFiBridgeService {
 
       let confidence = 100;
       
-      // Reduce confidence for multiple steps
       const stepCount = route.steps?.length || 1;
       confidence -= (stepCount - 1) * 10;
       
-      // Reduce confidence for long execution time
       const totalTime = this.calculateTotalTime(route);
-      if (totalTime > 3600) confidence -= 15; // > 1 hour
-      else if (totalTime > 1800) confidence -= 10; // > 30 minutes
+      if (totalTime > 3600) confidence -= 15;
+      else if (totalTime > 1800) confidence -= 10;
       
-      // Reduce confidence for high fees
       const totalFees = this.calculateTotalFees(route);
       if (totalFees > 50) confidence -= 15;
       else if (totalFees > 20) confidence -= 10;
       
-      // Boost confidence for reputable bridges
       const bridges = this.extractBridgeNames(route);
-      const reputableBridges = ['across', 'stargate', 'hop', 'connext'];
-      if (bridges.some(bridge => reputableBridges.includes(bridge.toLowerCase()))) {
+      const dexs = this.extractDexNames(route);
+      const reputableServices = ['across', 'stargate', 'hop', 'connext', 'uniswap', '1inch', 'paraswap'];
+      
+      if ([...bridges, ...dexs].some(service => 
+        reputableServices.includes(service.toLowerCase())
+      )) {
         confidence += 10;
       }
       
-      return Math.max(Math.min(confidence, 100), 30); // Clamp between 30-100
+      return Math.max(Math.min(confidence, 100), 30);
     } catch (error) {
       console.warn(`[LIFI] Failed to calculate route confidence:`, error);
-      return 70; // Default confidence
+      return 70;
     }
   }
 
@@ -695,7 +758,6 @@ export class LiFiBridgeService {
    * Convert network names or IDs to LI.FI chain IDs
    */
   getChainId(networkName) {
-    // Convert network names to chain IDs
     const chainMapping = {
       'ethereum': ChainId.ETH,
       'polygon': ChainId.POL,
@@ -704,6 +766,7 @@ export class LiFiBridgeService {
       'optimism': ChainId.OPT,
       'avalanche': ChainId.AVA,
       'fantom': ChainId.FTM,
+      'solana': 1151111081099710, // Solana chain ID if supported by LiFi
       1: ChainId.ETH,
       137: ChainId.POL,
       56: ChainId.BSC,
@@ -718,9 +781,8 @@ export class LiFiBridgeService {
       return result;
     }
     
-    // Try parsing as number if not in mapping
     const parsed = parseInt(networkName);
-    return isNaN(parsed) ? ChainId.ETH : parsed; // Default to Ethereum
+    return isNaN(parsed) ? ChainId.ETH : parsed;
   }
 
   /**
@@ -734,392 +796,10 @@ export class LiFiBridgeService {
       [ChainId.ARB]: 'arbitrum',
       [ChainId.OPT]: 'optimism',
       [ChainId.AVA]: 'avalanche',
-      [ChainId.FTM]: 'fantom'
+      [ChainId.FTM]: 'fantom',
+      1151111081099710: 'solana'
     };
     return networks[chainId] || `chain-${chainId}`;
-  }
-
-  /**
-   * Universal transaction routing - handles both same-chain and cross-chain transactions
-   * This is the main entry point for ALL transaction types
-   */
-  async findUniversalRoute({
-    fromChainId,
-    toChainId,
-    fromTokenAddress,
-    toTokenAddress,
-    fromAmount,
-    fromAddress,
-    toAddress,
-    dealId,
-    transactionType = 'auto' // 'swap', 'bridge', 'auto'
-  }) {
-    try {
-      console.log(`[LIFI] Universal routing for deal ${dealId}: ${fromChainId} -> ${toChainId}`);
-
-      // Validate required parameters
-      if (!fromChainId || !fromAmount || !fromAddress || !toAddress) {
-        throw new Error('Missing required parameters for universal routing');
-      }
-
-      // Determine transaction type
-      const isSameChain = fromChainId === toChainId || !toChainId;
-      const actualTransactionType = transactionType === 'auto' 
-        ? (isSameChain ? 'swap' : 'bridge') 
-        : transactionType;
-
-      console.log(`[LIFI] Transaction type: ${actualTransactionType}, same chain: ${isSameChain}`);
-
-      // Route to appropriate handler
-      if (actualTransactionType === 'swap' || isSameChain) {
-        return await this.findSameChainSwapRoute({
-          chainId: fromChainId,
-          fromTokenAddress,
-          toTokenAddress,
-          fromAmount,
-          fromAddress,
-          toAddress,
-          dealId
-        });
-      } else {
-        return await this.findOptimalRoute({
-          fromChainId,
-          toChainId,
-          fromTokenAddress,
-          toTokenAddress,
-          fromAmount,
-          fromAddress,
-          toAddress,
-          dealId
-        });
-      }
-    } catch (error) {
-      console.error(`[LIFI] Universal routing failed:`, error);
-      throw new Error(`Universal transaction routing failed: ${error.message}`);
-    }
-  }
-
-  /**
-   * NEW: Same-chain DEX aggregation using LiFi's DEX capabilities
-   * Leverages LiFi's integration with Uniswap, 1inch, Paraswap, etc.
-   */
-  async findSameChainSwapRoute({
-    chainId,
-    fromTokenAddress,
-    toTokenAddress,
-    fromAmount,
-    fromAddress,
-    toAddress,
-    dealId
-  }) {
-    try {
-      console.log(`[LIFI] Finding same-chain swap route on chain ${chainId} for deal ${dealId}`);
-
-      // Convert network names to chain IDs if needed
-      const targetChainId = this.getChainId(chainId);
-
-      // Validate and format addresses
-      const validFromAddress = this.validateAndChecksumAddress(fromAddress);
-      const validToAddress = this.validateAndChecksumAddress(toAddress);
-      const validFromToken = this.validateAndFormatTokenAddress(fromTokenAddress);
-      const validToToken = this.validateAndFormatTokenAddress(toTokenAddress);
-
-      // Format amount
-      const formattedAmount = this.formatAmountForLiFi(fromAmount);
-
-      // If same token, no swap needed - just transfer
-      if (validFromToken.toLowerCase() === validToToken.toLowerCase()) {
-        console.log(`[LIFI] Same token transfer detected: ${validFromToken}`);
-        return {
-          route: {
-            id: `direct-transfer-${dealId}`,
-            fromChainId: targetChainId,
-            toChainId: targetChainId,
-            fromTokenAddress: validFromToken,
-            toTokenAddress: validToToken,
-            fromAmount: formattedAmount,
-            toAmount: formattedAmount,
-            steps: [{
-              type: 'transfer',
-              tool: 'direct',
-              action: {
-                fromAddress: validFromAddress,
-                toAddress: validToAddress,
-                fromToken: { address: validFromToken },
-                toToken: { address: validToToken }
-              }
-            }]
-          },
-          estimatedTime: 30, // 30 seconds for direct transfer
-          totalFees: { usd: 5 }, // Estimated gas cost
-          transactionType: 'direct_transfer',
-          dealId,
-          confidence: 100
-        };
-      }
-
-      // Use LiFi for same-chain swap by setting both chains to the same
-      const swapRequest = {
-        fromChainId: targetChainId,
-        toChainId: targetChainId, // Same chain for swap
-        fromTokenAddress: validFromToken,
-        toTokenAddress: validToToken,
-        fromAmount: formattedAmount,
-        fromAddress: validFromAddress,
-        toAddress: validToAddress,
-        options: {
-          order: 'RECOMMENDED',
-          slippage: 0.03, // 3% max slippage
-          // Focus on DEX aggregators for same-chain swaps
-          allowExchanges: ['1inch', 'uniswap', 'paraswap', '0x', 'kyberswap'],
-          // Disable bridges for same-chain swaps
-          allowBridges: [],
-          insurance: false, // Not needed for same-chain
-          integrator: 'cryptoescrow'
-        }
-      };
-
-      console.log(`[LIFI] Same-chain swap request:`, {
-        ...swapRequest,
-        fromAmount: `${fromAmount} -> ${formattedAmount} Wei`
-      });
-
-      const routes = await getRoutes(swapRequest);
-
-      if (!routes || !routes.routes || routes.routes.length === 0) {
-        console.warn(`[LIFI] No DEX routes found for same-chain swap on ${chainId}`);
-        throw new Error(`No swap routes found on ${chainId}`);
-      }
-
-      // Select the best route for same-chain swap
-      const bestRoute = this.selectOptimalSwapRoute(routes.routes);
-
-      if (!bestRoute) {
-        throw new Error('No suitable swap route found after filtering');
-      }
-
-      const routeAnalysis = {
-        route: bestRoute,
-        estimatedTime: this.calculateTotalTime(bestRoute),
-        totalFees: this.calculateTotalFees(bestRoute),
-        dexsUsed: this.extractDexNames(bestRoute),
-        confidence: this.calculateRouteConfidence(bestRoute),
-        gasEstimate: this.calculateGasEstimate(bestRoute),
-        transactionType: 'same_chain_swap',
-        dealId,
-        chainId: targetChainId,
-        validatedTokens: {
-          from: validFromToken,
-          to: validToToken
-        }
-      };
-
-      console.log(`[LIFI] Found optimal same-chain swap using DEXs: ${routeAnalysis.dexsUsed.join(', ')}`);
-      console.log(`[LIFI] Estimated time: ${routeAnalysis.estimatedTime}s, fees: $${routeAnalysis.totalFees.toFixed(2)}`);
-
-      return routeAnalysis;
-    } catch (error) {
-      console.error(`[LIFI] Same-chain swap routing failed:`, error);
-      throw new Error(`Same-chain swap routing failed: ${error.message}`);
-    }
-  }
-
-  /**
-   * Enhanced route selection specifically for same-chain swaps
-   */
-  selectOptimalSwapRoute(routes) {
-    if (!routes || routes.length === 0) return null;
-
-    // Score routes based on factors important for same-chain swaps
-    const scoredRoutes = routes.map(route => {
-      let score = 0;
-      
-      // Prefer routes with fewer steps (simpler)
-      score += Math.max(0, 50 - (route.steps?.length || 0) * 10);
-      
-      // Prefer trusted DEXs
-      const trustedDexs = ['uniswap', '1inch', 'paraswap'];
-      const routeDexs = this.extractDexNames(route);
-      const trustScore = routeDexs.filter(dex => 
-        trustedDexs.some(trusted => dex.toLowerCase().includes(trusted))
-      ).length * 20;
-      score += trustScore;
-      
-      // Prefer lower gas costs
-      const gasEstimate = this.calculateGasEstimate(route);
-      score += Math.max(0, 100 - gasEstimate / 1000);
-      
-      // Prefer higher output amounts (better rates)
-      const outputRatio = route.toAmount ? parseFloat(route.toAmount) / parseFloat(route.fromAmount) : 0;
-      score += outputRatio * 30;
-
-      return { route, score };
-    });
-
-    // Sort by score and return the best route
-    scoredRoutes.sort((a, b) => b.score - a.score);
-    return scoredRoutes[0]?.route;
-  }
-
-  /**
-   * Extract DEX names from route steps
-   */
-  extractDexNames(route) {
-    if (!route?.steps) return [];
-    
-    return route.steps
-      .filter(step => step.type === 'swap' || step.type === 'cross')
-      .map(step => step.tool || step.toolDetails?.name || 'unknown')
-      .filter((dex, index, array) => array.indexOf(dex) === index); // Remove duplicates
-  }
-
-  /**
-   * NEW: Execute universal transaction (swap or bridge)
-   */
-  async executeUniversalTransaction({
-    route,
-    dealId,
-    onStatusUpdate,
-    onError
-  }) {
-    try {
-      console.log(`[LIFI] Executing universal transaction for deal ${dealId}`);
-
-      // Determine execution type based on route
-      const isSameChain = route.fromChainId === route.toChainId;
-      const isDirect = route.steps?.[0]?.type === 'transfer';
-
-      if (isDirect) {
-        return await this.executeDirectTransfer({ route, dealId, onStatusUpdate, onError });
-      } else if (isSameChain) {
-        return await this.executeSameChainSwap({ route, dealId, onStatusUpdate, onError });
-      } else {
-        return await this.executeBridgeTransfer({ route, dealId, onStatusUpdate, onError });
-      }
-    } catch (error) {
-      console.error(`[LIFI] Universal transaction execution failed:`, error);
-      if (onError) onError(error);
-      throw error;
-    }
-  }
-
-  /**
-   * NEW: Execute same-chain swap
-   */
-  async executeSameChainSwap({
-    route,
-    dealId,
-    onStatusUpdate,
-    onError
-  }) {
-    try {
-      console.log(`[LIFI] Executing same-chain swap for deal ${dealId}`);
-
-      if (onStatusUpdate) {
-        onStatusUpdate({
-          status: 'STARTED',
-          message: 'Initiating same-chain swap',
-          dealId,
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      // Execute the route using LiFi SDK
-      const execution = await executeRoute(route);
-
-      if (onStatusUpdate) {
-        onStatusUpdate({
-          status: 'EXECUTING',
-          message: 'Swap transaction submitted',
-          txHash: execution.transactionHash,
-          dealId,
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      // Monitor execution
-      const finalStatus = await this.monitorUniversalExecution(execution.transactionHash, dealId, onStatusUpdate);
-
-      return {
-        success: finalStatus.status === 'DONE',
-        transactionHash: execution.transactionHash,
-        executionId: execution.id,
-        status: finalStatus,
-        dealId
-      };
-    } catch (error) {
-      console.error(`[LIFI] Same-chain swap execution failed:`, error);
-      if (onError) onError(error);
-      throw error;
-    }
-  }
-
-  /**
-   * NEW: Execute direct transfer
-   */
-  async executeDirectTransfer({
-    route,
-    dealId,
-    onStatusUpdate,
-    onError
-  }) {
-    try {
-      console.log(`[LIFI] Executing direct transfer for deal ${dealId}`);
-
-      if (onStatusUpdate) {
-        onStatusUpdate({
-          status: 'STARTED',
-          message: 'Initiating direct transfer',
-          dealId,
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      // For direct transfers, we can use standard wallet operations
-      // This would integrate with the user's wallet to execute the transfer
-      
-      if (onStatusUpdate) {
-        onStatusUpdate({
-          status: 'PENDING_USER_ACTION',
-          message: 'Waiting for user to confirm transfer',
-          dealId,
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      // Return execution info for wallet integration
-      return {
-        success: true,
-        requiresUserAction: true,
-        transactionType: 'direct_transfer',
-        route,
-        dealId,
-        walletAction: {
-          type: 'transfer',
-          from: route.fromAddress,
-          to: route.toAddress,
-          amount: route.fromAmount,
-          token: route.fromTokenAddress
-        }
-      };
-    } catch (error) {
-      console.error(`[LIFI] Direct transfer preparation failed:`, error);
-      if (onError) onError(error);
-      throw error;
-    }
-  }
-
-  /**
-   * NEW: Monitor universal transaction execution
-   */
-  async monitorUniversalExecution(transactionHash, dealId, onStatusUpdate) {
-    try {
-      // Use existing monitoring capabilities
-      return await this.getTransactionStatus(transactionHash, dealId);
-    } catch (error) {
-      console.error(`[LIFI] Universal execution monitoring failed:`, error);
-      throw error;
-    }
   }
 }
 

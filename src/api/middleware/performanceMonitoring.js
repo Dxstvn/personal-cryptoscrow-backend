@@ -9,8 +9,8 @@ class PerformanceMonitor {
       totalRequests: 0
     };
     
-    // Clean metrics every hour
-    setInterval(() => this.cleanOldMetrics(), 60 * 60 * 1000);
+    // Clean metrics every hour - store interval ID for cleanup
+    this.cleanupInterval = setInterval(() => this.cleanOldMetrics(), 60 * 60 * 1000);
   }
 
   trackRequest(req, res, next) {
@@ -85,6 +85,14 @@ class PerformanceMonitor {
       this.metrics.responseTime = this.metrics.responseTime.slice(-1000);
     }
   }
+
+  // Method to clean up the monitor (for testing)
+  destroy() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+  }
 }
 
 const monitor = new PerformanceMonitor();
@@ -94,5 +102,7 @@ export const performanceMiddleware = (req, res, next) => {
 };
 
 export const getPerformanceMetrics = () => monitor.getMetrics();
+
+export const destroyPerformanceMonitor = () => monitor.destroy();
 
 export default monitor;

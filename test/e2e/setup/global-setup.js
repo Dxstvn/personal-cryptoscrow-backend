@@ -1,6 +1,7 @@
 // Global setup for E2E tests
 import './env-setup.js'; // Load environment configuration first
 import { validateTenderlyConfig, logConfigStatus } from './tenderly-config.js';
+import { initializeFirestoreForE2E } from './firestore-config.js';
 
 export default async function globalSetup() {
   console.log('🚀 CryptoScrow E2E Global Setup Starting...');
@@ -11,6 +12,11 @@ export default async function globalSetup() {
   global.testStartTime = Date.now();
   
   try {
+    // Initialize Firestore for E2E tests first
+    console.log('\n🔧 Initializing Firestore for E2E tests...');
+    await initializeFirestoreForE2E();
+    console.log('✅ Firestore initialized successfully');
+    
     // Log current configuration
     console.log('\n📋 Environment Configuration:');
     logConfigStatus();
@@ -62,12 +68,9 @@ export default async function globalSetup() {
  */
 async function createMockUserForE2E() {
   try {
-    // Import Firebase admin services
-    const { getAdminApp } = await import('../../../src/api/routes/auth/admin.js');
-    const { getFirestore } = await import('firebase-admin/firestore');
-    
-    const adminApp = await getAdminApp();
-    const db = getFirestore(adminApp);
+    // Use the E2E-specific Firestore configuration
+    const { getFirestoreForE2E } = await import('./firestore-config.js');
+    const db = getFirestoreForE2E();
     
     // Create mock buyer user document
     const mockBuyerData = {
@@ -116,15 +119,81 @@ async function createMockUserForE2E() {
       }
     };
     
-    // Set the user documents
-    await db.collection('users').doc('e2e-test-user-id').set(mockBuyerData);
-    await db.collection('users').doc('e2e-test-seller-samechain-id').set(mockSellerSameChainData);
-    await db.collection('users').doc('e2e-test-seller-crosschain-id').set(mockSellerCrossChainData);
+    // Create additional test users for various test scenarios
+    const mockSeller1Data = {
+      email: 'seller@test.com',
+      displayName: 'E2E Test Seller 1',
+      createdAt: new Date(),
+      isTestUser: true,
+      walletAddresses: {
+        ethereum: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+        polygon: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
+      },
+      preferences: {
+        defaultNetwork: 'ethereum',
+        notifications: true
+      }
+    };
+
+    const mockSeller2Data = {
+      email: 'crosschain-seller@test.com',
+      displayName: 'E2E Test Seller Cross-Chain',
+      createdAt: new Date(),
+      isTestUser: true,
+      walletAddresses: {
+        ethereum: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+        polygon: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
+      },
+      preferences: {
+        defaultNetwork: 'polygon',
+        notifications: true
+      }
+    };
+
+    const mockSeller3Data = {
+      email: 'fund-flow-seller@test.com',
+      displayName: 'E2E Test Seller Fund Flow',
+      createdAt: new Date(),
+      isTestUser: true,
+      walletAddresses: {
+        ethereum: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+        polygon: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
+      },
+      preferences: {
+        defaultNetwork: 'ethereum',
+        notifications: true
+      }
+    };
+
+    const mockSeller4Data = {
+      email: 'ethereum-seller@test.com',
+      displayName: 'E2E Test Seller Ethereum',
+      createdAt: new Date(),
+      isTestUser: true,
+      walletAddresses: {
+        ethereum: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8',
+        polygon: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
+      },
+      preferences: {
+        defaultNetwork: 'ethereum',
+        notifications: true
+      }
+    };
+
+    // Set the user documents - use IDs that match what the authentication system expects
+    await db.collection('users').doc('e2e-test-user').set(mockBuyerData);
+    await db.collection('users').doc('e2e-test-seller-samechain').set(mockSellerSameChainData);
+    await db.collection('users').doc('e2e-test-seller-crosschain').set(mockSellerCrossChainData);
+    await db.collection('users').doc('e2e-test-seller-1').set(mockSeller1Data);
+    await db.collection('users').doc('e2e-test-seller-2').set(mockSeller2Data);
+    await db.collection('users').doc('e2e-test-seller-3').set(mockSeller3Data);
+    await db.collection('users').doc('e2e-test-seller-4').set(mockSeller4Data);
     
-    console.log('   Mock buyer created with ID: e2e-test-user-id');
+    console.log('   Mock buyer created with ID: e2e-test-user');
     console.log('   Email: e2e-test-user@cryptoscrow.test');
     console.log('   Mock same-chain seller created: seller-samechain@e2etest.com');
     console.log('   Mock cross-chain seller created: seller-crosschain@e2etest.com');
+    console.log('   Additional test sellers created: seller@test.com, crosschain-seller@test.com, fund-flow-seller@test.com, ethereum-seller@test.com');
     
   } catch (error) {
     console.warn('⚠️ Could not create mock users (this may be expected in some test environments):', error.message);
