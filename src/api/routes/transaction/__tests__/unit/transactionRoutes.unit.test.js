@@ -104,13 +104,18 @@ jest.unstable_mockModule('../../../../../services/contractDeployer.js', () => {
 });
 // console.log('[TEST FILE SCOPE V5] jest.unstable_mockModule for contractDeployer REGISTERED.');
 
-// Mock cross-chain services
+// ✅ REFACTORED: Updated cross-chain service mocks to match new architecture
 const mockAreNetworksEVMCompatible = jest.fn();
 const mockGetBridgeInfo = jest.fn();
 const mockEstimateTransactionFees = jest.fn();
 const mockPrepareCrossChainTransaction = jest.fn();
 const mockExecuteCrossChainStep = jest.fn();
 const mockGetCrossChainTransactionStatus = jest.fn();
+// ✅ NEW: Additional cross-chain service mocks for refactored functionality
+const mockTriggerCrossChainReleaseAfterApprovalSimple = jest.fn();
+const mockTriggerCrossChainCancelAfterDisputeDeadline = jest.fn();
+const mockIsCrossChainDealReady = jest.fn();
+const mockAutoCompleteCrossChainSteps = jest.fn();
 
 jest.unstable_mockModule('../../../../../services/crossChainService.js', () => {
   return {
@@ -120,6 +125,21 @@ jest.unstable_mockModule('../../../../../services/crossChainService.js', () => {
     prepareCrossChainTransaction: mockPrepareCrossChainTransaction,
     executeCrossChainStep: mockExecuteCrossChainStep,
     getCrossChainTransactionStatus: mockGetCrossChainTransactionStatus,
+    // ✅ NEW: Export the additional functions
+    triggerCrossChainReleaseAfterApprovalSimple: mockTriggerCrossChainReleaseAfterApprovalSimple,
+    triggerCrossChainCancelAfterDisputeDeadline: mockTriggerCrossChainCancelAfterDisputeDeadline,
+    isCrossChainDealReady: mockIsCrossChainDealReady,
+    autoCompleteCrossChainSteps: mockAutoCompleteCrossChainSteps,
+  };
+});
+
+// ✅ REFACTORED: Keep SmartContractBridgeService mock only for getContractInfo
+const mockGetContractInfo = jest.fn();
+jest.unstable_mockModule('../../../../../services/smartContractBridgeService.js', () => {
+  return {
+    default: jest.fn().mockImplementation(() => ({
+      getContractInfo: mockGetContractInfo,
+    })),
   };
 });
 
@@ -319,7 +339,7 @@ describe('Unit Tests for transactionRoutes.js', () => {
         privateKey: privateKey
     }));
 
-    // Cross-chain service mocks
+    // ✅ REFACTORED: Cross-chain service mocks for new architecture
     mockAreNetworksEVMCompatible.mockImplementation((network1, network2) => {
         // Mock EVM compatibility - ethereum, polygon, bsc are compatible
         const evmNetworks = ['ethereum', 'polygon', 'bsc'];
@@ -354,8 +374,10 @@ describe('Unit Tests for transactionRoutes.js', () => {
     });
     
     mockExecuteCrossChainStep.mockResolvedValue({
+        success: true,
         status: 'completed',
-        txHash: '0x' + '1'.repeat(64)
+        txHash: '0x' + '1'.repeat(64),
+        allStepsCompleted: false
     });
     
     mockGetCrossChainTransactionStatus.mockResolvedValue({
@@ -363,6 +385,45 @@ describe('Unit Tests for transactionRoutes.js', () => {
         status: 'pending',
         currentStep: 1,
         needsBridge: true
+    });
+
+    // ✅ NEW: Mock the additional cross-chain service functions
+    mockTriggerCrossChainReleaseAfterApprovalSimple.mockResolvedValue({
+        success: true,
+        receipt: {
+            transactionHash: '0x' + 'a'.repeat(64),
+            blockNumber: 12345
+        },
+        message: 'Cross-chain release initiated successfully'
+    });
+
+    mockTriggerCrossChainCancelAfterDisputeDeadline.mockResolvedValue({
+        success: true,
+        receipt: {
+            transactionHash: '0x' + 'b'.repeat(64),
+            blockNumber: 12346
+        },
+        message: 'Cross-chain cancellation completed'
+    });
+
+    mockIsCrossChainDealReady.mockResolvedValue({
+        ready: true,
+        reason: 'All cross-chain requirements met'
+    });
+
+    mockAutoCompleteCrossChainSteps.mockResolvedValue({
+        success: true,
+        completedSteps: 2,
+        failedSteps: 0,
+        message: 'Auto-completed 2 steps, 0 failed'
+    });
+
+    // ✅ REFACTORED: SmartContractBridgeService mock only for getContractInfo
+    mockGetContractInfo.mockResolvedValue({
+        contractAddress: '0xDeployedContractAddress',
+        state: 3, // Some mock state
+        balance: '1000000000000000000', // 1 ETH in wei
+        balanceFormatted: '1.0'
     });
 
     mockDeployPropertyEscrowContract.mockResolvedValue('0xDeployedContractAddress');
@@ -1030,7 +1091,7 @@ describe('Unit Tests for transactionRoutes.js', () => {
     });
   });
 
-  // Add new cross-chain specific test suites
+  // ✅ REFACTORED: Updated cross-chain specific test suites for new architecture
   describe('Cross-Chain Transaction Management', () => {
     const crossChainDealId = 'crossChainDeal123';
     const mockCrossChainDealData = {
@@ -1040,6 +1101,7 @@ describe('Unit Tests for transactionRoutes.js', () => {
       crossChainTransactionId: 'cross-chain-tx-123',
       buyerNetwork: 'bitcoin',
       sellerNetwork: 'ethereum',
+      smartContractAddress: '0xMockCrossChainContract',
       crossChainInfo: { bridge: 'Wrapped Bitcoin', fee: '0.0005', estimatedTime: '30 minutes' },
       conditions: [
         { id: 'cross_chain_network_validation', type: 'CROSS_CHAIN', description: 'Network validation', status: 'PENDING_BUYER_ACTION' },
@@ -1052,7 +1114,12 @@ describe('Unit Tests for transactionRoutes.js', () => {
     describe('POST /cross-chain/:dealId/execute-step', () => {
       it('should execute cross-chain step successfully', async () => {
         mockGet.mockResolvedValueOnce({ exists: true, data: () => mockCrossChainDealData });
-        mockExecuteCrossChainStep.mockResolvedValueOnce({ status: 'completed', txHash: '0x123' });
+        mockExecuteCrossChainStep.mockResolvedValueOnce({ 
+          success: true, 
+          status: 'completed', 
+          txHash: '0x123',
+          allStepsCompleted: false
+        });
 
         const response = await testAgent
           .post(`/cross-chain/${crossChainDealId}/execute-step`)
@@ -1061,6 +1128,8 @@ describe('Unit Tests for transactionRoutes.js', () => {
 
         expect(response.status).toBe(200);
         expect(response.body.message).toContain('Cross-chain step 1 executed successfully');
+        expect(response.body.status).toBe('completed');
+        expect(response.body.allStepsCompleted).toBe(false);
         expect(mockExecuteCrossChainStep).toHaveBeenCalledWith('cross-chain-tx-123', 1, '0x123');
       });
 
@@ -1242,14 +1311,157 @@ describe('Unit Tests for transactionRoutes.js', () => {
       expect(response.body.isEVMCompatible).toBe(false);
     });
 
-    it('should return 400 for missing parameters', async () => {
-      const response = await testAgent
-        .get('/cross-chain/estimate-fees')
-        .query({ sourceNetwork: 'bitcoin' }) // Missing targetNetwork and amount
-        .set('Authorization', 'Bearer validtoken');
+          it('should return 400 for missing parameters', async () => {
+        const response = await testAgent
+          .get('/cross-chain/estimate-fees')
+          .query({ sourceNetwork: 'bitcoin' }) // Missing targetNetwork and amount
+          .set('Authorization', 'Bearer validtoken');
 
-      expect(response.status).toBe(400);
-      expect(response.body.error).toBe('sourceNetwork, targetNetwork, and amount are required.');
+        expect(response.status).toBe(400);
+        expect(response.body.error).toBe('sourceNetwork, targetNetwork, and amount are required.');
+      });
+    });
+
+    // ✅ NEW: Tests for refactored cross-chain release functionality
+    describe('POST /cross-chain/:dealId/release-to-seller', () => {
+      const releaseDealId = 'releaseDeal123';
+      const mockReleaseDealData = {
+        ...mockCrossChainDealData,
+        id: releaseDealId,
+        status: 'READY_FOR_FINAL_APPROVAL',
+        conditions: mockCrossChainDealData.conditions.map(c => ({ ...c, status: 'FULFILLED_BY_BUYER' }))
+      };
+
+      it('should initiate cross-chain release successfully', async () => {
+        mockGet.mockResolvedValueOnce({ exists: true, data: () => mockReleaseDealData });
+        
+        const response = await testAgent
+          .post(`/cross-chain/${releaseDealId}/release-to-seller`)
+          .set('Authorization', 'Bearer validtoken');
+
+        expect(response.status).toBe(200);
+        expect(response.body.message).toBe('Cross-chain release initiated successfully');
+        expect(response.body.success).toBe(true);
+        expect(response.body.transactionHash).toBe('0x' + 'a'.repeat(64));
+        expect(mockTriggerCrossChainReleaseAfterApprovalSimple).toHaveBeenCalledWith(
+          '0xMockCrossChainContract',
+          releaseDealId
+        );
+      });
+
+      it('should return 400 if deal is not ready for release', async () => {
+        const notReadyDeal = { ...mockReleaseDealData, status: 'IN_ESCROW' };
+        mockGet.mockResolvedValueOnce({ exists: true, data: () => notReadyDeal });
+
+        const response = await testAgent
+          .post(`/cross-chain/${releaseDealId}/release-to-seller`)
+          .set('Authorization', 'Bearer validtoken');
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toBe('Deal not ready for release. Current status: IN_ESCROW');
+      });
+
+      it('should return 400 if not all conditions are fulfilled', async () => {
+        const unfulfilledDeal = {
+          ...mockReleaseDealData,
+          conditions: [
+            { id: 'cross_chain_network_validation', type: 'CROSS_CHAIN', status: 'PENDING_BUYER_ACTION' },
+            { id: 'cross_chain_bridge_setup', type: 'CROSS_CHAIN', status: 'FULFILLED_BY_BUYER' }
+          ]
+        };
+        mockGet.mockResolvedValueOnce({ exists: true, data: () => unfulfilledDeal });
+
+        const response = await testAgent
+          .post(`/cross-chain/${releaseDealId}/release-to-seller`)
+          .set('Authorization', 'Bearer validtoken');
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toBe('All conditions must be fulfilled before release.');
+      });
+    });
+
+    // ✅ NEW: Tests for bridge completion with refactored architecture
+    describe('POST /cross-chain/:dealId/bridge-completed', () => {
+      const bridgeDealId = 'bridgeDeal123';
+      const mockBridgeDealData = {
+        ...mockCrossChainDealData,
+        id: bridgeDealId,
+        status: 'AWAITING_BRIDGE_COMPLETION',
+        crossChainTransactionId: 'cross-chain-tx-bridge-123'
+      };
+
+      it('should process bridge completion with cross-chain service', async () => {
+        mockGet.mockResolvedValueOnce({ exists: true, data: () => mockBridgeDealData });
+        mockExecuteCrossChainStep.mockResolvedValueOnce({
+          success: true,
+          status: 'completed',
+          allStepsCompleted: true
+        });
+
+        const response = await testAgent
+          .post(`/cross-chain/${bridgeDealId}/bridge-completed`)
+          .set('Authorization', 'Bearer validtoken')
+          .send({
+            bridgeTransactionHash: '0xbridge123',
+            destinationTxHash: '0xdest456'
+          });
+
+        expect(response.status).toBe(200);
+        expect(response.body.message).toBe('Bridge completion processed successfully');
+        expect(response.body.crossChainCompleted).toBe(true);
+        expect(mockExecuteCrossChainStep).toHaveBeenCalledWith(
+          'cross-chain-tx-bridge-123',
+          3, // Final step
+          '0xdest456'
+        );
+      });
+
+      it('should handle bridge completion failure gracefully', async () => {
+        mockGet.mockResolvedValueOnce({ exists: true, data: () => mockBridgeDealData });
+        mockExecuteCrossChainStep.mockResolvedValueOnce({
+          success: false,
+          error: 'Cross-chain step execution failed',
+          requiresManualIntervention: true
+        });
+
+        const response = await testAgent
+          .post(`/cross-chain/${bridgeDealId}/bridge-completed`)
+          .set('Authorization', 'Bearer validtoken')
+          .send({
+            bridgeTransactionHash: '0xbridge123'
+          });
+
+        expect(response.status).toBe(200);
+        expect(response.body.crossChainCompleted).toBe(false);
+        expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
+          timeline: expect.objectContaining({
+            _fieldName: 'FieldValue.arrayUnion',
+            _elements: expect.arrayContaining([
+              expect.objectContaining({
+                event: expect.stringContaining('Cross-chain transaction completion FAILED'),
+                crossChainError: true,
+                requiresIntervention: true
+              })
+            ])
+          })
+        }));
+      });
+    });
+
+    // ✅ NEW: Test for auto-completion functionality
+    describe('POST /cross-chain/:dealId/auto-complete', () => {
+      it('should auto-complete cross-chain steps successfully', async () => {
+        mockGet.mockResolvedValueOnce({ exists: true, data: () => mockCrossChainDealData });
+
+        const response = await testAgent
+          .post(`/cross-chain/${crossChainDealId}/auto-complete`)
+          .set('Authorization', 'Bearer validtoken');
+
+        expect(response.status).toBe(200);
+        expect(response.body.success).toBe(true);
+        expect(response.body.completedSteps).toBe(2);
+        expect(response.body.failedSteps).toBe(0);
+        expect(mockAutoCompleteCrossChainSteps).toHaveBeenCalledWith(crossChainDealId);
+      });
     });
   });
-});

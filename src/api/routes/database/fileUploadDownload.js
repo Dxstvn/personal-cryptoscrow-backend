@@ -7,12 +7,8 @@ import { ethEscrowApp } from '../auth/authIndex.js';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { getAdminApp } from '../auth/admin.js';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { fileUploadRateLimit } from '../../middleware/securityMiddleware.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const router = express.Router();
 

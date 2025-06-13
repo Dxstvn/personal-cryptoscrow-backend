@@ -158,8 +158,8 @@ export async function getCrossChainDealsPendingMonitoring() {
   try {
     const db = await getDb();
     const snapshot = await db.collection('deals')
-      .where('hasCrossChainTransaction', '==', true)
-      .where('status', 'in', ['CrossChainPending', 'CrossChainInProgress'])
+      .where('isNativeCrossChain', '==', true)
+      .where('status', 'in', ['AWAITING_FULFILLMENT', 'IN_FINAL_APPROVAL', 'IN_DISPUTE'])
       .get();
 
     if (snapshot.empty) {
@@ -177,12 +177,12 @@ export async function getCrossChainDealsPendingMonitoring() {
  * @returns {Promise<Array<Object>>} A list of transaction objects.
  */
 export async function getCrossChainTransactionsPendingCheck() {
-  const threeHoursAgo = Timestamp.fromDate(new Date(Date.now() - 3 * 60 * 60 * 1000));
+  const oneHourAgo = Timestamp.fromDate(new Date(Date.now() - 60 * 60 * 1000));
   try {
     const db = await getDb();
     const snapshot = await db.collection('crossChainTransactions')
-      .where('status', 'in', ['prepared', 'in_progress'])
-      .where('lastUpdated', '<=', threeHoursAgo)
+      .where('status', 'in', ['PENDING', 'PROCESSING'])
+      .where('lastStatusCheck', '<=', oneHourAgo)
       .get();
 
     if (snapshot.empty) {
@@ -200,13 +200,13 @@ export async function getCrossChainTransactionsPendingCheck() {
  * @returns {Promise<Array<Object>>} A list of deal objects with stuck cross-chain transactions.
  */
 export async function getCrossChainDealsStuck() {
-  const twentyFourHoursAgo = Timestamp.fromDate(new Date(Date.now() - 24 * 60 * 60 * 1000));
+  const twoHoursAgo = Timestamp.fromDate(new Date(Date.now() - 2 * 60 * 60 * 1000));
   try {
     const db = await getDb();
     const snapshot = await db.collection('deals')
-      .where('hasCrossChainTransaction', '==', true)
-      .where('status', '==', 'CrossChainInProgress')
-      .where('crossChainLastActivity', '<=', twentyFourHoursAgo)
+      .where('isNativeCrossChain', '==', true)
+      .where('status', 'in', ['AWAITING_FULFILLMENT', 'IN_FINAL_APPROVAL'])
+      .where('lastMonitoredAt', '<=', twoHoursAgo)
       .get();
 
     if (snapshot.empty) {
@@ -228,8 +228,8 @@ export async function getCrossChainDealsPastFinalApproval() {
   try {
     const db = await getDb();
     const snapshot = await db.collection('deals')
-      .where('status', '==', 'CrossChainFinalApproval')
-      .where('hasCrossChainTransaction', '==', true)
+      .where('status', '==', 'IN_FINAL_APPROVAL')
+      .where('isNativeCrossChain', '==', true)
       .where('finalApprovalDeadlineBackend', '<=', now)
       .get();
 
@@ -252,8 +252,8 @@ export async function getCrossChainDealsPastDisputeDeadline() {
   try {
     const db = await getDb();
     const snapshot = await db.collection('deals')
-      .where('status', '==', 'CrossChainInDispute')
-      .where('hasCrossChainTransaction', '==', true)
+      .where('status', '==', 'IN_DISPUTE')
+      .where('isNativeCrossChain', '==', true)
       .where('disputeResolutionDeadlineBackend', '<=', now)
       .get();
 
@@ -281,6 +281,13 @@ export async function updateCrossChainDealStatus(dealId, updateData) {
     const db = await getDb();
     const dealRef = db.collection('deals').doc(dealId);
     
+    // Check if document exists before updating
+    const docSnapshot = await dealRef.get();
+    if (!docSnapshot.exists) {
+      console.error(`[DBService] Deal ${dealId} does not exist for cross-chain status update`);
+      return;
+    }
+    
     const timelineEvent = {
       event: updateData.timelineEventMessage,
       timestamp: Timestamp.now(),
@@ -295,11 +302,19 @@ export async function updateCrossChainDealStatus(dealId, updateData) {
       timelineEvent.bridgeStatus = updateData.bridgeStatus;
     }
 
+    // Add cross-chain details to timeline event
+    if (updateData.sourceNetwork || updateData.targetNetwork || updateData.bridgeUsed !== undefined) {
+      timelineEvent.crossChainDetails = {};
+      if (updateData.sourceNetwork) timelineEvent.crossChainDetails.sourceNetwork = updateData.sourceNetwork;
+      if (updateData.targetNetwork) timelineEvent.crossChainDetails.targetNetwork = updateData.targetNetwork;
+      if (updateData.bridgeUsed !== undefined) timelineEvent.crossChainDetails.bridgeUsed = updateData.bridgeUsed;
+    }
+
     const firestoreUpdateData = {
       status: updateData.status,
       updatedAt: Timestamp.now(),
       timeline: FieldValue.arrayUnion(timelineEvent),
-      crossChainLastActivity: Timestamp.now(),
+      lastCrossChainUpdate: Timestamp.now(),
     };
 
     if (updateData.crossChainTxHash) firestoreUpdateData.crossChainTxHash = updateData.crossChainTxHash;

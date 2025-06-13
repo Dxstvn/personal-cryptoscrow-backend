@@ -1,6 +1,5 @@
 import { getAdminApp } from '../api/routes/auth/admin.js';
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
-import LiFiBridgeService from './lifiService.js';
 
 // Helper function to get database
 async function getDb() {
@@ -8,8 +7,27 @@ async function getDb() {
   return getFirestore(adminApp);
 }
 
-// Initialize LI.FI service
-const lifiService = new LiFiBridgeService();
+// Lazy initialization for LI.FI service to prevent issues during test imports
+let lifiService = null;
+async function getLifiService() {
+  if (!lifiService) {
+    try {
+      // Dynamic import to avoid loading @lifi/sdk during module parsing
+      const { default: LiFiBridgeService } = await import('./lifiService.js');
+      lifiService = new LiFiBridgeService();
+    } catch (error) {
+      console.warn('[CROSS-CHAIN] Failed to initialize LI.FI service:', error.message);
+      // Create a mock service for testing or when LI.FI is unavailable
+      lifiService = {
+        findOptimalRoute: async () => { throw new Error('LI.FI service unavailable'); },
+        executeBridgeTransfer: async () => { throw new Error('LI.FI service unavailable'); },
+        getTransactionStatus: async () => ({ status: 'UNKNOWN', substatus: 'SERVICE_UNAVAILABLE' }),
+        getSupportedChains: async () => []
+      };
+    }
+  }
+  return lifiService;
+}
 
 // Enhanced network configurations that will be enriched by LI.FI
 const NETWORK_CONFIG = {
@@ -134,6 +152,7 @@ function getTokenAddressForBridge(tokenAddress, sourceNetwork, targetNetwork) {
  */
 export async function initializeLiFiChains() {
   try {
+    const lifiService = await getLifiService();
     const supportedChains = await lifiService.getSupportedChains();
     console.log(`[CROSS-CHAIN] Initialized ${supportedChains.length} LI.FI supported chains`);
     return supportedChains;
@@ -164,19 +183,21 @@ export function areNetworksEVMCompatible(sourceNetwork, targetNetwork) {
 }
 
 /**
- * Get optimal bridge route using LI.FI with enhanced error handling
+ * Get optimal transaction route using LiFi with enhanced error handling
+ * Now supports both same-chain and cross-chain transactions
  */
-export async function getOptimalBridgeRoute({
+export async function getOptimalTransactionRoute({
   sourceNetwork,
   targetNetwork,
   amount,
   tokenAddress,
   fromAddress,
   toAddress,
-  dealId
+  dealId,
+  transactionType = 'auto'
 }) {
   try {
-    console.log(`[CROSS-CHAIN] Finding optimal route for deal ${dealId}: ${sourceNetwork} -> ${targetNetwork}`);
+    console.log(`[CROSS-CHAIN] Finding optimal transaction route for deal ${dealId}: ${sourceNetwork} -> ${targetNetwork}`);
 
     // Validate input parameters
     if (!fromAddress || !toAddress || !amount || !sourceNetwork || !targetNetwork || !dealId) {
@@ -195,7 +216,8 @@ export async function getOptimalBridgeRoute({
 
     console.log(`[CROSS-CHAIN] Using token addresses: from=${fromTokenAddress}, to=${toTokenAddress}`);
 
-    const route = await lifiService.findOptimalRoute({
+    const lifiService = await getLifiService();
+    const route = await lifiService.findUniversalRoute({
       fromChainId: sourceNetwork,
       toChainId: targetNetwork,
       fromTokenAddress,
@@ -203,7 +225,8 @@ export async function getOptimalBridgeRoute({
       fromAmount: amount,
       fromAddress,
       toAddress,
-      dealId
+      dealId,
+      transactionType
     });
 
     // Validate route response structure
@@ -255,20 +278,46 @@ export async function getOptimalBridgeRoute({
 /**
  * Get bridge information using LI.FI for cross-chain transaction
  */
-export async function getBridgeInfo(sourceNetwork, targetNetwork, amount, tokenAddress, fromAddress, toAddress, dealId) {
+export async function getTransactionInfo(sourceNetwork, targetNetwork, amount, tokenAddress, fromAddress, toAddress, dealId) {
   try {
-    if (areNetworksEVMCompatible(sourceNetwork, targetNetwork) && sourceNetwork === targetNetwork) {
-      return null; // No bridge needed for same-chain transactions
-    }
+    // NEW: Now handles both same-chain and cross-chain transactions
+    const isSameChain = areNetworksEVMCompatible(sourceNetwork, targetNetwork) && sourceNetwork === targetNetwork;
+    console.log(`[CROSS-CHAIN] Getting transaction info - same chain: ${isSameChain}`);
     
-    const route = await getOptimalBridgeRoute({
+    const route = await getOptimalTransactionRoute({
       sourceNetwork,
       targetNetwork,
       amount,
       tokenAddress,
       fromAddress,
       toAddress,
-      dealId
+      dealId,
+      transactionType: isSameChain ? 'swap' : 'bridge'
+    });
+
+    return route;
+  } catch (error) {
+    console.error('[CROSS-CHAIN] Error getting transaction info:', error);
+    return null;
+  }
+}
+
+// Legacy bridge info function for backward compatibility
+export async function getBridgeInfo(sourceNetwork, targetNetwork, amount, tokenAddress, fromAddress, toAddress, dealId) {
+  try {
+    if (areNetworksEVMCompatible(sourceNetwork, targetNetwork) && sourceNetwork === targetNetwork) {
+      return null; // No bridge needed for same-chain transactions
+    }
+    
+    const route = await getOptimalTransactionRoute({
+      sourceNetwork,
+      targetNetwork,
+      amount,
+      tokenAddress,
+      fromAddress,
+      toAddress,
+      dealId,
+      transactionType: 'bridge'
     });
 
     return route;
@@ -320,6 +369,7 @@ export async function estimateTransactionFees(sourceNetwork, targetNetwork, amou
       const fromTokenAddress = getTokenAddressForBridge(tokenAddress, sourceNetwork, targetNetwork);
       
       // Create a route estimation request using the same structure as findOptimalRoute
+      const lifiService = await getLifiService();
       const routeEstimate = await lifiService.findOptimalRoute({
         fromChainId: sourceNetwork,
         toChainId: targetNetwork,
@@ -444,7 +494,7 @@ export async function prepareCrossChainTransaction(params) {
 
     if (needsBridge) {
       try {
-        const route = await getOptimalBridgeRoute({
+        const route = await getOptimalTransactionRoute({
           sourceNetwork,
           targetNetwork,
           amount,
@@ -648,6 +698,7 @@ export async function executeCrossChainStep(transactionId, stepNumber, txHash = 
           throw new Error(`Bridge info not available: ${transaction.bridgeInfo?.error || 'Unknown error'}`);
         }
 
+        const lifiService = await getLifiService();
         const bridgeResult = await lifiService.executeBridgeTransfer({
           route: transaction.bridgeInfo,
           dealId: transaction.dealId,
@@ -687,6 +738,7 @@ export async function executeCrossChainStep(transactionId, stepNumber, txHash = 
           throw new Error('No execution ID available for monitoring');
         }
 
+        const lifiService = await getLifiService();
         const status = await lifiService.getTransactionStatus(step.executionId, transaction.dealId);
         
         step.bridgeStatus = status.status;
@@ -812,6 +864,7 @@ export async function getBridgeStatus(transactionId) {
       return { status: 'NOT_STARTED', message: 'Bridge not yet initiated' };
     }
 
+    const lifiService = await getLifiService();
     const status = await lifiService.getTransactionStatus(bridgeStep.executionId, transaction.dealId);
     return status;
   } catch (error) {
@@ -1036,6 +1089,7 @@ export async function checkPendingTransactionStatus(transactionId) {
     
     if (monitoringStep?.executionId) {
       try {
+        const lifiService = await getLifiService();
         const status = await lifiService.getTransactionStatus(monitoringStep.executionId, transaction.dealId);
         
         let statusUpdate = {
@@ -1190,6 +1244,7 @@ export async function handleStuckCrossChainTransaction(transactionId) {
     
     if (monitoringStep?.executionId) {
       try {
+        const lifiService = await getLifiService();
         const latestStatus = await lifiService.getTransactionStatus(monitoringStep.executionId, transaction.dealId);
         
         if (latestStatus.status === 'DONE' || latestStatus.status === 'FAILED') {
@@ -1229,7 +1284,7 @@ export async function handleStuckCrossChainTransaction(transactionId) {
         crossChainLastActivity: FieldValue.serverTimestamp(),
         timeline: FieldValue.arrayUnion({
           event: `Cross-chain transaction marked as stuck - manual intervention required`,
-          timestamp: FieldValue.serverTimestamp(),
+          timestamp: Timestamp.now(),
           systemTriggered: true,
           crossChainEvent: true,
           transactionId,
@@ -1298,8 +1353,24 @@ export async function triggerCrossChainReleaseAfterApprovalSimple(contractAddres
       return { success: false, error: 'Not a cross-chain deal' };
     }
 
-    // If it has a real smart contract, use the bridge service
-    if (contractAddress && !dealData.isMockDeployment) {
+    // ✅ FIXED: Require actual smart contract for fund release
+    if (!contractAddress) {
+      return { 
+        success: false, 
+        error: 'Contract address required for cross-chain fund release' 
+      };
+    }
+
+    // ✅ FIXED: Only allow mock deployment bypass for test environments
+    if (dealData.isMockDeployment && process.env.NODE_ENV !== 'test') {
+      return { 
+        success: false, 
+        error: 'Mock deployments not allowed in production for fund release' 
+      };
+    }
+
+    // For real smart contracts, use the bridge service
+    if (!dealData.isMockDeployment) {
       // Import smart contract bridge service
       const SmartContractBridgeService = (await import('./smartContractBridgeService.js')).default;
       const bridgeService = new SmartContractBridgeService();
@@ -1320,29 +1391,32 @@ export async function triggerCrossChainReleaseAfterApprovalSimple(contractAddres
         bridgeTransactionId: releaseResult.bridgeTransactionId,
         message: 'Cross-chain release initiated via smart contract'
       };
-         } else {
-       // For deals without real contracts, mark as completed in database
-       await db.collection('deals').doc(dealId).update({
-         status: 'CrossChainFundsReleased',
-         fundsReleasedToSeller: true,
-         timeline: FieldValue.arrayUnion({
-           event: `Cross-chain funds released (no smart contract)`,
-           timestamp: FieldValue.serverTimestamp(),
-           system: true,
-           crossChainDirectRelease: true
-         }),
-         updatedAt: FieldValue.serverTimestamp()
-       });
+    } else {
+      // ✅ FIXED: Only for test environment - mock deployment handling
+      const db = await getDb();
+      await db.collection('deals').doc(dealId).update({
+        status: 'CrossChainFundsReleased',
+        fundsReleasedToSeller: true,
+        timeline: FieldValue.arrayUnion({
+          event: `Cross-chain funds released (TEST MODE - mock contract)`,
+          timestamp: FieldValue.serverTimestamp(),
+          system: true,
+          crossChainDirectRelease: true,
+          testMode: true
+        }),
+        updatedAt: FieldValue.serverTimestamp()
+      });
 
-       return {
-         success: true,
-         receipt: {
-           transactionHash: `cross-chain-release-${dealId}-${Date.now()}`,
-           blockNumber: null
-         },
-         message: 'Cross-chain release completed directly'
-       };
-     }
+      return {
+        success: true,
+        receipt: {
+          transactionHash: `test-cross-chain-release-${dealId}-${Date.now()}`,
+          blockNumber: null
+        },
+        message: 'Cross-chain release completed (TEST MODE)',
+        testMode: true
+      };
+    }
 
   } catch (error) {
     console.error(`[CROSS-CHAIN-SIMPLE] Error in triggerCrossChainReleaseAfterApproval:`, error);
@@ -1373,28 +1447,61 @@ export async function triggerCrossChainCancelAfterDisputeDeadline(contractAddres
       return { success: false, error: 'Not a cross-chain deal' };
     }
 
+    // ✅ FIXED: Require actual smart contract for cancellation
+    if (!contractAddress) {
+      return { 
+        success: false, 
+        error: 'Contract address required for cross-chain cancellation' 
+      };
+    }
+
+    // ✅ FIXED: Only allow mock deployment bypass for test environments
+    if (dealData.isMockDeployment && process.env.NODE_ENV !== 'test') {
+      return { 
+        success: false, 
+        error: 'Mock deployments not allowed in production for cancellation' 
+      };
+    }
+
     // For cross-chain deals, cancellation means refunding to buyer on their original network
     // This is more complex than regular EVM cancellation
     
-    if (contractAddress && !dealData.isMockDeployment) {
-      // If there's a real smart contract, try to cancel through it
+    if (!dealData.isMockDeployment) {
+      // ✅ FIXED: Use proper service pattern like blockchainService
       try {
-        // Import ethers and create contract instance
-        const { ethers } = await import('ethers');
-        const { getDb } = await import('./databaseService.js');
+        // Import the contract deployer to get proper ABI
+        const { CrossChainContractDeployer } = await import('./crossChainContractDeployer.js');
+        const deployer = new CrossChainContractDeployer();
         
-        // Create provider and contract instance
+        if (!deployer.contractABI) {
+          throw new Error('Contract ABI not available - deployment artifacts not found');
+        }
+
+        // Create provider and contract instance using service pattern
+        const { ethers } = await import('ethers');
+        
+        if (!process.env.RPC_URL || !process.env.BACKEND_WALLET_PRIVATE_KEY) {
+          throw new Error('Missing RPC_URL or BACKEND_WALLET_PRIVATE_KEY configuration');
+        }
+
         const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
         const wallet = new ethers.Wallet(process.env.BACKEND_WALLET_PRIVATE_KEY, provider);
         
-        // Load contract ABI (assuming it's the same as PropertyEscrow)
-        const CrossChainContractDeployer = (await import('./crossChainContractDeployer.js')).default;
-        const deployer = new CrossChainContractDeployer();
+        // Validate contract address format
+        if (!ethers.isAddress(contractAddress)) {
+          throw new Error(`Invalid contract address format: ${contractAddress}`);
+        }
+        
         const contract = new ethers.Contract(contractAddress, deployer.contractABI, wallet);
         
         // Call the cancel function
+        console.log(`[CROSS-CHAIN-SIMPLE] Calling cancelEscrowAndRefundBuyer on contract ${contractAddress}...`);
         const tx = await contract.cancelEscrowAndRefundBuyer();
         const receipt = await tx.wait();
+        
+        if (receipt.status !== 1) {
+          throw new Error('Transaction failed - receipt status is not success');
+        }
         
         // Update deal status
         await db.collection('deals').doc(dealId).update({
@@ -1420,31 +1527,36 @@ export async function triggerCrossChainCancelAfterDisputeDeadline(contractAddres
         
       } catch (contractError) {
         console.error(`[CROSS-CHAIN-SIMPLE] Smart contract cancellation failed:`, contractError);
-        // Fall through to manual cancellation
+        // ✅ FIXED: Don't fall through to database-only operations
+        return { 
+          success: false, 
+          error: `Smart contract cancellation failed: ${contractError.message}` 
+        };
       }
+    } else {
+      // ✅ FIXED: Only for test environment - mock cancellation
+      await db.collection('deals').doc(dealId).update({
+        status: 'CrossChainCancelledAfterDisputeDeadline',
+        timeline: FieldValue.arrayUnion({
+          event: `Cross-chain deal cancelled after dispute deadline (TEST MODE - mock contract)`,
+          timestamp: FieldValue.serverTimestamp(),
+          system: true,
+          mockCancellation: true,
+          testMode: true
+        }),
+        updatedAt: FieldValue.serverTimestamp()
+      });
+
+      return {
+        success: true,
+        receipt: {
+          transactionHash: `test-cancel-${dealId}-${Date.now()}`,
+          blockNumber: null
+        },
+        message: 'Cross-chain cancellation completed (TEST MODE)',
+        testMode: true
+      };
     }
-
-    // Manual cancellation process for deals without smart contracts or when contract calls fail
-    await db.collection('deals').doc(dealId).update({
-      status: 'CrossChainCancelledAfterDisputeDeadline',
-      timeline: FieldValue.arrayUnion({
-        event: `Cross-chain deal cancelled after dispute deadline (manual process)`,
-        timestamp: FieldValue.serverTimestamp(),
-        system: true,
-        manualCancellation: true,
-        note: 'Buyer should withdraw funds from source network manually'
-      }),
-      updatedAt: FieldValue.serverTimestamp()
-    });
-
-    return {
-      success: true,
-      receipt: {
-        transactionHash: `manual-cancel-${dealId}-${Date.now()}`,
-        blockNumber: null
-      },
-      message: 'Cross-chain cancellation marked - buyer should withdraw manually'
-    };
 
   } catch (error) {
     console.error(`[CROSS-CHAIN-SIMPLE] Error in triggerCrossChainCancelAfterDisputeDeadline:`, error);

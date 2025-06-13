@@ -10,7 +10,7 @@ import {
   estimateTransactionFees,
   areNetworksEVMCompatible,
   getBridgeInfo,
-  getOptimalBridgeRoute
+  getOptimalTransactionRoute
 } from '../../../services/crossChainService.js';
 
 const router = express.Router();
@@ -978,7 +978,7 @@ router.post('/optimal-route', authenticateToken, async (req, res) => {
     }
 
     // Import cross-chain service
-    const { getOptimalBridgeRoute, estimateTransactionFees } = await import('../../../services/crossChainService.js');
+            const { getOptimalTransactionRoute, estimateTransactionFees } = await import('../../../services/crossChainService.js');
 
     let route = null;
     let feeEstimate = null;
@@ -987,7 +987,7 @@ router.post('/optimal-route', authenticateToken, async (req, res) => {
     if (buyerWallet.network !== sellerWallet.network) {
       try {
         // Get optimal route using LI.FI
-        route = await getOptimalBridgeRoute({
+        route = await getOptimalTransactionRoute({
           sourceNetwork: buyerWallet.network,
           targetNetwork: sellerWallet.network,
           amount,

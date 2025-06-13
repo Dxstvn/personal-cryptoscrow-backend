@@ -10,6 +10,17 @@
     "coverage": "hardhat coverage",
     "deploy:sepolia": "hardhat run scripts/deployPropertyEscrow.js --network sepolia",
     "deploy:mainnet": "hardhat run scripts/deployPropertyEscrow.js --network mainnet",
+    "deploy:tenderly": "hardhat run scripts/deployToTenderly.js --network virtualMainnet",
+    "deploy:tenderly:cross-chain": "hardhat run scripts/deployCrossChainToTenderly.js --network virtualMainnet",
+    "deploy:tenderly:polygon": "hardhat run scripts/deployToTenderly.js --network virtualPolygon",
+    "deploy:tenderly:arbitrum": "hardhat run scripts/deployToTenderly.js --network virtualArbitrum",
+    "deploy:tenderly:base": "hardhat run scripts/deployToTenderly.js --network virtualBase",
+    "deploy:tenderly:optimism": "hardhat run scripts/deployToTenderly.js --network virtualOptimism",
+    "verify:tenderly": "hardhat run scripts/verifyContract.js --network virtualMainnet",
+    "test:cross-chain-bridging": "hardhat run scripts/testCrossChainBridging.js --network virtualMainnet",
+    "test:cross-chain-api": "node scripts/testCrossChainAPI.js",
+    "setup:deployer": "node scripts/setupDeployer.js",
+    "fund:deployer": "node scripts/fundDeployer.js",
     "node": "hardhat node",
     "lint": "solhint 'contracts/**/*.sol'",
     "lint:fix": "solhint 'contracts/**/*.sol' --fix",
@@ -29,6 +40,7 @@
     "@nomicfoundation/hardhat-network-helpers": "^1.0.0",
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "@nomicfoundation/hardhat-verify": "^2.0.0",
+    "@tenderly/hardhat-tenderly": "^2.5.2",
     "chai": "^4.5.0",
     "ethers": "^6.13.7",
     "hardhat": "^2.23.0",
@@ -40,6 +52,7 @@
   },
   "dependencies": {
     "@openzeppelin/contracts": "^5.3.0",
+    "axios": "^1.9.0",
     "dotenv": "^16.5.0"
   }
 }

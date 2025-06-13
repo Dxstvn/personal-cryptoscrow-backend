@@ -21,7 +21,8 @@ const config = {
   // Test file patterns
   testMatch: [
     '<rootDir>/tests/**/*.test.js',
-    '<rootDir>/tests/**/*.spec.js'
+    '<rootDir>/tests/**/*.spec.js',
+    '<rootDir>/src/**/__tests__/**/*.test.js'
   ],
   
   // Files to ignore
@@ -77,6 +78,27 @@ const config = {
       testMatch: ['<rootDir>/tests/integration/**/*.test.js'],
       testEnvironment: 'node',
       testTimeout: 90000,
+      setupFilesAfterEnv: ['<rootDir>/tests/setup.js']
+    },
+    {
+      displayName: 'service-unit',
+      testMatch: ['<rootDir>/src/**/__tests__/unit/**/*.test.js'],
+      testEnvironment: 'node',
+      testTimeout: 30000,
+      setupFilesAfterEnv: ['<rootDir>/tests/setup.js']
+    },
+    {
+      displayName: 'service-integration',
+      testMatch: ['<rootDir>/src/**/__tests__/integration/**/*.test.js'],
+      testEnvironment: 'node',
+      testTimeout: 90000,
+      setupFilesAfterEnv: ['<rootDir>/tests/setup.js']
+    },
+    {
+      displayName: 'service-tests',
+      testMatch: ['<rootDir>/src/**/__tests__/*.test.js'],
+      testEnvironment: 'node',
+      testTimeout: 60000,
       setupFilesAfterEnv: ['<rootDir>/tests/setup.js']
     }
   ],

@@ -3,8 +3,19 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import awsSecretsManager from './awsSecretsManager.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Guard against Jest VM Modules issue with import.meta.url
+let __filename, __dirname;
+try {
+  __filename = fileURLToPath(import.meta.url);
+  __dirname = path.dirname(__filename);
+} catch (error) {
+  // Fallback for test environments where import.meta.url might not work properly
+  if (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test') {
+    __dirname = process.cwd() + '/src/config';
+  } else {
+    throw error;
+  }
+}
 
 // Load .env first (public variables)
 dotenv.config({ 
@@ -13,7 +24,7 @@ dotenv.config({
 });
 
 // Only load .env.local in non-test environments to prevent overriding test configuration
-if (process.env.NODE_ENV !== 'test') {
+if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'e2e_test') {
   // Load .env.local second (private variables, will override .env if needed)
   dotenv.config({ 
     path: path.resolve(__dirname, '../../.env.local'),
@@ -144,4 +155,6 @@ if (config.NODE_ENV === 'development') {
   console.log('🔧 Staging environment variables loaded');
 } else if (config.NODE_ENV === 'test') {
   console.log('🧪 Test environment variables loaded (AWS secrets skipped)');
+} else if (config.NODE_ENV === 'e2e_test') {
+  console.log('🧪 E2E Test environment variables loaded (AWS secrets skipped)');
 } 

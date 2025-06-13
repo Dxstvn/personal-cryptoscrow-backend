@@ -1,20 +1,50 @@
 // src/utils/contractDeployer.js
 import { JsonRpcProvider, Wallet, ContractFactory, isAddress, parseUnits as ethersParseUnits } from 'ethers';
-import { createRequire } from 'module';
+import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Handle ES module __dirname and __filename
+let __filename, __dirname;
+try {
+    __filename = fileURLToPath(import.meta.url);
+    __dirname = path.dirname(__filename);
+} catch (error) {
+    // Fallback for test environments where import.meta.url might not be available
+    console.warn('[ContractDeployer] Using fallback paths for test environment');
+    __dirname = process.cwd() + '/src/services';
+    __filename = __dirname + '/contractDeployer.js';
+}
 
 let PropertyEscrowArtifact;
 try {
-    const require = createRequire(import.meta.url);
-    const artifactPath = path.resolve(__dirname, '../contract/artifacts/contracts/PropertyEscrow.sol/PropertyEscrow.json');
-    PropertyEscrowArtifact = require(artifactPath);
+    // Try multiple paths to find the artifact
+    const possiblePaths = [
+        path.resolve(__dirname, '../contract/artifacts/contracts/PropertyEscrow.sol/PropertyEscrow.json'),
+        path.resolve(process.cwd(), 'src/contract/artifacts/contracts/PropertyEscrow.sol/PropertyEscrow.json'),
+        path.resolve(process.cwd(), 'contract/artifacts/contracts/PropertyEscrow.sol/PropertyEscrow.json')
+    ];
+    
+    let artifactLoaded = false;
+    for (const artifactPath of possiblePaths) {
+        try {
+            console.log(`[ContractDeployer] Trying to load artifact from: ${artifactPath}`);
+            const artifactContent = readFileSync(artifactPath, 'utf8');
+            PropertyEscrowArtifact = JSON.parse(artifactContent);
+            console.log(`[ContractDeployer] Successfully loaded PropertyEscrow artifact from: ${artifactPath}`);
+            artifactLoaded = true;
+            break;
+        } catch (pathError) {
+            console.warn(`[ContractDeployer] Failed to load from ${artifactPath}: ${pathError.message}`);
+        }
+    }
+    
+    if (!artifactLoaded) {
+        throw new Error('Could not load PropertyEscrow artifact from any known location');
+    }
 } catch (e) {
-    console.error("Failed to load PropertyEscrow.json artifact. Path: ", path.resolve(__dirname, '../contract/artifacts/contracts/PropertyEscrow.sol/PropertyEscrow.json'), "Error: ", e);
-    PropertyEscrowArtifact = null; // Ensure it's null if loading fails
+    console.error("[ContractDeployer] Failed to load PropertyEscrow.json artifact:", e);
+    PropertyEscrowArtifact = null;
 }
 
 /**

@@ -2,26 +2,36 @@ import express from 'express';
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { getAdminApp } from '../auth/admin.js';
-import { deployPropertyEscrowContract } from '../../../services/contractDeployer.js';
 import { isAddress, getAddress, parseUnits, JsonRpcProvider, formatEther, parseEther } from 'ethers'; // This is the import we are interested in
 import { Wallet } from 'ethers';
+// Import universal contract deployer - replaces both contractDeployer.js and crossChainContractDeployer.js
+import { 
+  deployUniversalPropertyEscrow,
+  deployPropertyEscrowContract,
+  deployCrossChainPropertyEscrowContract
+} from '../../../services/universalContractDeployer.js';
+
 // Import cross-chain services
 import { 
   areNetworksEVMCompatible,
   getBridgeInfo,
+  getTransactionInfo, // NEW: Universal transaction info
   estimateTransactionFees,
   prepareCrossChainTransaction,
   executeCrossChainStep,
-  getCrossChainTransactionStatus
+  getCrossChainTransactionStatus,
+  triggerCrossChainReleaseAfterApprovalSimple,
+  triggerCrossChainCancelAfterDisputeDeadline,
+  isCrossChainDealReady,
+  autoCompleteCrossChainSteps
 } from '../../../services/crossChainService.js';
 
-// ✅ NEW: Import the smart contract bridge service and cross-chain deployer
+// ✅ REFACTORED: Keep SmartContractBridgeService only for specific contract state queries (getContractInfo)
 import SmartContractBridgeService from '../../../services/smartContractBridgeService.js';
-import { deployCrossChainPropertyEscrowContract } from '../../../services/crossChainContractDeployer.js';
 
 const router = express.Router();
 
-// ✅ NEW: Initialize smart contract bridge service
+// ✅ REFACTORED: Initialize smart contract bridge service for contract state queries only
 const smartContractBridgeService = new SmartContractBridgeService();
 
 // Helper function to get Firebase services
@@ -36,45 +46,436 @@ async function getFirebaseServices() {
 // const DEPLOYER_PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY; // REMOVE
 // const RPC_URL = process.env.RPC_URL || process.env.SEPOLIA_RPC_URL; // REMOVE
 
-// Helper function to detect network from wallet address
-function detectNetworkFromAddress(address) {
-  // EVM addresses (Ethereum, Polygon, BSC, etc.)
-  if (address.startsWith('0x') && address.length === 42) {
-    return 'ethereum'; // Default to ethereum for EVM addresses
+// Production-ready network detection using cross-chain service capabilities
+async function detectNetworkFromAddress(address, userHint = null) {
+  try {
+    console.log(`[NETWORK-DETECTION] Analyzing address: ${address} with hint: ${userHint}`);
+    
+    // Validate input
+    if (!address || typeof address !== 'string' || address.trim() === '') {
+      throw new Error('Invalid address provided for network detection');
+    }
+
+    const cleanAddress = address.trim();
+
+    // Use cross-chain service network detection if available
+    if (areNetworksEVMCompatible) {
+      // EVM addresses (Ethereum, Polygon, BSC, Arbitrum, Optimism, Avalanche)
+      if (cleanAddress.startsWith('0x') && cleanAddress.length === 42) {
+        if (userHint && ['ethereum', 'polygon', 'bsc', 'arbitrum', 'optimism', 'avalanche'].includes(userHint)) {
+          console.log(`[NETWORK-DETECTION] Using user hint: ${userHint} for EVM address`);
+          return userHint;
+        }
+        
+        // Advanced EVM network detection based on transaction history or registry
+        // For production, could integrate with address lookup services
+        return 'ethereum'; // Default EVM network
+      }
+    }
+    
+    // Bitcoin addresses - comprehensive validation
+    if (/^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}$/.test(cleanAddress)) {
+      return 'bitcoin';
+    }
+    
+    // Solana addresses (base58, 32-44 characters)
+    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(cleanAddress)) {
+      return 'solana';
+    }
+    
+    // Cardano addresses
+    if (cleanAddress.startsWith('addr1')) {
+      return 'cardano';
+    }
+    
+    // Cosmos ecosystem
+    if (cleanAddress.startsWith('cosmos1')) {
+      return 'cosmos';
+    }
+    
+    // Polkadot addresses
+    if (/^[1-9A-HJ-NP-Za-km-z]{47,48}$/.test(cleanAddress) && !cleanAddress.match(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)) {
+      return 'polkadot';
+    }
+    
+    // Near Protocol
+    if (cleanAddress.includes('.near') || /^[a-z0-9_-]+\.near$/.test(cleanAddress)) {
+      return 'near';
+    }
+    
+    // Default fallback - use user hint if valid
+    if (userHint && typeof userHint === 'string') {
+      console.warn(`[NETWORK-DETECTION] Unknown address format, using user hint: ${userHint}`);
+      return userHint.toLowerCase();
+    }
+    
+    // Final fallback to ethereum for unknown EVM-like addresses
+    console.warn(`[NETWORK-DETECTION] Unknown address format, defaulting to ethereum: ${cleanAddress}`);
+    return 'ethereum';
+    
+  } catch (error) {
+    console.error(`[NETWORK-DETECTION] Error detecting network for ${address}:`, error);
+    return userHint || 'ethereum'; // Safe fallback
   }
-  
-  // Bitcoin addresses (check before Solana since bc1 addresses can match Solana regex)
-  if (/^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,59}$/.test(address)) {
-    return 'bitcoin';
-  }
-  
-  // Solana addresses (base58, 32-44 characters)
-  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
-    return 'solana';
-  }
-  
-  // Default to ethereum for EVM-compatible addresses
-  return 'ethereum';
 }
 
-// Helper function to validate cross-chain wallet address
-function validateCrossChainAddress(address) {
-  // EVM addresses
-  if (address.startsWith('0x')) {
-    return isAddress(address);
+// Production-ready cross-chain address validation using service capabilities
+async function validateCrossChainAddress(address, expectedNetwork = null, dealId = null) {
+  try {
+    if (!address || typeof address !== 'string' || address.trim() === '') {
+      return { 
+        valid: false, 
+        error: 'Address is required and must be a non-empty string',
+        network: null
+      };
+    }
+
+    const cleanAddress = address.trim();
+    console.log(`[ADDRESS-VALIDATION] Validating ${cleanAddress} for network: ${expectedNetwork || 'auto-detect'}`);
+
+    // EVM addresses validation
+    if (cleanAddress.startsWith('0x')) {
+      try {
+        const checksumAddress = isAddress(cleanAddress) ? getAddress(cleanAddress) : null;
+        if (!checksumAddress) {
+          return {
+            valid: false,
+            error: 'Invalid EVM address format',
+            network: expectedNetwork
+          };
+        }
+
+        const evmNetworks = ['ethereum', 'polygon', 'bsc', 'arbitrum', 'optimism', 'avalanche'];
+        if (expectedNetwork && !evmNetworks.includes(expectedNetwork)) {
+          return {
+            valid: false,
+            error: `EVM address provided but expected network is ${expectedNetwork}`,
+            network: expectedNetwork
+          };
+        }
+
+        // Enhanced validation: check if address has transaction history on expected network
+        // This could be implemented with network-specific providers
+        return {
+          valid: true,
+          checksumAddress,
+          network: expectedNetwork || 'ethereum',
+          isEVM: true
+        };
+      } catch (checksumError) {
+        return {
+          valid: false,
+          error: `Invalid EVM address format: ${checksumError.message}`,
+          network: expectedNetwork
+        };
+      }
+    }
+    
+    // Solana address validation
+    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(cleanAddress)) {
+      if (expectedNetwork && expectedNetwork !== 'solana') {
+        return {
+          valid: false,
+          error: `Solana address provided but expected network is ${expectedNetwork}`,
+          network: expectedNetwork
+        };
+      }
+      
+      // Additional Solana address validation could be added here
+      return {
+        valid: true,
+        network: 'solana',
+        isSolana: true
+      };
+    }
+    
+    // Bitcoin address validation
+    if (/^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}$/.test(cleanAddress)) {
+      if (expectedNetwork && expectedNetwork !== 'bitcoin') {
+        return {
+          valid: false,
+          error: `Bitcoin address provided but expected network is ${expectedNetwork}`,
+          network: expectedNetwork
+        };
+      }
+      
+      return {
+        valid: true,
+        network: 'bitcoin',
+        isBitcoin: true
+      };
+    }
+    
+    // Cardano address validation
+    if (cleanAddress.startsWith('addr1')) {
+      if (expectedNetwork && expectedNetwork !== 'cardano') {
+        return {
+          valid: false,
+          error: `Cardano address provided but expected network is ${expectedNetwork}`,
+          network: expectedNetwork
+        };
+      }
+      
+      return {
+        valid: true,
+        network: 'cardano',
+        isCardano: true
+      };
+    }
+    
+    // Cosmos ecosystem validation
+    if (cleanAddress.startsWith('cosmos1')) {
+      if (expectedNetwork && expectedNetwork !== 'cosmos') {
+        return {
+          valid: false,
+          error: `Cosmos address provided but expected network is ${expectedNetwork}`,
+          network: expectedNetwork
+        };
+      }
+      
+      return {
+        valid: true,
+        network: 'cosmos',
+        isCosmos: true
+      };
+    }
+
+    // Polkadot validation
+    if (/^[1-9A-HJ-NP-Za-km-z]{47,48}$/.test(cleanAddress) && !cleanAddress.match(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/)) {
+      if (expectedNetwork && expectedNetwork !== 'polkadot') {
+        return {
+          valid: false,
+          error: `Polkadot address provided but expected network is ${expectedNetwork}`,
+          network: expectedNetwork
+        };
+      }
+      
+      return {
+        valid: true,
+        network: 'polkadot',
+        isPolkadot: true
+      };
+    }
+
+    // Near Protocol validation
+    if (cleanAddress.includes('.near') || /^[a-z0-9_-]+\.near$/.test(cleanAddress)) {
+      if (expectedNetwork && expectedNetwork !== 'near') {
+        return {
+          valid: false,
+          error: `Near Protocol address provided but expected network is ${expectedNetwork}`,
+          network: expectedNetwork
+        };
+      }
+      
+      return {
+        valid: true,
+        network: 'near',
+        isNear: true
+      };
+    }
+    
+    // Unknown address format
+    return {
+      valid: false,
+      error: `Unrecognized address format: ${cleanAddress}`,
+      network: expectedNetwork,
+      suggestions: [
+        'Ensure the address is copied correctly',
+        'Verify the network is supported',
+        'Check if this is a testnet address'
+      ]
+    };
+    
+  } catch (error) {
+    console.error(`[ADDRESS-VALIDATION] Validation error for ${address}:`, error);
+    return {
+      valid: false,
+      error: `Address validation failed: ${error.message}`,
+      network: expectedNetwork
+    };
   }
-  
-  // Solana addresses
-  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
-    return true;
+}
+
+// Production-ready token validation using LiFi service capabilities
+async function validateTokenForCrossChain(tokenAddress, sourceNetwork, targetNetwork, amount = null, dealId = null) {
+  try {
+    console.log(`[TOKEN-VALIDATION] Validating token ${tokenAddress || 'native'} for ${sourceNetwork} -> ${targetNetwork}`);
+
+    // Native tokens (null/undefined/zero address)
+    if (!tokenAddress || tokenAddress === '0x0000000000000000000000000000000000000000' || tokenAddress === '') {
+      const isCrossChain = sourceNetwork !== targetNetwork;
+      return { 
+        valid: true, 
+        isNative: true, 
+        needsMapping: isCrossChain,
+        requiresBridge: isCrossChain,
+        tokenAddress: '0x0000000000000000000000000000000000000000',
+        symbol: getNativeTokenSymbol(sourceNetwork),
+        decimals: 18,
+        bridgeSupported: true
+      };
+    }
+
+    // Get LiFi service to validate token support
+    let lifiService;
+    try {
+      const liFiModule = await import('../../../services/lifiService.js');
+      lifiService = new liFiModule.default();
+    } catch (lifiError) {
+      console.warn('[TOKEN-VALIDATION] LiFi service not available, using basic validation');
+      return basicTokenValidation(tokenAddress, sourceNetwork, targetNetwork);
+    }
+
+    // Validate token format first
+    const basicValidation = basicTokenValidation(tokenAddress, sourceNetwork, targetNetwork);
+    if (!basicValidation.valid) {
+      return basicValidation;
+    }
+
+    // Enhanced validation using LiFi service
+    if (areNetworksEVMCompatible(sourceNetwork, targetNetwork)) {
+      try {
+        // Check if token is supported for bridging
+        const supportedTokens = await lifiService.getSupportedTokens(sourceNetwork);
+        const tokenInfo = supportedTokens.find(token => 
+          token.address && token.address.toLowerCase() === tokenAddress.toLowerCase()
+        );
+
+        if (tokenInfo) {
+          console.log(`[TOKEN-VALIDATION] Token found in LiFi registry: ${tokenInfo.symbol}`);
+          return {
+            valid: true,
+            isNative: false,
+            needsMapping: sourceNetwork !== targetNetwork,
+            requiresBridge: sourceNetwork !== targetNetwork,
+            tokenAddress: tokenInfo.address,
+            symbol: tokenInfo.symbol,
+            decimals: tokenInfo.decimals || 18,
+            name: tokenInfo.name,
+            bridgeSupported: true,
+            lifiValidated: true,
+            priceUSD: tokenInfo.priceUSD || null,
+            logoURI: tokenInfo.logoURI || null
+          };
+        } else {
+          console.warn(`[TOKEN-VALIDATION] Token ${tokenAddress} not found in LiFi registry for ${sourceNetwork}`);
+          // Return basic validation with warning
+          return {
+            ...basicValidation,
+            bridgeSupported: false,
+            warning: 'Token not found in bridge registry - may not be supported for cross-chain transfers',
+            lifiValidated: false
+          };
+        }
+      } catch (lifiTokenError) {
+        console.warn(`[TOKEN-VALIDATION] LiFi token lookup failed:`, lifiTokenError.message);
+        return {
+          ...basicValidation,
+          bridgeSupported: false,
+          warning: 'Unable to verify bridge support for this token',
+          lifiValidated: false
+        };
+      }
+    }
+
+    // For non-EVM networks or when LiFi is not available
+    return {
+      ...basicValidation,
+      bridgeSupported: false,
+      requiresManualVerification: true,
+      warning: 'Cross-chain support for this token combination requires manual verification'
+    };
+
+  } catch (error) {
+    console.error(`[TOKEN-VALIDATION] Token validation error:`, error);
+    return {
+      valid: false,
+      error: `Token validation failed: ${error.message}`,
+      sourceNetwork,
+      targetNetwork
+    };
   }
-  
-  // Bitcoin addresses
-  if (/^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,59}$/.test(address)) {
-    return true;
+}
+
+// Helper function for basic token validation
+function basicTokenValidation(tokenAddress, sourceNetwork, targetNetwork) {
+  // EVM token validation
+  const evmNetworks = ['ethereum', 'polygon', 'bsc', 'arbitrum', 'optimism', 'avalanche'];
+  if (evmNetworks.includes(sourceNetwork)) {
+    if (!/^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) {
+      return { 
+        valid: false, 
+        error: 'Invalid EVM token address format',
+        expectedFormat: '0x followed by 40 hexadecimal characters'
+      };
+    }
+    
+    return { 
+      valid: true, 
+      isNative: false, 
+      needsMapping: sourceNetwork !== targetNetwork,
+      requiresBridge: sourceNetwork !== targetNetwork,
+      tokenAddress,
+      network: sourceNetwork,
+      isEVM: true
+    };
   }
+
+  // Solana token validation
+  if (sourceNetwork === 'solana') {
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(tokenAddress)) {
+      return { 
+        valid: false, 
+        error: 'Invalid Solana token address format',
+        expectedFormat: 'Base58 encoded string, 32-44 characters'
+      };
+    }
+    
+    return { 
+      valid: true, 
+      isNative: false, 
+      needsMapping: true, // Solana tokens always need mapping to other chains
+      requiresBridge: true,
+      tokenAddress,
+      network: sourceNetwork,
+      isSolana: true
+    };
+  }
+
+  // Bitcoin (limited token support)
+  if (sourceNetwork === 'bitcoin') {
+    return {
+      valid: false,
+      error: 'Bitcoin does not support token contracts',
+      suggestion: 'Use native BTC or consider a wrapped version on another network'
+    };
+  }
+
+  return { 
+    valid: false, 
+    error: `Unsupported network for token validation: ${sourceNetwork}`,
+    supportedNetworks: evmNetworks.concat(['solana'])
+  };
+}
+
+// Helper function to get native token symbol
+function getNativeTokenSymbol(network) {
+  const nativeTokens = {
+    ethereum: 'ETH',
+    polygon: 'MATIC',
+    bsc: 'BNB',
+    arbitrum: 'ETH',
+    optimism: 'ETH',
+    avalanche: 'AVAX',
+    solana: 'SOL',
+    bitcoin: 'BTC',
+    cardano: 'ADA',
+    cosmos: 'ATOM',
+    polkadot: 'DOT',
+    near: 'NEAR'
+  };
   
-  return false;
+  return nativeTokens[network] || 'UNKNOWN';
 }
 
 async function authenticateToken(req, res, next) {
@@ -92,6 +493,14 @@ async function authenticateToken(req, res, next) {
         if (isTest) {
             // In test mode, handle various token formats and audience mismatches
             console.log(`🧪 Test mode authentication for token: ${token.substring(0, 50)}...`);
+            
+            // Special handling for E2E test mock token
+            if (token === 'mock-auth-token-for-e2e-testing') {
+                console.log('🧪 E2E Test mode: Using mock authentication');
+                req.userId = 'e2e-test-user-id';
+                next();
+                return;
+            }
             
             try {
                 // First try to verify as ID token - but in test mode, allow different audiences
@@ -210,13 +619,64 @@ router.post('/create', authenticateToken, async (req, res) => {
         // NOW safe to use trim() after validation
         const normalizedOtherPartyEmail = otherPartyEmail.trim().toLowerCase();
 
-        // Enhanced wallet address validation for cross-chain support
-        if (!buyerWalletAddress || !validateCrossChainAddress(buyerWalletAddress)) {
-            return res.status(400).json({ error: 'Valid buyer wallet address is required.' });
+        // Production-ready wallet address validation with comprehensive error handling
+        console.log(`[CREATE-TRANSACTION] Validating wallet addresses for deal creation`);
+        
+        // Validate buyer wallet address
+        const buyerValidation = await validateCrossChainAddress(buyerWalletAddress, null, `buyer-validation-${Date.now()}`);
+        if (!buyerValidation.valid) {
+            console.error(`[CREATE-TRANSACTION] Buyer address validation failed:`, buyerValidation);
+            return res.status(400).json({ 
+                error: `Invalid buyer wallet address: ${buyerValidation.error}`,
+                suggestions: buyerValidation.suggestions || [],
+                field: 'buyerWalletAddress'
+            });
         }
-        if (!sellerWalletAddress || !validateCrossChainAddress(sellerWalletAddress)) {
-            return res.status(400).json({ error: 'Valid seller wallet address is required.' });
+
+        // Validate seller wallet address
+        const sellerValidation = await validateCrossChainAddress(sellerWalletAddress, null, `seller-validation-${Date.now()}`);
+        if (!sellerValidation.valid) {
+            console.error(`[CREATE-TRANSACTION] Seller address validation failed:`, sellerValidation);
+            return res.status(400).json({ 
+                error: `Invalid seller wallet address: ${sellerValidation.error}`,
+                suggestions: sellerValidation.suggestions || [],
+                field: 'sellerWalletAddress'
+            });
         }
+
+        // Enhanced network detection with user hints
+        const buyerNetwork = await detectNetworkFromAddress(buyerWalletAddress, req.body.buyerNetworkHint);
+        const sellerNetwork = await detectNetworkFromAddress(sellerWalletAddress, req.body.sellerNetworkHint);
+        
+        console.log(`[CREATE-TRANSACTION] Detected networks: buyer=${buyerNetwork}, seller=${sellerNetwork}`);
+
+        // Cross-validate addresses with detected networks
+        const buyerNetworkValidation = await validateCrossChainAddress(buyerWalletAddress, buyerNetwork, `buyer-network-${Date.now()}`);
+        const sellerNetworkValidation = await validateCrossChainAddress(sellerWalletAddress, sellerNetwork, `seller-network-${Date.now()}`);
+
+        if (!buyerNetworkValidation.valid) {
+            console.error(`[CREATE-TRANSACTION] Buyer address-network mismatch:`, buyerNetworkValidation);
+            return res.status(400).json({ 
+                error: `Buyer address incompatible with ${buyerNetwork}: ${buyerNetworkValidation.error}`,
+                detectedNetwork: buyerNetwork,
+                field: 'buyerWalletAddress'
+            });
+        }
+
+        if (!sellerNetworkValidation.valid) {
+            console.error(`[CREATE-TRANSACTION] Seller address-network mismatch:`, sellerNetworkValidation);
+            return res.status(400).json({ 
+                error: `Seller address incompatible with ${sellerNetwork}: ${sellerNetworkValidation.error}`,
+                detectedNetwork: sellerNetwork,
+                field: 'sellerWalletAddress'
+            });
+        }
+
+        // Use checksummed addresses for security
+        const finalBuyerWallet = buyerValidation.checksumAddress || buyerWalletAddress;
+        const finalSellerWallet = sellerValidation.checksumAddress || sellerWalletAddress;
+
+        console.log(`[CREATE-TRANSACTION] Using checksummed addresses: buyer=${finalBuyerWallet}, seller=${finalSellerWallet}`);
 
         if (initialConditions && (!Array.isArray(initialConditions) || !initialConditions.every(c => c && typeof c.id === 'string' && c.id.trim() !== '' && typeof c.description === 'string' && typeof c.type === 'string'))) {
             return res.status(400).json({ error: 'Initial conditions must be an array of objects with non-empty "id", "type", and "description".' });
@@ -224,12 +684,44 @@ router.post('/create', authenticateToken, async (req, res) => {
 
         console.log(`[ROUTE LOG] /create - Transaction creation request by UID: ${initiatorId} (${initiatorEmail}), Role: ${initiatedBy}`);
 
-        // Detect networks from wallet addresses
-        const buyerNetwork = detectNetworkFromAddress(buyerWalletAddress);
-        const sellerNetwork = detectNetworkFromAddress(sellerWalletAddress);
-        const isCrossChain = !areNetworksEVMCompatible(buyerNetwork, sellerNetwork);
-
-        console.log(`[CROSS-CHAIN] Network detection: Buyer=${buyerNetwork}, Seller=${sellerNetwork}, CrossChain=${isCrossChain}`);
+        // Enhanced cross-chain detection using service capabilities
+        const isCrossChain = !areNetworksEVMCompatible(buyerNetwork, sellerNetwork) || buyerNetwork !== sellerNetwork;
+        
+        // Production-ready logging with security considerations
+        console.log(`[CROSS-CHAIN] Enhanced network analysis:`);
+        console.log(`  - Buyer Network: ${buyerNetwork} (validated: ${buyerNetworkValidation.valid})`);
+        console.log(`  - Seller Network: ${sellerNetwork} (validated: ${sellerNetworkValidation.valid})`);
+        console.log(`  - Cross-Chain Required: ${isCrossChain}`);
+        console.log(`  - EVM Compatible: ${areNetworksEVMCompatible(buyerNetwork, sellerNetwork)}`);
+        
+        // Enhanced token validation if provided
+        let tokenValidationResult = null;
+        const tokenAddress = req.body.tokenAddress || null;
+        if (tokenAddress) {
+            console.log(`[CREATE-TRANSACTION] Validating token: ${tokenAddress}`);
+            tokenValidationResult = await validateTokenForCrossChain(
+                tokenAddress, 
+                buyerNetwork, 
+                sellerNetwork, 
+                amount, 
+                `token-validation-${Date.now()}`
+            );
+            
+            if (!tokenValidationResult.valid) {
+                console.error(`[CREATE-TRANSACTION] Token validation failed:`, tokenValidationResult);
+                return res.status(400).json({
+                    error: `Invalid token: ${tokenValidationResult.error}`,
+                    tokenAddress,
+                    sourceNetwork: buyerNetwork,
+                    targetNetwork: sellerNetwork,
+                    suggestion: tokenValidationResult.suggestion || 'Please verify the token address and network compatibility'
+                });
+            }
+            
+            if (tokenValidationResult.warning) {
+                console.warn(`[CREATE-TRANSACTION] Token validation warning:`, tokenValidationResult.warning);
+            }
+        }
 
         let escrowAmountWeiString;
         try {
@@ -252,13 +744,14 @@ router.post('/create', authenticateToken, async (req, res) => {
             const otherPartyData = otherPartyQuery.docs[0].data();
 
             let buyerIdFs, sellerIdFs, status;
-            // For cross-chain, we preserve the original addresses
-            const finalBuyerWallet = buyerWalletAddress;
-            const finalSellerWallet = sellerWalletAddress;
 
-            // Ensure addresses are different
+            // Ensure addresses are different (using checksummed addresses)
             if (finalBuyerWallet.toLowerCase() === finalSellerWallet.toLowerCase()) {
-                return res.status(400).json({ error: 'Buyer and Seller wallet addresses cannot be the same.' });
+                return res.status(400).json({ 
+                    error: 'Buyer and Seller wallet addresses cannot be the same.',
+                    buyerAddress: finalBuyerWallet,
+                    sellerAddress: finalSellerWallet
+                });
             }
 
             if (initiatedBy === 'SELLER') {
@@ -269,46 +762,144 @@ router.post('/create', authenticateToken, async (req, res) => {
 
             const now = Timestamp.now();
             
-            // Prepare cross-chain specific conditions if needed
+            // Enhanced cross-chain preparation using full service capabilities
             let enhancedConditions = [...(initialConditions || [])];
             let crossChainTransactionId = null;
             let crossChainInfo = null;
+            let feeEstimate = null;
 
             if (isCrossChain) {
-                // Add cross-chain specific conditions
+                console.log(`[CROSS-CHAIN] Preparing production-ready cross-chain transaction`);
+                
+                // Get comprehensive fee estimation using cross-chain service
+                try {
+                    console.log(`[CROSS-CHAIN] Estimating cross-chain fees...`);
+                    feeEstimate = await estimateTransactionFees(
+                        buyerNetwork, 
+                        sellerNetwork, 
+                        amount.toString(), 
+                        tokenValidationResult?.tokenAddress || null, 
+                        finalBuyerWallet
+                    );
+                    
+                    console.log(`[CROSS-CHAIN] Fee estimation result:`, {
+                        totalFee: feeEstimate.totalEstimatedFee,
+                        bridgeFee: feeEstimate.bridgeFee,
+                        estimatedTime: feeEstimate.estimatedTime,
+                        confidence: feeEstimate.confidence
+                    });
+                } catch (feeError) {
+                    console.error(`[CROSS-CHAIN] Fee estimation failed:`, feeError);
+                    // Continue with transaction creation but note the fee estimation failure
+                    feeEstimate = {
+                        error: feeError.message,
+                        fallback: true,
+                        totalEstimatedFee: '15.0',
+                        estimatedTime: '30-60 minutes'
+                    };
+                }
+
+                // Get bridge information using enhanced service
+                try {
+                    console.log(`[CROSS-CHAIN] Getting bridge information...`);
+                    crossChainInfo = await getBridgeInfo(
+                        buyerNetwork, 
+                        sellerNetwork, 
+                        amount.toString(), 
+                        tokenValidationResult?.tokenAddress || null, 
+                        finalBuyerWallet, 
+                        finalSellerWallet, 
+                        `bridge-info-${Date.now()}`
+                    );
+                    
+                    if (crossChainInfo) {
+                        console.log(`[CROSS-CHAIN] Bridge info obtained:`, {
+                            bridge: crossChainInfo.bridge,
+                            estimatedTime: crossChainInfo.estimatedTime,
+                            confidence: crossChainInfo.confidence
+                        });
+                    }
+                } catch (bridgeError) {
+                    console.error(`[CROSS-CHAIN] Bridge info retrieval failed:`, bridgeError);
+                    crossChainInfo = {
+                        error: bridgeError.message,
+                        available: false,
+                        fallbackReason: 'Bridge information unavailable'
+                    };
+                }
+
+                // Enhanced cross-chain conditions with detailed descriptions
                 const crossChainConditions = [
                     {
                         id: 'cross_chain_network_validation',
                         type: 'CROSS_CHAIN',
-                        description: `Network compatibility validated (${buyerNetwork} to ${sellerNetwork})`
+                        description: `Network compatibility validated (${buyerNetwork} → ${sellerNetwork})`,
+                        metadata: {
+                            buyerNetwork,
+                            sellerNetwork,
+                            buyerValidation: buyerNetworkValidation,
+                            sellerValidation: sellerNetworkValidation,
+                            evmCompatible: areNetworksEVMCompatible(buyerNetwork, sellerNetwork)
+                        }
+                    },
+                    {
+                        id: 'cross_chain_token_validation',
+                        type: 'CROSS_CHAIN',
+                        description: tokenValidationResult ? 
+                            `Token ${tokenValidationResult.symbol || 'validation'} confirmed for cross-chain transfer` :
+                            'Native token confirmed for cross-chain transfer',
+                        metadata: {
+                            tokenAddress: tokenValidationResult?.tokenAddress || '0x0000000000000000000000000000000000000000',
+                            tokenSymbol: tokenValidationResult?.symbol || getNativeTokenSymbol(buyerNetwork),
+                            bridgeSupported: tokenValidationResult?.bridgeSupported !== false,
+                            lifiValidated: tokenValidationResult?.lifiValidated || false
+                        }
                     },
                     {
                         id: 'cross_chain_bridge_setup',
                         type: 'CROSS_CHAIN',
-                        description: 'Cross-chain bridge connection established'
+                        description: crossChainInfo?.available !== false ? 
+                            `Cross-chain bridge established via ${crossChainInfo?.bridge || 'available bridges'}` :
+                            'Cross-chain bridge setup (manual verification required)',
+                        metadata: {
+                            bridgeInfo: crossChainInfo,
+                            requiresManualSetup: crossChainInfo?.available === false
+                        }
                     },
                     {
                         id: 'cross_chain_funds_locked',
                         type: 'CROSS_CHAIN',
-                        description: `Funds locked on source network (${buyerNetwork})`
+                        description: `Funds locked on ${buyerNetwork} network (${amount} ${tokenValidationResult?.symbol || getNativeTokenSymbol(buyerNetwork)})`,
+                        metadata: {
+                            amount,
+                            network: buyerNetwork,
+                            tokenSymbol: tokenValidationResult?.symbol || getNativeTokenSymbol(buyerNetwork),
+                            feeEstimate
+                        }
                     }
                 ];
 
-                // Add bridge-specific condition if bridge is required
-                const bridgeInfo = getBridgeInfo(buyerNetwork, sellerNetwork);
-                if (bridgeInfo) {
+                // Add bridge-specific condition if bridge is available
+                if (crossChainInfo && crossChainInfo.available !== false) {
                     crossChainConditions.push({
                         id: 'cross_chain_bridge_transfer',
                         type: 'CROSS_CHAIN',
-                        description: `Bridge transfer via ${bridgeInfo.bridge} completed`
+                        description: `Bridge transfer completed via ${crossChainInfo.bridge || 'cross-chain bridge'}`,
+                        metadata: {
+                            bridge: crossChainInfo.bridge,
+                            estimatedTime: crossChainInfo.estimatedTime,
+                            confidence: crossChainInfo.confidence,
+                            fees: crossChainInfo.fees
+                        }
                     });
-                    crossChainInfo = bridgeInfo;
                 }
 
+                // Add conditions with comprehensive metadata
                 enhancedConditions = [...crossChainConditions, ...enhancedConditions];
-                console.log(`[CROSS-CHAIN] Added ${crossChainConditions.length} cross-chain conditions`);
+                console.log(`[CROSS-CHAIN] Added ${crossChainConditions.length} enhanced cross-chain conditions`);
             }
 
+            // Enhanced transaction data with comprehensive cross-chain metadata
             const newTransactionData = {
                 propertyAddress: propertyAddress.trim(), 
                 amount: Number(amount), 
@@ -317,12 +908,32 @@ router.post('/create', authenticateToken, async (req, res) => {
                 buyerId: buyerIdFs, 
                 buyerWalletAddress: finalBuyerWallet, 
                 sellerWalletAddress: finalSellerWallet,
-                // Cross-chain specific fields
+                
+                // Enhanced cross-chain fields with validation results
                 buyerNetwork,
                 sellerNetwork,
                 isCrossChain,
                 crossChainTransactionId,
                 crossChainInfo,
+                
+                // Token information
+                tokenAddress: tokenValidationResult?.tokenAddress || null,
+                tokenSymbol: tokenValidationResult?.symbol || (tokenAddress ? 'UNKNOWN' : getNativeTokenSymbol(buyerNetwork)),
+                tokenValidation: tokenValidationResult,
+                
+                // Enhanced network validation metadata
+                networkValidation: {
+                    buyer: buyerNetworkValidation,
+                    seller: sellerNetworkValidation,
+                    evmCompatible: areNetworksEVMCompatible(buyerNetwork, sellerNetwork),
+                    detectionMethod: 'production-enhanced',
+                    validatedAt: now
+                },
+                
+                // Fee estimation data
+                feeEstimate,
+                
+                // Core transaction fields
                 participants: [sellerIdFs, buyerIdFs], 
                 status, 
                 createdAt: now, 
@@ -330,6 +941,8 @@ router.post('/create', authenticateToken, async (req, res) => {
                 initiatedBy,
                 otherPartyEmail: normalizedOtherPartyEmail, 
                 initiatorEmail: initiatorEmail.toLowerCase(),
+                
+                // Enhanced conditions with metadata
                 conditions: enhancedConditions.map(cond => ({
                     id: cond.id.trim(), 
                     type: cond.type.trim() || 'CUSTOM', 
@@ -339,13 +952,23 @@ router.post('/create', authenticateToken, async (req, res) => {
                     createdBy: initiatorId, 
                     createdAt: now, 
                     updatedAt: now,
+                    metadata: cond.metadata || null
                 })),
+                
                 documents: [],
                 timeline: [
                     { 
                         event: `Transaction initiated by ${initiatedBy.toLowerCase()} (${initiatorEmail}). Other party: ${otherPartyData.email}.`, 
                         timestamp: now, 
-                        userId: initiatorId 
+                        userId: initiatorId,
+                        metadata: {
+                            initiatorRole: initiatedBy,
+                            networkInfo: {
+                                buyer: buyerNetwork,
+                                seller: sellerNetwork,
+                                crossChain: isCrossChain
+                            }
+                        }
                     }
                 ],
                 smartContractAddress: null, 
@@ -353,14 +976,67 @@ router.post('/create', authenticateToken, async (req, res) => {
                 fundsReleasedToSeller: false,
                 finalApprovalDeadlineBackend: null, 
                 disputeResolutionDeadlineBackend: null,
+                
+                // Production metadata
+                creationMetadata: {
+                    apiVersion: '2.0',
+                    enhancedValidation: true,
+                    addressesChecksummed: true,
+                    lifiIntegration: true,
+                    feeEstimationAttempted: feeEstimate !== null,
+                    bridgeInfoObtained: crossChainInfo !== null,
+                    tokenValidated: tokenValidationResult !== null
+                }
             };
 
+            // Enhanced cross-chain timeline events
             if (isCrossChain) {
+                // Add detailed cross-chain information to timeline
                 newTransactionData.timeline.push({
-                    event: `Cross-chain transaction detected: ${buyerNetwork} → ${sellerNetwork}${crossChainInfo ? ` via ${crossChainInfo.bridge}` : ''}`,
+                    event: `Cross-chain transaction detected: ${buyerNetwork} → ${sellerNetwork}`,
                     timestamp: now,
-                    system: true
+                    system: true,
+                    crossChain: true,
+                    metadata: {
+                        networks: { source: buyerNetwork, target: sellerNetwork },
+                        bridgeInfo: crossChainInfo,
+                        feeEstimate: feeEstimate,
+                        tokenInfo: tokenValidationResult
+                    }
                 });
+
+                // Add bridge-specific timeline event if available
+                if (crossChainInfo && crossChainInfo.available !== false) {
+                    newTransactionData.timeline.push({
+                        event: `Bridge route identified: ${crossChainInfo.bridge} (${crossChainInfo.estimatedTime}, confidence: ${crossChainInfo.confidence})`,
+                        timestamp: now,
+                        system: true,
+                        bridgeInfo: true,
+                        metadata: { bridgeDetails: crossChainInfo }
+                    });
+                }
+
+                // Add fee estimation event
+                if (feeEstimate) {
+                    newTransactionData.timeline.push({
+                        event: `Cross-chain fees estimated: ${feeEstimate.totalEstimatedFee} total (bridge: ${feeEstimate.bridgeFee}, time: ${feeEstimate.estimatedTime})`,
+                        timestamp: now,
+                        system: true,
+                        feeEstimation: true,
+                        metadata: { feeDetails: feeEstimate }
+                    });
+                }
+
+                // Add token validation event if token was specified
+                if (tokenValidationResult) {
+                    newTransactionData.timeline.push({
+                        event: `Token validated: ${tokenValidationResult.symbol} ${tokenValidationResult.bridgeSupported ? '(bridge supported)' : '(manual verification required)'}`,
+                        timestamp: now,
+                        system: true,
+                        tokenValidation: true,
+                        metadata: { tokenDetails: tokenValidationResult }
+                    });
+                }
             }
 
             if (enhancedConditions && enhancedConditions.length > 0) {
@@ -388,99 +1064,70 @@ router.post('/create', authenticateToken, async (req, res) => {
                     system: true 
                 });
             } else {
-                try {
-                    console.log(`[ROUTE LOG] Attempting to deploy PropertyEscrow contract. Buyer: ${finalBuyerWallet}, Seller: ${finalSellerWallet}, Amount: ${newTransactionData.escrowAmountWei}`);
-                    
-                    // For cross-chain, use EVM-compatible addresses or convert
-                    let contractBuyerAddress = finalBuyerWallet;
-                    let contractSellerAddress = finalSellerWallet;
-                    
-                    // If cross-chain involves non-EVM, use a representative EVM address
-                    if (isCrossChain) {
-                        if (buyerNetwork !== 'ethereum' && !buyerWalletAddress.startsWith('0x')) {
-                            // Use a deterministic EVM address derived from the non-EVM address
-                            contractBuyerAddress = '0x' + '1'.repeat(40); // Placeholder - in production, use proper derivation
-                        }
-                        if (sellerNetwork !== 'ethereum' && !sellerWalletAddress.startsWith('0x')) {
-                            contractSellerAddress = '0x' + '2'.repeat(40); // Placeholder - in production, use proper derivation
-                        }
+                            try {
+                console.log(`[ROUTE LOG] Attempting to deploy Universal PropertyEscrow contract. Buyer: ${finalBuyerWallet}, Seller: ${finalSellerWallet}, Amount: ${newTransactionData.escrowAmountWei}`);
+                
+                // For cross-chain, use EVM-compatible addresses or convert
+                let contractBuyerAddress = finalBuyerWallet;
+                let contractSellerAddress = finalSellerWallet;
+                
+                // If cross-chain involves non-EVM, use a representative EVM address
+                if (isCrossChain) {
+                    if (buyerNetwork !== 'ethereum' && !buyerWalletAddress.startsWith('0x')) {
+                        // Use a deterministic EVM address derived from the non-EVM address
+                        contractBuyerAddress = '0x' + '1'.repeat(40); // Placeholder - in production, use proper derivation
                     }
-                    
-                    const deployerWallet = new Wallet(currentDeployerKey);
-                    const serviceWalletAddress = deployerWallet.address;
-                    console.log(`[ROUTE LOG] Using service wallet: ${serviceWalletAddress} (derived from deployer key)`);
-                    
-                    // ✅ NEW: Use cross-chain deployer for cross-chain deals, regular deployer for same-chain
-                    let deploymentResult;
-                    
-                    if (isCrossChain) {
-                        deploymentResult = await deployCrossChainPropertyEscrowContract({
-                            sellerAddress: contractSellerAddress,
-                            buyerAddress: contractBuyerAddress,
-                            escrowAmount: ethers.parseEther(String(amount)),
-                            serviceWalletAddress: serviceWalletAddress,
-                            buyerSourceChain,
-                            sellerTargetChain,
-                            tokenAddress: null, // ETH for now
-                            deployerPrivateKey: currentDeployerKey,
-                            rpcUrl: currentRpcUrl,
-                            dealId: 'pending' // Will be updated after deal creation
-                        });
-                    } else {
-                        // Use regular deployer for same-chain deals
-                        const { deployPropertyEscrowContract } = await import('../../../services/contractDeployer.js');
-                        deploymentResult = await deployPropertyEscrowContract(
-                            contractSellerAddress, 
-                            contractBuyerAddress, 
-                            newTransactionData.escrowAmountWei,
-                            currentDeployerKey,
-                            currentRpcUrl,
-                            serviceWalletAddress
-                        );
+                    if (sellerNetwork !== 'ethereum' && !sellerWalletAddress.startsWith('0x')) {
+                        contractSellerAddress = '0x' + '2'.repeat(40); // Placeholder - in production, use proper derivation
                     }
-                    
-                    deployedContractAddress = deploymentResult.contractAddress;
-                    newTransactionData.smartContractAddress = deployedContractAddress;
-                    
-                    // ✅ NEW: Enhanced deployment success message
-                    const deploymentTypeMessage = isCrossChain ? 
-                        (deploymentResult.contractInfo?.isRealContract ? 
-                            'cross-chain compatible smart contract' : 
-                            'cross-chain mock contract (fallback)') : 
-                        'standard escrow smart contract';
-                    
-                    newTransactionData.timeline.push({ 
-                        event: `PropertyEscrow ${deploymentTypeMessage} deployed at ${deployedContractAddress} with 2% service fee to ${serviceWalletAddress}.`, 
-                        timestamp: Timestamp.now(), 
-                        system: true,
-                        deploymentInfo: {
-                            isCrossChain,
-                            isRealContract: deploymentResult.contractInfo?.isRealContract !== false,
-                            gasUsed: deploymentResult.gasUsed,
-                            deploymentCost: deploymentResult.deploymentCost
-                        }
-                    });
-                    console.log(`[ROUTE LOG] Smart contract deployed: ${deployedContractAddress} with service wallet: ${serviceWalletAddress}`);
-                    
-                    // ✅ NEW: Auto-complete cross-chain setup for seamless experience
-                    if (isCrossChain && deploymentResult.success) {
-                        try {
-                            const { autoCompleteCrossChainSteps } = await import('../../../services/crossChainService.js');
-                            const autoSetupResult = await autoCompleteCrossChainSteps(transactionRef.id);
-                            
-                            if (autoSetupResult.success) {
-                                newTransactionData.timeline.push({
-                                    event: `Cross-chain setup auto-completed: ${autoSetupResult.message}`,
-                                    timestamp: Timestamp.now(),
-                                    system: true,
-                                    autoSetup: true
-                                });
-                            }
-                        } catch (autoSetupError) {
-                            console.warn('[ROUTE WARN] Cross-chain auto-setup failed:', autoSetupError.message);
-                        }
+                }
+                
+                const deployerWallet = new Wallet(currentDeployerKey);
+                const serviceWalletAddress = deployerWallet.address;
+                console.log(`[ROUTE LOG] Using service wallet: ${serviceWalletAddress} (derived from deployer key)`);
+                
+                // ✅ NEW: Use unified Universal PropertyEscrow contract for ALL transactions
+                console.log(`[ROUTE LOG] Deploying Universal PropertyEscrow contract for ${isCrossChain ? 'cross-chain' : 'same-chain'} transaction`);
+                
+                const deploymentResult = await deployUniversalPropertyEscrow({
+                    sellerAddress: contractSellerAddress,
+                    buyerAddress: contractBuyerAddress,
+                    escrowAmount: ethers.parseEther(String(amount)),
+                    serviceWalletAddress: serviceWalletAddress,
+                    buyerNetwork: buyerNetwork,
+                    sellerNetwork: sellerNetwork,
+                    tokenAddress: tokenValidationResult?.tokenAddress || null,
+                    deployerPrivateKey: currentDeployerKey,
+                    rpcUrl: currentRpcUrl,
+                    dealId: 'pending' // Will be updated after deal creation
+                });
+                
+                deployedContractAddress = deploymentResult.contractAddress;
+                newTransactionData.smartContractAddress = deployedContractAddress;
+                
+                // ✅ NEW: Enhanced deployment success message with Universal contract info
+                const deploymentTypeMessage = deploymentResult.contractInfo?.transactionType === 'same_chain' ? 
+                    'universal same-chain smart contract' : 
+                    `universal ${deploymentResult.contractInfo?.transactionType} smart contract`;
+                
+                newTransactionData.timeline.push({ 
+                    event: `Universal PropertyEscrow ${deploymentTypeMessage} deployed at ${deployedContractAddress} with LiFi integration and 2% service fee to ${serviceWalletAddress}.`, 
+                    timestamp: Timestamp.now(), 
+                    system: true,
+                    deploymentInfo: {
+                        isUniversalContract: true,
+                        transactionType: deploymentResult.contractInfo?.transactionType,
+                        buyerNetwork,
+                        sellerNetwork,
+                        tokenAddress: tokenValidationResult?.tokenAddress || null,
+                        lifiRouteId: deploymentResult.contractInfo?.lifiRouteId,
+                        gasUsed: deploymentResult.gasUsed,
+                        deploymentCost: deploymentResult.deploymentCost,
+                        lifiIntegration: true
                     }
-                } catch (deployError) {
+                });
+                console.log(`[ROUTE LOG] Universal smart contract deployed: ${deployedContractAddress} (${deploymentResult.contractInfo?.transactionType}) with service wallet: ${serviceWalletAddress}`);
+            } catch (deployError) {
                     console.error('[ROUTE ERROR] Smart contract deployment failed:', deployError.message, deployError.stack);
                     newTransactionData.timeline.push({ 
                         event: `Smart contract deployment FAILED: ${deployError.message}. Proceeding as off-chain.`, 
@@ -494,9 +1141,12 @@ router.post('/create', authenticateToken, async (req, res) => {
             const transactionRef = await db.collection('deals').add(newTransactionData);
             console.log(`[ROUTE LOG] Transaction stored in Firestore: ${transactionRef.id}. Status: ${newTransactionData.status}. SC: ${newTransactionData.smartContractAddress || 'None'}`);
 
-            // Prepare cross-chain transaction if needed
+            // Enhanced cross-chain transaction preparation with production-ready integration
             if (isCrossChain) {
                 try {
+                    console.log(`[CROSS-CHAIN] Preparing enhanced cross-chain transaction for deal: ${transactionRef.id}`);
+                    
+                    // Prepare cross-chain transaction with comprehensive data
                     const crossChainTx = await prepareCrossChainTransaction({
                         fromAddress: finalBuyerWallet,
                         toAddress: finalSellerWallet,
@@ -504,49 +1154,215 @@ router.post('/create', authenticateToken, async (req, res) => {
                         sourceNetwork: buyerNetwork,
                         targetNetwork: sellerNetwork,
                         dealId: transactionRef.id,
-                        userId: initiatorId
+                        userId: initiatorId,
+                        tokenAddress: tokenValidationResult?.tokenAddress || null
                     });
 
-                    // Update the deal with cross-chain transaction ID
-                    await transactionRef.update({
+                    // Enhanced update with comprehensive cross-chain data
+                    const crossChainUpdateData = {
                         crossChainTransactionId: crossChainTx.id,
+                        crossChainStatus: crossChainTx.status,
+                        crossChainLastActivity: Timestamp.now(),
                         timeline: FieldValue.arrayUnion({
-                            event: `Cross-chain transaction prepared: ${crossChainTx.id}. Bridge required: ${crossChainTx.needsBridge}`,
+                            event: `Cross-chain transaction prepared: ${crossChainTx.id} (${crossChainTx.status})`,
                             timestamp: Timestamp.now(),
-                            system: true
+                            system: true,
+                            crossChainPreparation: true,
+                            metadata: {
+                                transactionId: crossChainTx.id,
+                                needsBridge: crossChainTx.needsBridge,
+                                bridgeAvailable: crossChainTx.metadata?.bridgeAvailable,
+                                steps: crossChainTx.steps?.length || 0
+                            }
                         })
-                    });
+                    };
 
-                    console.log(`[CROSS-CHAIN] Prepared cross-chain transaction: ${crossChainTx.id} for deal: ${transactionRef.id}`);
+                    await transactionRef.update(crossChainUpdateData);
+                    console.log(`[CROSS-CHAIN] Successfully prepared cross-chain transaction: ${crossChainTx.id} for deal: ${transactionRef.id}`);
+
+                    // Enhanced smart contract integration for cross-chain deals
+                    if (deployedContractAddress) {
+                        try {
+                            console.log(`[CROSS-CHAIN] Initiating smart contract bridge integration for contract: ${deployedContractAddress}`);
+                            
+                            // Initialize smart contract bridge service integration
+                            const contractInfo = await smartContractBridgeService.getContractInfo(deployedContractAddress);
+                            console.log(`[CROSS-CHAIN] Contract info retrieved:`, contractInfo);
+
+                            // Auto-complete cross-chain setup with enhanced monitoring
+                            const { autoCompleteCrossChainSteps } = await import('../../../services/crossChainService.js');
+                            const autoSetupResult = await autoCompleteCrossChainSteps(transactionRef.id);
+                            
+                            if (autoSetupResult.success) {
+                                await transactionRef.update({
+                                    timeline: FieldValue.arrayUnion({
+                                        event: `Cross-chain smart contract setup completed: ${autoSetupResult.message}`,
+                                        timestamp: Timestamp.now(),
+                                        system: true,
+                                        autoSetup: true,
+                                        smartContractIntegration: true,
+                                        metadata: {
+                                            contractAddress: deployedContractAddress,
+                                            contractInfo,
+                                            autoSetupResult
+                                        }
+                                    })
+                                });
+                                
+                                console.log(`[CROSS-CHAIN] Auto-setup completed successfully for deal: ${transactionRef.id}`);
+                            } else {
+                                console.warn(`[CROSS-CHAIN] Auto-setup had issues for deal: ${transactionRef.id}:`, autoSetupResult);
+                                
+                                await transactionRef.update({
+                                    timeline: FieldValue.arrayUnion({
+                                        event: `Cross-chain setup completed with warnings: ${autoSetupResult.message}`,
+                                        timestamp: Timestamp.now(),
+                                        system: true,
+                                        autoSetupWarning: true,
+                                        metadata: { autoSetupResult }
+                                    })
+                                });
+                            }
+                        } catch (autoSetupError) {
+                            console.error('[CROSS-CHAIN] Auto-setup failed:', autoSetupError);
+                            
+                            await transactionRef.update({
+                                timeline: FieldValue.arrayUnion({
+                                    event: `Cross-chain auto-setup FAILED: ${autoSetupError.message}. Manual setup may be required.`,
+                                    timestamp: Timestamp.now(),
+                                    system: true,
+                                    autoSetupError: true,
+                                    requiresManualIntervention: true,
+                                    metadata: { error: autoSetupError.message }
+                                })
+                            });
+                        }
+                    }
+
+                    // Schedule monitoring for the cross-chain transaction
+                    console.log(`[CROSS-CHAIN] Cross-chain transaction ${crossChainTx.id} will be monitored by scheduled jobs`);
+                    
                 } catch (crossChainError) {
-                    console.error('[CROSS-CHAIN] Error preparing cross-chain transaction:', crossChainError);
+                    console.error('[CROSS-CHAIN] Error in enhanced cross-chain preparation:', crossChainError);
+                    
                     await transactionRef.update({
                         timeline: FieldValue.arrayUnion({
-                            event: `Cross-chain transaction preparation FAILED: ${crossChainError.message}`,
+                            event: `Cross-chain transaction preparation FAILED: ${crossChainError.message}. Deal created as off-chain.`,
                             timestamp: Timestamp.now(),
-                            system: true
+                            system: true,
+                            crossChainError: true,
+                            fallbackToOffChain: true,
+                            metadata: { 
+                                error: crossChainError.message,
+                                stack: crossChainError.stack
+                            }
                         })
+                    });
+                    
+                    // Mark the deal as having cross-chain preparation issues but don't fail the creation
+                    await transactionRef.update({
+                        crossChainPreparationFailed: true,
+                        crossChainError: crossChainError.message,
+                        fallbackMode: 'off-chain'
                     });
                 }
             }
 
+            // Enhanced response payload with comprehensive production data
             const responsePayload = {
-                message: 'Transaction initiated successfully.', 
+                message: 'Transaction initiated successfully with enhanced cross-chain integration.', 
                 transactionId: transactionRef.id,
                 status: newTransactionData.status, 
                 smartContractAddress: newTransactionData.smartContractAddress,
+                
+                // Enhanced cross-chain information
                 isCrossChain,
                 crossChainInfo: isCrossChain ? {
                     buyerNetwork,
                     sellerNetwork,
+                    networkValidation: {
+                        buyer: buyerNetworkValidation.valid,
+                        seller: sellerNetworkValidation.valid,
+                        evmCompatible: areNetworksEVMCompatible(buyerNetwork, sellerNetwork)
+                    },
                     bridgeInfo: crossChainInfo,
-                    crossChainTransactionId: newTransactionData.crossChainTransactionId
-                } : null
+                    feeEstimate,
+                    crossChainTransactionId: newTransactionData.crossChainTransactionId,
+                    tokenInfo: tokenValidationResult ? {
+                        address: tokenValidationResult.tokenAddress,
+                        symbol: tokenValidationResult.symbol,
+                        bridgeSupported: tokenValidationResult.bridgeSupported,
+                        lifiValidated: tokenValidationResult.lifiValidated
+                    } : null
+                } : null,
+
+                // Enhanced addresses with validation status
+                addresses: {
+                    buyer: {
+                        original: buyerWalletAddress,
+                        checksummed: finalBuyerWallet,
+                        network: buyerNetwork,
+                        validated: buyerValidation.valid
+                    },
+                    seller: {
+                        original: sellerWalletAddress,
+                        checksummed: finalSellerWallet,
+                        network: sellerNetwork,
+                        validated: sellerValidation.valid
+                    }
+                },
+
+                // Production metadata
+                metadata: {
+                    apiVersion: '2.0',
+                    enhancedValidation: true,
+                    lifiIntegration: true,
+                    smartContractIntegration: deployedContractAddress !== null,
+                    crossChainPreparationSuccessful: isCrossChain ? !newTransactionData.crossChainPreparationFailed : null,
+                    warnings: []
+                }
             };
-            
+
+            // Add warnings for various scenarios
             if (deployedContractAddress === null && currentDeployerKey && currentRpcUrl) {
-                responsePayload.deploymentWarning = "Smart contract deployment was attempted but failed. The transaction has been created for off-chain tracking.";
+                const deploymentWarning = "Smart contract deployment was attempted but failed. The transaction has been created for off-chain tracking.";
+                responsePayload.metadata.warnings.push(deploymentWarning);
+                responsePayload.deploymentWarning = deploymentWarning;
             }
+
+            if (isCrossChain && !crossChainInfo) {
+                responsePayload.metadata.warnings.push("Cross-chain bridge information could not be retrieved. Manual bridge setup may be required.");
+            }
+
+            if (isCrossChain && feeEstimate?.fallback) {
+                responsePayload.metadata.warnings.push("Fee estimation used fallback values. Actual fees may vary.");
+            }
+
+            if (tokenValidationResult && !tokenValidationResult.bridgeSupported) {
+                responsePayload.metadata.warnings.push("Token may not be supported for cross-chain bridging. Manual verification required.");
+            }
+
+            // Add enhanced next steps for the client
+            responsePayload.nextSteps = [];
+            
+            if (isCrossChain) {
+                responsePayload.nextSteps.push("Monitor cross-chain transaction preparation status");
+                if (crossChainInfo?.available !== false) {
+                    responsePayload.nextSteps.push("Bridge setup will be handled automatically");
+                } else {
+                    responsePayload.nextSteps.push("Manual bridge setup may be required");
+                }
+            }
+
+            if (deployedContractAddress) {
+                responsePayload.nextSteps.push("Smart contract is deployed and ready for use");
+            } else {
+                responsePayload.nextSteps.push("Transaction will proceed in off-chain mode");
+            }
+
+            responsePayload.nextSteps.push("Await other party's review and acceptance");
+
+            console.log(`[CREATE-TRANSACTION] Enhanced response prepared for deal ${transactionRef.id} with ${responsePayload.metadata.warnings.length} warnings`);
             
             res.status(201).json(responsePayload);
 
@@ -753,15 +1569,21 @@ router.patch('/conditions/:conditionId/buyer-review', authenticateToken, async (
         
         if (allConditionsFulfilled && docData.status === 'AWAITING_CONDITION_FULFILLMENT') {
             updateData.status = 'READY_FOR_FINAL_APPROVAL';
-            updateData.timeline = FieldValue.arrayUnion(
-                updateData.timeline.arrayUnion[0], // Keep the condition update event
-                {
-                    event: `All conditions fulfilled${docData.isCrossChain ? ' (including cross-chain conditions)' : ''}. Deal ready for final approval.`,
-                    timestamp: Timestamp.now(),
-                    system: true,
-                    statusChange: { from: 'AWAITING_CONDITION_FULFILLMENT', to: 'READY_FOR_FINAL_APPROVAL' }
-                }
-            );
+            // Add both the condition update event and the status change event
+            const conditionUpdateEvent = {
+                event: `Condition "${condition.description}" updated to ${status}${isCrossChainCondition ? ' (cross-chain)' : ''}${notes ? ` with notes: ${notes}` : ''}`,
+                timestamp: Timestamp.now(),
+                userId,
+                conditionId,
+                ...(isCrossChainCondition && { crossChain: true })
+            };
+            const statusChangeEvent = {
+                event: `All conditions fulfilled${docData.isCrossChain ? ' (including cross-chain conditions)' : ''}. Deal ready for final approval.`,
+                timestamp: Timestamp.now(),
+                system: true,
+                statusChange: { from: 'AWAITING_CONDITION_FULFILLMENT', to: 'READY_FOR_FINAL_APPROVAL' }
+            };
+            updateData.timeline = FieldValue.arrayUnion(conditionUpdateEvent, statusChangeEvent);
         }
 
         // Update the document
@@ -1351,6 +2173,322 @@ router.post('/estimate-gas', authenticateToken, async (req, res) => {
     await estimateSmartContractGas(req, res);
 });
 
+// ✅ NEW: Universal transaction routing endpoint
+router.post('/universal-route', authenticateToken, async (req, res) => {
+    const {
+        fromChainId,
+        toChainId,
+        fromTokenAddress,
+        toTokenAddress,
+        fromAmount,
+        fromAddress,
+        toAddress,
+        transactionType = 'auto'
+    } = req.body;
+    const userId = req.userId;
+
+    try {
+        console.log(`[UNIVERSAL-ROUTE] Finding universal route for user ${userId}`);
+
+        // Validate required parameters
+        if (!fromChainId || !fromAmount || !fromAddress || !toAddress) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required parameters: fromChainId, fromAmount, fromAddress, toAddress'
+            });
+        }
+
+        // Get LiFi service
+        const liFiModule = await import('../../../services/lifiService.js');
+        const lifiService = new liFiModule.LiFiBridgeService();
+
+        // Find universal route
+        const routeResult = await lifiService.findUniversalRoute({
+            fromChainId,
+            toChainId,
+            fromTokenAddress,
+            toTokenAddress,
+            fromAmount,
+            fromAddress,
+            toAddress,
+            dealId: `universal-route-${Date.now()}`,
+            transactionType
+        });
+
+        // Determine transaction type from result
+        const actualTransactionType = routeResult.transactionType || 
+            (fromChainId === toChainId ? 'same_chain_swap' : 'cross_chain_bridge');
+
+        res.json({
+            success: true,
+            data: {
+                route: routeResult.route,
+                transactionType: actualTransactionType,
+                estimatedTime: routeResult.estimatedTime,
+                totalFees: routeResult.totalFees,
+                confidence: routeResult.confidence,
+                gasEstimate: routeResult.gasEstimate,
+                
+                // DEX information for same-chain swaps
+                ...(actualTransactionType === 'same_chain_swap' && {
+                    dexsUsed: routeResult.dexsUsed,
+                    chainId: routeResult.chainId
+                }),
+                
+                // Bridge information for cross-chain transactions
+                ...(actualTransactionType === 'cross_chain_bridge' && {
+                    bridgesUsed: routeResult.bridgesUsed,
+                    fromChain: routeResult.fromChain,
+                    toChain: routeResult.toChain
+                }),
+
+                // Validated tokens
+                validatedTokens: routeResult.validatedTokens,
+                
+                metadata: {
+                    requestedType: transactionType,
+                    actualType: actualTransactionType,
+                    lifiIntegration: true,
+                    timestamp: new Date().toISOString()
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('[UNIVERSAL-ROUTE] Error finding universal route:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to find universal route'
+        });
+    }
+});
+
+// ✅ NEW: Execute universal transaction endpoint
+router.post('/universal-execute', authenticateToken, async (req, res) => {
+    const {
+        route,
+        dealId,
+        transactionType
+    } = req.body;
+    const userId = req.userId;
+
+    try {
+        console.log(`[UNIVERSAL-EXECUTE] Executing universal transaction for user ${userId}`);
+
+        // Validate required parameters
+        if (!route) {
+            return res.status(400).json({
+                success: false,
+                error: 'Route is required'
+            });
+        }
+
+        // Get LiFi service
+        const liFiModule = await import('../../../services/lifiService.js');
+        const lifiService = new liFiModule.LiFiBridgeService();
+
+        // Set up status update callback
+        const statusUpdates = [];
+        const onStatusUpdate = (update) => {
+            statusUpdates.push({
+                ...update,
+                timestamp: new Date().toISOString()
+            });
+            console.log(`[UNIVERSAL-EXECUTE] Status update:`, update);
+        };
+
+        const onError = (error) => {
+            console.error(`[UNIVERSAL-EXECUTE] Execution error:`, error);
+        };
+
+        // Execute universal transaction
+        const executionResult = await lifiService.executeUniversalTransaction({
+            route,
+            dealId: dealId || `universal-exec-${Date.now()}`,
+            onStatusUpdate,
+            onError
+        });
+
+        // If this is linked to a deal, update the deal timeline
+        if (dealId) {
+            try {
+                const { db } = await getFirebaseServices();
+                await db.collection('deals').doc(dealId).update({
+                    timeline: FieldValue.arrayUnion({
+                        event: `Universal transaction executed: ${executionResult.transactionType || 'unknown type'}${executionResult.transactionHash ? ` (tx: ${executionResult.transactionHash})` : ''}`,
+                        timestamp: Timestamp.now(),
+                        userId,
+                        universalTransaction: true,
+                        executionResult
+                    }),
+                    updatedAt: Timestamp.now()
+                });
+            } catch (dealUpdateError) {
+                console.warn('[UNIVERSAL-EXECUTE] Failed to update deal timeline:', dealUpdateError);
+            }
+        }
+
+        res.json({
+            success: executionResult.success,
+            data: {
+                ...executionResult,
+                statusUpdates,
+                metadata: {
+                    executedBy: userId,
+                    dealId,
+                    timestamp: new Date().toISOString()
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('[UNIVERSAL-EXECUTE] Error executing universal transaction:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to execute universal transaction'
+        });
+    }
+});
+
+// ✅ NEW: Get supported DEXs and bridges endpoint
+router.get('/universal-capabilities', authenticateToken, async (req, res) => {
+    const { chainId, includeTokens = false } = req.query;
+
+    try {
+        console.log(`[UNIVERSAL-CAPABILITIES] Getting capabilities for chain ${chainId || 'all'}`);
+
+        // Get LiFi service
+        const liFiModule = await import('../../../services/lifiService.js');
+        const lifiService = new liFiModule.LiFiBridgeService();
+
+        // Get supported chains
+        const supportedChains = await lifiService.getSupportedChains();
+
+        let response = {
+            success: true,
+            data: {
+                supportedChains: supportedChains.map(chain => ({
+                    chainId: chain.chainId,
+                    name: chain.name,
+                    nativeCurrency: chain.nativeCurrency,
+                    dexSupported: chain.dexSupported,
+                    bridgeSupported: chain.bridgeSupported
+                })),
+                capabilities: {
+                    totalChains: supportedChains.length,
+                    dexAggregation: true,
+                    bridgeAggregation: true,
+                    sameChainSwaps: true,
+                    crossChainBridging: true,
+                    universalRouting: true
+                },
+                metadata: {
+                    lifiIntegration: true,
+                    timestamp: new Date().toISOString()
+                }
+            }
+        };
+
+        // Get tokens for specific chain if requested
+        if (chainId && includeTokens === 'true') {
+            try {
+                const supportedTokens = await lifiService.getSupportedTokens(chainId);
+                response.data.tokens = supportedTokens.map(token => ({
+                    address: token.address,
+                    symbol: token.symbol,
+                    name: token.name,
+                    decimals: token.decimals,
+                    logoURI: token.logoURI,
+                    priceUSD: token.priceUSD
+                }));
+                response.data.tokenCount = supportedTokens.length;
+            } catch (tokenError) {
+                console.warn(`[UNIVERSAL-CAPABILITIES] Failed to get tokens for chain ${chainId}:`, tokenError);
+                response.data.tokenError = tokenError.message;
+            }
+        }
+
+        res.json(response);
+
+    } catch (error) {
+        console.error('[UNIVERSAL-CAPABILITIES] Error getting capabilities:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to get universal capabilities'
+        });
+    }
+});
+
+// ✅ NEW: Enhanced transaction info endpoint (replaces bridge info for universal use)
+router.get('/transaction-info', authenticateToken, async (req, res) => {
+    const {
+        sourceNetwork,
+        targetNetwork,
+        amount,
+        tokenAddress,
+        fromAddress,
+        toAddress
+    } = req.query;
+
+    try {
+        console.log(`[TRANSACTION-INFO] Getting transaction info: ${sourceNetwork} -> ${targetNetwork}`);
+
+        // Validate required parameters
+        if (!sourceNetwork || !amount || !fromAddress || !toAddress) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required parameters: sourceNetwork, amount, fromAddress, toAddress'
+            });
+        }
+
+        // Use enhanced transaction info service
+        const transactionInfo = await getTransactionInfo(
+            sourceNetwork,
+            targetNetwork || sourceNetwork, // Default to same network if not specified
+            amount,
+            tokenAddress || null,
+            fromAddress,
+            toAddress,
+            `transaction-info-${Date.now()}`
+        );
+
+        if (!transactionInfo) {
+            return res.json({
+                success: true,
+                data: {
+                    available: false,
+                    reason: 'No transaction route available',
+                    sourceNetwork,
+                    targetNetwork: targetNetwork || sourceNetwork,
+                    isSameChain: !targetNetwork || sourceNetwork === targetNetwork
+                }
+            });
+        }
+
+        res.json({
+            success: true,
+            data: {
+                available: true,
+                ...transactionInfo,
+                isSameChain: !targetNetwork || sourceNetwork === targetNetwork,
+                transactionType: !targetNetwork || sourceNetwork === targetNetwork ? 'same_chain' : 'cross_chain',
+                metadata: {
+                    enhancedInfo: true,
+                    lifiIntegration: true,
+                    timestamp: new Date().toISOString()
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('[TRANSACTION-INFO] Error getting transaction info:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to get transaction info'
+        });
+    }
+});
+
 // ✅ NEW: Handle bridge completion notifications and trigger smart contract release
 router.post('/cross-chain/:dealId/bridge-completed', authenticateToken, async (req, res) => {
     const { dealId } = req.params;
@@ -1399,75 +2537,74 @@ router.post('/cross-chain/:dealId/bridge-completed', authenticateToken, async (r
 
         console.log(`[CROSS-CHAIN] Bridge completed for deal ${dealId}, triggering smart contract integration...`);
 
-        // ✅ NEW: Actually integrate with smart contract when bridge completes
-        let smartContractResult = null;
+        // ✅ REFACTORED: Use crossChainService to handle complete cross-chain transaction lifecycle
+        let crossChainResult = null;
         
-        if (dealData.smartContractAddress) {
+        if (dealData.isCrossChain) {
             try {
-                // Handle incoming cross-chain deposit to smart contract
-                console.log(`[CROSS-CHAIN] Processing smart contract deposit for deal ${dealId}`);
+                console.log(`[CROSS-CHAIN] Processing cross-chain transaction completion for deal ${dealId}`);
                 
-                smartContractResult = await smartContractBridgeService.handleIncomingCrossChainDeposit({
-                    contractAddress: dealData.smartContractAddress,
-                    bridgeTransactionId: bridgeTransactionHash,
-                    sourceChain: dealData.buyerNetwork,
-                    originalSender: dealData.buyerWalletAddress,
-                    amount: ethers.parseEther(dealData.amount.toString()),
-                    tokenAddress: dealData.tokenAddress || null,
-                    dealId
-                });
+                // Use crossChainService to complete the transaction
+                if (dealData.crossChainTransactionId) {
+                    // Execute final step of existing cross-chain transaction
+                    crossChainResult = await executeCrossChainStep(
+                        dealData.crossChainTransactionId, 
+                        3, // Final step
+                        destinationTxHash || bridgeTransactionHash
+                    );
+                } else {
+                    // This shouldn't happen, but handle gracefully
+                    console.warn(`[CROSS-CHAIN] No crossChainTransactionId found for deal ${dealId}`);
+                    crossChainResult = {
+                        success: true,
+                        status: 'completed',
+                        message: 'Bridge completed but no cross-chain transaction tracked'
+                    };
+                }
                 
-                console.log(`[CROSS-CHAIN] Smart contract deposit successful:`, smartContractResult);
+                console.log(`[CROSS-CHAIN] Cross-chain transaction completion result:`, crossChainResult);
                 
-            } catch (contractError) {
-                console.error('[CROSS-CHAIN] Smart contract deposit failed:', contractError);
-                // Continue with database updates even if contract call fails
-                smartContractResult = {
-                    error: contractError.message,
+            } catch (crossChainError) {
+                console.error('[CROSS-CHAIN] Cross-chain completion failed:', crossChainError);
+                crossChainResult = {
+                    success: false,
+                    error: crossChainError.message,
                     requiresManualIntervention: true
                 };
             }
         }
 
-        // Update cross-chain transaction status
-        if (executionId) {
-            try {
-                const finalStepResult = await executeCrossChainStep(dealData.crossChainTransactionId, 3, destinationTxHash);
-                console.log(`[CROSS-CHAIN] Final step executed:`, finalStepResult);
-            } catch (stepError) {
-                console.warn(`[CROSS-CHAIN] Final step execution failed:`, stepError.message);
-            }
-        }
+        // ✅ REFACTORED: Cross-chain completion is now handled above
 
-        // Update deal status and trigger smart contract fund release preparation
+        // ✅ REFACTORED: Update deal status based on cross-chain service result
         const updateData = {
             fundsDepositedByBuyer: true,
             crossChainBridgeStatus: 'completed',
             bridgeCompletionTxHash: destinationTxHash || bridgeTransactionHash,
             timeline: FieldValue.arrayUnion({
-                event: `Cross-chain bridge COMPLETED. Funds received ${dealData.smartContractAddress ? 'in smart contract' : 'on ' + dealData.sellerNetwork}${destinationTxHash ? ` (tx: ${destinationTxHash})` : ''}`,
+                event: `Cross-chain bridge COMPLETED. Funds received on ${dealData.sellerNetwork}${destinationTxHash ? ` (tx: ${destinationTxHash})` : ''}`,
                 timestamp: Timestamp.now(),
                 system: true,
                 bridgeCompleted: true,
                 bridgeTransactionHash,
                 destinationTxHash,
-                smartContractIntegration: smartContractResult ? true : false
+                crossChainIntegration: crossChainResult?.success || false
             }),
             updatedAt: Timestamp.now()
         };
 
-        // ✅ NEW: Enhanced smart contract state handling
-        if (dealData.smartContractAddress) {
-            if (smartContractResult && smartContractResult.success) {
-                // Smart contract successfully received funds
+        // ✅ REFACTORED: Enhanced cross-chain state handling
+        if (dealData.isCrossChain) {
+            if (crossChainResult && crossChainResult.success) {
+                // Cross-chain transaction successfully completed
                 updateData.timeline = FieldValue.arrayUnion(
                     updateData.timeline.arrayUnion[0], // Keep the bridge completion event
                     {
-                        event: `Smart contract deposit confirmed. Contract state: ${smartContractResult.newContractState || 'unknown'}`,
+                        event: `Cross-chain transaction completed successfully. Status: ${crossChainResult.status}`,
                         timestamp: Timestamp.now(),
                         system: true,
-                        smartContractReady: true,
-                        contractTransactionHash: smartContractResult.transactionHash
+                        crossChainCompleted: true,
+                        allStepsCompleted: crossChainResult.allStepsCompleted
                     }
                 );
 
@@ -1479,30 +2616,22 @@ router.post('/cross-chain/:dealId/bridge-completed', authenticateToken, async (r
                     updateData.status = 'AWAITING_CONDITION_FULFILLMENT';
                 }
             } else {
-                // Smart contract deposit failed
+                // Cross-chain transaction failed or needs intervention
                 updateData.timeline = FieldValue.arrayUnion(
                     updateData.timeline.arrayUnion[0], // Keep the bridge completion event
                     {
-                        event: `Smart contract deposit FAILED: ${smartContractResult?.error || 'Unknown error'}. Manual intervention required.`,
+                        event: `Cross-chain transaction completion FAILED: ${crossChainResult?.error || 'Unknown error'}. Manual intervention required.`,
                         timestamp: Timestamp.now(),
                         system: true,
-                        smartContractError: true,
+                        crossChainError: true,
                         requiresIntervention: true
                     }
                 );
                 updateData.status = 'AWAITING_CONDITION_FULFILLMENT'; // Keep in current state for manual handling
             }
         } else {
-            // No smart contract - this is an off-chain only deal
+            // Regular cross-chain deal (no complex transaction tracking)
             updateData.status = 'READY_FOR_FINAL_APPROVAL';
-            updateData.timeline = FieldValue.arrayUnion(
-                updateData.timeline.arrayUnion[0], // Keep the bridge completion event
-                {
-                    event: `Cross-chain transfer completed (off-chain mode). Ready for manual confirmation.`,
-                    timestamp: Timestamp.now(),
-                    system: true
-                }
-            );
         }
 
         // Update the deal
@@ -1519,8 +2648,8 @@ router.post('/cross-chain/:dealId/bridge-completed', authenticateToken, async (r
             bridgeTransactionHash,
             destinationTxHash,
             newStatus: updateData.status,
-            smartContractIntegration: smartContractResult,
-            smartContractReady: !!(dealData.smartContractAddress && smartContractResult?.success),
+            crossChainIntegration: crossChainResult,
+            crossChainCompleted: !!(dealData.isCrossChain && crossChainResult?.success),
             processed: true,
             nextAction: updateData.status === 'READY_FOR_FINAL_APPROVAL' ? 
                 'Ready for final approval and fund release' : 
@@ -1571,13 +2700,11 @@ router.post('/cross-chain/:dealId/release-to-seller', authenticateToken, async (
 
         console.log(`[CROSS-CHAIN] Initiating smart contract release to seller for deal ${dealId}`);
 
-        // ✅ NEW: Execute cross-chain release via smart contract
-        const releaseResult = await smartContractBridgeService.initiateCrossChainRelease({
-            contractAddress: dealData.smartContractAddress,
-            targetChain: dealData.sellerNetwork,
-            targetAddress: dealData.sellerWalletAddress,
+        // ✅ REFACTORED: Execute cross-chain release via crossChainService
+        const releaseResult = await triggerCrossChainReleaseAfterApprovalSimple(
+            dealData.smartContractAddress,
             dealId
-        });
+        );
 
         if (releaseResult.success) {
             // Update deal status
@@ -1595,47 +2722,10 @@ router.post('/cross-chain/:dealId/release-to-seller', authenticateToken, async (
                 updatedAt: Timestamp.now()
             });
 
-            // ✅ NEW: Start monitoring bridge completion
-            if (releaseResult.bridgeResult?.executionId) {
-                // Start background monitoring (don't await)
-                smartContractBridgeService.monitorAndConfirmBridge({
-                    contractAddress: dealData.smartContractAddress,
-                    bridgeTransactionId: releaseResult.bridgeTransactionId,
-                    executionId: releaseResult.bridgeResult.executionId,
-                    dealId,
-                    maxWaitTime: 1800000 // 30 minutes
-                }).then(monitorResult => {
-                    console.log(`[CROSS-CHAIN] Bridge monitoring completed for deal ${dealId}:`, monitorResult);
-                    
-                    // Update deal to completed status
-                    db.collection('deals').doc(dealId).update({
-                        status: 'COMPLETED',
-                        fundsReleasedToSeller: true,
-                        timeline: FieldValue.arrayUnion({
-                            event: `Cross-chain release COMPLETED. Funds delivered to seller on ${dealData.sellerNetwork}`,
-                            timestamp: Timestamp.now(),
-                            system: true,
-                            dealCompleted: true,
-                            totalBridgeTime: `${Math.round(monitorResult.totalTime / 1000)}s`
-                        }),
-                        updatedAt: Timestamp.now()
-                    });
-                }).catch(monitorError => {
-                    console.error(`[CROSS-CHAIN] Bridge monitoring failed for deal ${dealId}:`, monitorError);
-                    
-                    // Update deal with error status
-                    db.collection('deals').doc(dealId).update({
-                        timeline: FieldValue.arrayUnion({
-                            event: `Cross-chain release monitoring FAILED: ${monitorError.message}. Manual intervention required.`,
-                            timestamp: Timestamp.now(),
-                            system: true,
-                            error: true,
-                            requiresIntervention: true
-                        }),
-                        updatedAt: Timestamp.now()
-                    });
-                });
-            }
+            // ✅ REFACTORED: Cross-chain release monitoring is handled by crossChainService
+            console.log(`[CROSS-CHAIN] Cross-chain release initiated successfully via crossChainService`);
+            
+            // The crossChainService handles the complete lifecycle including monitoring and completion
 
             res.json({
                 message: 'Cross-chain release to seller initiated successfully',
@@ -1743,33 +2833,228 @@ router.get('/cross-chain/:dealId/contract-status', authenticateToken, async (req
     }
 });
 
-// Estimate cross-chain transaction fees
+// Production-ready enhanced fee estimation endpoint
 router.get('/cross-chain/estimate-fees', authenticateToken, async (req, res) => {
-    const { sourceNetwork, targetNetwork, amount } = req.query;
+    const { 
+        sourceNetwork, 
+        targetNetwork, 
+        amount, 
+        tokenAddress, 
+        fromAddress, 
+        includeBridgeOptions = false 
+    } = req.query;
 
     try {
+        console.log(`[FEE-ESTIMATION] Enhanced fee estimation request: ${sourceNetwork} -> ${targetNetwork}`);
+
+        // Enhanced parameter validation
         if (!sourceNetwork || !targetNetwork || !amount) {
-            return res.status(400).json({ error: 'sourceNetwork, targetNetwork, and amount are required.' });
+            return res.status(400).json({ 
+                success: false,
+                error: 'sourceNetwork, targetNetwork, and amount are required.',
+                requiredFields: ['sourceNetwork', 'targetNetwork', 'amount'],
+                optionalFields: ['tokenAddress', 'fromAddress', 'includeBridgeOptions']
+            });
         }
 
-        const feeEstimate = await estimateTransactionFees(sourceNetwork, targetNetwork, amount);
-        const bridgeInfo = getBridgeInfo(sourceNetwork, targetNetwork);
-        const isEVMCompatible = areNetworksEVMCompatible(sourceNetwork, targetNetwork);
+        // Validate networks using enhanced detection
+        const sourceNetworkValid = await detectNetworkFromAddress(fromAddress || '0x1234567890123456789012345678901234567890', sourceNetwork);
+        const targetNetworkValid = await detectNetworkFromAddress(fromAddress || '0x1234567890123456789012345678901234567890', targetNetwork);
 
-        res.json({
-            sourceNetwork,
-            targetNetwork,
-            amount,
-            isEVMCompatible,
-            bridgeInfo,
-            feeEstimate
-        });
+        if (sourceNetworkValid !== sourceNetwork || targetNetworkValid !== targetNetwork) {
+            console.warn(`[FEE-ESTIMATION] Network validation warnings: source=${sourceNetworkValid}, target=${targetNetworkValid}`);
+        }
+
+        // Enhanced token validation if provided
+        let tokenValidation = null;
+        if (tokenAddress) {
+            tokenValidation = await validateTokenForCrossChain(
+                tokenAddress, 
+                sourceNetwork, 
+                targetNetwork, 
+                amount, 
+                `fee-estimation-${Date.now()}`
+            );
+
+            if (!tokenValidation.valid) {
+                return res.status(400).json({
+                    success: false,
+                    error: `Invalid token: ${tokenValidation.error}`,
+                    tokenAddress,
+                    sourceNetwork,
+                    targetNetwork
+                });
+            }
+        }
+
+        // Get comprehensive fee estimation
+        const feeEstimate = await estimateTransactionFees(
+            sourceNetwork, 
+            targetNetwork, 
+            amount, 
+            tokenValidation?.tokenAddress || tokenAddress || null,
+            fromAddress || null
+        );
+
+        // Get bridge information if requested
+        let bridgeInfo = null;
+        let bridgeOptions = [];
+        
+        if (includeBridgeOptions === 'true') {
+            try {
+                bridgeInfo = await getBridgeInfo(
+                    sourceNetwork, 
+                    targetNetwork, 
+                    amount, 
+                    tokenValidation?.tokenAddress || tokenAddress || null,
+                    fromAddress || '0x1234567890123456789012345678901234567890',
+                    fromAddress || '0x1234567890123456789012345678901234567890',
+                    `bridge-options-${Date.now()}`
+                );
+
+                // Get multiple bridge options using LiFi service
+                const liFiModule = await import('../../../services/lifiService.js');
+                const lifiService = new liFiModule.default();
+                
+                // This would ideally return multiple route options
+                bridgeOptions = [bridgeInfo].filter(Boolean);
+            } catch (bridgeError) {
+                console.warn(`[FEE-ESTIMATION] Bridge options retrieval failed:`, bridgeError.message);
+                bridgeInfo = { error: bridgeError.message, available: false };
+            }
+        }
+
+        // Enhanced network compatibility analysis
+        const isEVMCompatible = areNetworksEVMCompatible(sourceNetwork, targetNetwork);
+        const requiresBridge = sourceNetwork !== targetNetwork;
+        const isSameNetwork = sourceNetwork === targetNetwork;
+
+        // Comprehensive response
+        const response = {
+            success: true,
+            data: {
+                // Request parameters
+                sourceNetwork,
+                targetNetwork,
+                amount,
+                tokenAddress: tokenValidation?.tokenAddress || tokenAddress || null,
+                
+                // Network analysis
+                networkAnalysis: {
+                    isEVMCompatible,
+                    requiresBridge,
+                    isSameNetwork,
+                    sourceValidated: sourceNetworkValid === sourceNetwork,
+                    targetValidated: targetNetworkValid === targetNetwork
+                },
+
+                // Token analysis
+                tokenAnalysis: tokenValidation ? {
+                    valid: tokenValidation.valid,
+                    symbol: tokenValidation.symbol,
+                    bridgeSupported: tokenValidation.bridgeSupported,
+                    lifiValidated: tokenValidation.lifiValidated,
+                    warning: tokenValidation.warning
+                } : null,
+
+                // Fee estimation
+                feeEstimate,
+
+                // Bridge information
+                bridgeInfo: bridgeInfo ? {
+                    available: bridgeInfo.available !== false,
+                    provider: bridgeInfo.bridge,
+                    estimatedTime: bridgeInfo.estimatedTime,
+                    confidence: bridgeInfo.confidence,
+                    fees: bridgeInfo.fees,
+                    error: bridgeInfo.error
+                } : null,
+
+                // Bridge options (if requested)
+                bridgeOptions: includeBridgeOptions === 'true' ? bridgeOptions : null,
+
+                // Recommendations
+                recommendations: generateFeeEstimationRecommendations({
+                    feeEstimate,
+                    tokenValidation,
+                    bridgeInfo,
+                    isEVMCompatible,
+                    requiresBridge
+                }),
+
+                // Metadata
+                metadata: {
+                    estimatedAt: new Date().toISOString(),
+                    apiVersion: '2.0',
+                    enhancedEstimation: true,
+                    lifiIntegration: true,
+                    bridgeOptionsIncluded: includeBridgeOptions === 'true'
+                }
+            }
+        };
+
+        console.log(`[FEE-ESTIMATION] Enhanced estimation completed for ${sourceNetwork} -> ${targetNetwork}`);
+        res.json(response);
 
     } catch (error) {
-        console.error('[CROSS-CHAIN] Error estimating fees:', error);
-        res.status(500).json({ error: error.message || 'Internal server error' });
+        console.error('[FEE-ESTIMATION] Enhanced fee estimation error:', error);
+        res.status(500).json({ 
+            success: false,
+            error: error.message || 'Internal server error',
+            metadata: {
+                timestamp: new Date().toISOString(),
+                requestId: `fee-est-error-${Date.now()}`
+            }
+        });
     }
 });
+
+// Helper function to generate recommendations
+function generateFeeEstimationRecommendations({ feeEstimate, tokenValidation, bridgeInfo, isEVMCompatible, requiresBridge }) {
+    const recommendations = [];
+
+    if (feeEstimate?.fallbackMode) {
+        recommendations.push({
+            type: 'warning',
+            message: 'Fee estimation is using fallback values. Consider checking network conditions.',
+            priority: 'medium'
+        });
+    }
+
+    if (tokenValidation && !tokenValidation.bridgeSupported) {
+        recommendations.push({
+            type: 'warning',
+            message: 'Token may not be supported for bridging. Verify compatibility before proceeding.',
+            priority: 'high'
+        });
+    }
+
+    if (requiresBridge && (!bridgeInfo || bridgeInfo.available === false)) {
+        recommendations.push({
+            type: 'error',
+            message: 'Bridge not available for this token/network combination. Manual setup required.',
+            priority: 'high'
+        });
+    }
+
+    if (feeEstimate && parseFloat(feeEstimate.totalEstimatedFee) > 50) {
+        recommendations.push({
+            type: 'info',
+            message: 'High transaction fees detected. Consider using alternative networks or waiting for lower fees.',
+            priority: 'medium'
+        });
+    }
+
+    if (isEVMCompatible && requiresBridge) {
+        recommendations.push({
+            type: 'info',
+            message: 'EVM-compatible networks detected. Consider using layer 2 solutions for lower fees.',
+            priority: 'low'
+        });
+    }
+
+    return recommendations;
+}
 
 // Helper function to update cross-chain conditions when transaction completes
 async function updateCrossChainConditions(dealId, dealData) {

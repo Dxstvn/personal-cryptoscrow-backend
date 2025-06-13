@@ -3,9 +3,9 @@ const config = {
   rootDir: '.',
   testEnvironment: 'node',
   
-  // Global setup/teardown files - disabled temporarily
-  // globalSetup: './test-setup/globalSetup.cjs', 
-  // globalTeardown: './test-setup/globalTeardown.cjs',
+  // Global setup/teardown files for Hardhat and Firebase emulators
+  globalSetup: './test-setup/globalSetup.cjs', 
+  globalTeardown: './test-setup/globalTeardown.cjs',
   
   // File extensions to consider
   moduleFileExtensions: ['js', 'json'],
@@ -24,7 +24,9 @@ const config = {
   // Test file patterns - only integration tests
   testMatch: [
     '<rootDir>/tests/integration/**/*.test.js',
-    '<rootDir>/tests/integration/**/*.spec.js'
+    '<rootDir>/tests/integration/**/*.spec.js',
+    '<rootDir>/src/**/__tests__/integration/**/*.test.js',
+    '<rootDir>/src/**/__tests__/integration/**/*.spec.js'
   ],
   
   // Files to ignore

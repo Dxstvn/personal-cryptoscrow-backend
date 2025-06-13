@@ -3,7 +3,8 @@ require("@nomicfoundation/hardhat-toolbox");
 // Import dotenv to load environment variables
 require('dotenv/config');
 require("hardhat-gas-reporter");
-
+// Import and setup Tenderly integration
+require("@tenderly/hardhat-tenderly");
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
@@ -35,6 +36,50 @@ module.exports = {
         : [], // Get private key from .env
       chainId: 1, // Ethereum Mainnet's chain ID
     },
+    // Tenderly Virtual TestNets
+    virtualMainnet: {
+      url: process.env.TENDERLY_ETHEREUM_MAINNET || process.env.RPC_URL || "",
+      accounts: process.env.DEPLOYER_PRIVATE_KEY !== undefined
+        ? [process.env.DEPLOYER_PRIVATE_KEY]
+        : [],
+      chainId: 1, // Ethereum Mainnet fork
+    },
+    virtualPolygon: {
+      url: process.env.TENDERLY_POLYGON || "",
+      accounts: process.env.DEPLOYER_PRIVATE_KEY !== undefined
+        ? [process.env.DEPLOYER_PRIVATE_KEY]
+        : [],
+      chainId: 137, // Polygon fork
+    },
+    virtualArbitrum: {
+      url: process.env.TENDERLY_ARBITRUM_ONE || "",
+      accounts: process.env.DEPLOYER_PRIVATE_KEY !== undefined
+        ? [process.env.DEPLOYER_PRIVATE_KEY]
+        : [],
+      chainId: 42161, // Arbitrum One fork
+    },
+    virtualBase: {
+      url: process.env.TENDERLY_BASE || "",
+      accounts: process.env.DEPLOYER_PRIVATE_KEY !== undefined
+        ? [process.env.DEPLOYER_PRIVATE_KEY]
+        : [],
+      chainId: 8453, // Base fork
+    },
+    virtualOptimism: {
+      url: process.env.TENDERLY_OPTIMISM || "",
+      accounts: process.env.DEPLOYER_PRIVATE_KEY !== undefined
+        ? [process.env.DEPLOYER_PRIVATE_KEY]
+        : [],
+      chainId: 10, // Optimism fork
+    },
+  },
+  // Tenderly configuration
+  tenderly: {
+    // https://docs.tenderly.co/account/projects/account-project-slug
+    project: process.env.TENDERLY_PROJECT_SLUG || "project", // Your project slug
+    username: process.env.TENDERLY_ACCOUNT_SLUG || "Dusss", // Your username
+    // Automatic verification settings
+    automaticVerifications: true,
   },
   etherscan: {
     // Your API key for Etherscan

@@ -1,20 +1,46 @@
 // jest.e2e.config.js
 export default {
-  // Inherit from base config if you have one and it's appropriate
-  // preset: './jest.config.js', 
+  displayName: 'E2E Tests with Tenderly',
+  testMatch: ['<rootDir>/test/e2e/**/*.test.js'],
   testEnvironment: 'node',
-  testMatch: ['<rootDir>/src/__tests__/e2e/**/*.e2e.test.js'],
-  setupFilesAfterEnv: ['<rootDir>/src/__tests__/e2e/setupE2E.js'],
-  // globalSetup and globalTeardown are likely already handled by your existing Hardhat setup
-  // if you need them for E2E specifically and they differ, you can define them here.
-  // globalSetup: '<rootDir>/test-setup/globalE2ESetup.js',
-  // globalTeardown: '<rootDir>/test-setup/globalE2ETeardown.js',
+  setupFilesAfterEnv: ['<rootDir>/test/e2e/setup/jest-setup.js'],
+  testTimeout: 120000, // 2 minutes for e2e tests
+  verbose: true,
+  collectCoverage: false, // Usually disabled for e2e tests
   
-  // Recommended to run E2E tests sequentially to avoid interference,
-  // especially if they modify shared state (database, external services).
-  // This can also be set via CLI flag (--runInBand).
+  // Module resolution
+  preset: null,
+  
+  // Transform configuration for ES modules
+  transform: {
+    '^.+\\.js$': ['babel-jest', {
+      presets: [['@babel/preset-env', { targets: { node: 'current' } }]],
+      plugins: ['babel-plugin-transform-import-meta']
+    }]
+  },
+  
+  // Test sequencing - run tests serially for e2e
   maxWorkers: 1,
   
-  // Longer timeout for E2E tests as they involve more complex operations.
-  testTimeout: 30000, // 30 seconds
+  // Environment variables for e2e tests
+  testEnvironmentOptions: {},
+  
+  // Global variables
+  globals: {
+    'process.env.NODE_ENV': 'e2e_test'
+  },
+  
+  // Test patterns
+  testPathIgnorePatterns: [
+    '<rootDir>/node_modules/',
+    '<rootDir>/tests/',  // Ignore the old tests directory
+    '<rootDir>/src/__tests__/'
+  ],
+  
+  // Module paths
+  moduleDirectories: ['node_modules', '<rootDir>/src'],
+  
+  // Setup and teardown
+  globalSetup: '<rootDir>/test/e2e/setup/global-setup.js',
+  globalTeardown: '<rootDir>/test/e2e/setup/global-teardown.js',
 }; 
