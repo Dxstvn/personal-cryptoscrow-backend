@@ -509,7 +509,7 @@ router.post('/detection', authenticateToken, async (req, res) => {
     });
 
     // Check LI.FI compatibility for detected wallets
-    const compatibilityCheck = await checkLiFiCompatibility(detectedWallets);
+    const compatibilityCheck = await checkBridgeCompatibility(detectedWallets);
 
     console.log(`[WALLET] Enhanced wallet detection for user ${userId}:`, {
       evm: detectedWallets.evmWallets?.length || 0,
@@ -570,7 +570,7 @@ router.get('/capabilities/:walletAddress', authenticateToken, async (req, res) =
 router.get('/supported-chains', async (req, res) => {
   try {
     // This will eventually call LI.FI API
-    const supportedChains = await getLiFiSupportedChains();
+    const supportedChains = await getSupportedChains();
     
     res.json({
       success: true,
@@ -763,97 +763,59 @@ router.get('/cross-chain/networks', async (req, res) => {
 });
 
 // Helper functions for enhanced wallet detection
-async function checkLiFiCompatibility(detectedWallets) {
+async function checkBridgeCompatibility(detectedWallets) {
   try {
-    // Import and use actual LI.FI service
-    const { initializeLiFiChains } = await import('../../../services/crossChainService.js');
+    // Import supported chains function
+    const { initializeSupportedChains } = await import('../../../services/crossChainService.js');
     
-    const supportedChains = await initializeLiFiChains();
+    const supportedChains = await initializeSupportedChains();
     
     return {
-      compatible: true,
+      compatible: false, // Bridge functionality is deprecated
       supportedChains: supportedChains.map(chain => chain.name.toLowerCase()),
-      bridgeCount: 14, // LI.FI aggregates 14+ bridges
-      dexCount: 33,    // LI.FI aggregates 33+ DEXs
+      bridgeCount: 0,
+      dexCount: 0,
       evmSupported: (detectedWallets.evmWallets?.length || 0) > 0,
       solanaSupported: (detectedWallets.solanaWallets?.length || 0) > 0,
-      chainsAvailable: supportedChains.length
+      chainsAvailable: supportedChains.length,
+      warning: 'Bridge functionality is deprecated'
     };
   } catch (error) {
-    console.error('[WALLET] LI.FI compatibility check failed:', error);
+    console.error('[WALLET] Bridge compatibility check failed:', error);
     // Fallback to basic compatibility
     return {
-      compatible: true,
+      compatible: false,
       supportedChains: ['ethereum', 'polygon', 'bsc', 'arbitrum', 'optimism'],
-      bridgeCount: 14,
-      dexCount: 33,
+      bridgeCount: 0,
+      dexCount: 0,
       evmSupported: (detectedWallets.evmWallets?.length || 0) > 0,
       solanaSupported: (detectedWallets.solanaWallets?.length || 0) > 0,
-      error: 'Using fallback data - LI.FI service unavailable'
+      error: 'Bridge service unavailable'
     };
   }
 }
 
 async function analyzeDynamicWalletCapabilities(walletAddress, network) {
   try {
-    // Import LI.FI service for real capability analysis
-    const LiFiBridgeService = await import('../../../services/lifiService.js');
-    const lifiService = new LiFiBridgeService.default();
-    
     const capabilities = {
       network,
       walletAddress,
-      canBridge: true,
-      estimatedTime: '15-45 minutes'
+      canBridge: false, // Bridge functionality is deprecated
+      estimatedTime: 'N/A'
     };
 
-    // Get real supported chains from LI.FI
-    const supportedChains = await lifiService.getSupportedChains();
+    // Use static chain data
     const currentChainId = getChainIdFromNetwork(network);
     
-    // Find current chain in LI.FI data
-    const currentChain = supportedChains.find(chain => 
-      chain.chainId === currentChainId || 
-      chain.name.toLowerCase() === network.toLowerCase()
-    );
-
-    if (currentChain) {
-      // Get chains that can bridge to/from current network
-      const compatibleChains = supportedChains
-        .filter(chain => chain.chainId !== currentChainId)
-        .map(chain => chain.name.toLowerCase())
-        .slice(0, 10); // Limit to top 10 for performance
-
-      capabilities.chains = compatibleChains;
-      capabilities.bridges = ['lifi', 'across', 'stargate', 'hop', 'connext']; // LI.FI aggregated bridges
-      capabilities.nativeToken = currentChain.nativeCurrency?.symbol || 'ETH';
-      capabilities.lifiSupported = true;
-    } else {
-      // Fallback for unsupported networks
-      capabilities.chains = getDefaultCompatibleChains(network);
-      capabilities.bridges = ['lifi'];
-      capabilities.lifiSupported = false;
-      capabilities.warning = 'Network not fully supported by LI.FI';
-    }
-
-    // Add real fee estimation if possible
-    try {
-      if (capabilities.chains.length > 0) {
-        const sampleRoute = await lifiService.estimateBridgeFees({
-          fromChainId: network,
-          toChainId: capabilities.chains[0],
-          fromTokenAddress: '0x0000000000000000000000000000000000000000', // Native token
-          amount: '1000000000000000000', // 1 ETH equivalent
-          fromAddress: walletAddress
-        });
-        
-        capabilities.estimatedFees = `$${sampleRoute.totalFees.toFixed(2)}`;
-        capabilities.estimatedTime = `${Math.round(sampleRoute.estimatedTime / 60)} minutes`;
-      }
-    } catch (feeError) {
-      console.warn('[WALLET] Fee estimation failed:', feeError.message);
-      capabilities.estimatedFees = 'Unavailable';
-    }
+    // Get chains for compatibility info only
+    capabilities.chains = getDefaultCompatibleChains(network);
+    capabilities.bridges = []; // No bridges available
+    capabilities.nativeToken = getNativeTokenSymbol(network);
+    capabilities.bridgeSupported = false;
+    capabilities.warning = 'Bridge functionality is deprecated';
+    
+    // Static fee estimation
+    capabilities.estimatedFees = 'N/A';
 
     return capabilities;
   } catch (error) {
@@ -863,20 +825,23 @@ async function analyzeDynamicWalletCapabilities(walletAddress, network) {
   }
 }
 
-async function getLiFiSupportedChains() {
+async function getSupportedChains() {
   try {
-    // Import and use actual LI.FI service
-    const LiFiBridgeService = await import('../../../services/lifiService.js');
-    const lifiService = new LiFiBridgeService.default();
+    // Return static chain data - bridge functionality is deprecated
+    const staticChains = [
+      { chainId: 1, name: 'Ethereum', symbol: 'ETH', isEVM: true },
+      { chainId: 137, name: 'Polygon', symbol: 'POL', isEVM: true },
+      { chainId: 56, name: 'BSC', symbol: 'BNB', isEVM: true },
+      { chainId: 42161, name: 'Arbitrum', symbol: 'ETH', isEVM: true },
+      { chainId: 10, name: 'Optimism', symbol: 'ETH', isEVM: true }
+    ];
     
-    const chains = await lifiService.getSupportedChains();
-    
-    return chains.map(chain => ({
+    return staticChains.map(chain => ({
       chainId: chain.chainId,
       name: chain.name,
-      symbol: chain.nativeCurrency?.symbol || 'ETH',
-      isEVM: chain.chainId < 1000000, // Simple heuristic for EVM chains
-      bridgeSupported: chain.bridgeSupported,
+      symbol: chain.symbol,
+      isEVM: chain.isEVM,
+      bridgeSupported: false, // Bridge functionality is deprecated
       dexSupported: chain.dexSupported
     }));
   } catch (error) {

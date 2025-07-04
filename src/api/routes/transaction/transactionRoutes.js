@@ -46,7 +46,7 @@ async function getFirebaseServices() {
 // const DEPLOYER_PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY; // REMOVE
 // const RPC_URL = process.env.RPC_URL || process.env.SEPOLIA_RPC_URL; // REMOVE
 
-// Universal network detection using LiFi's supported chains
+// Universal network detection for supported chains
 // DEPRECATED: This function should not be used anymore
 // Frontend should provide explicit buyerNetwork and sellerNetwork fields
 // async function detectNetworkFromAddress(address, userHint = null) {

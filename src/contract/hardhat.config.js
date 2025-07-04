@@ -3,8 +3,6 @@ require("@nomicfoundation/hardhat-toolbox");
 // Import dotenv to load environment variables
 require('dotenv/config');
 require("hardhat-gas-reporter");
-// Import and setup Tenderly integration
-require("@tenderly/hardhat-tenderly");
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
@@ -29,6 +27,34 @@ module.exports = {
         : [], // Get private key from .env
       chainId: 11155111, // Sepolia's chain ID
     },
+    "polygon-amoy": {
+      url: process.env.POLYGON_RPC_URL || "", // Get RPC URL from .env
+      accounts: (() => {
+        const accounts = [];
+        if (process.env.POLYGON_PRIVATE_KEY !== undefined) {
+          accounts.push(process.env.POLYGON_PRIVATE_KEY);
+        }
+        if (process.env.BACKEND_WALLET_PRIVATE_KEY !== undefined) {
+          accounts.push(process.env.BACKEND_WALLET_PRIVATE_KEY);
+        }
+        return accounts;
+      })(), // Get private keys from .env
+      chainId: 80002, // Polygon Amoy's chain ID
+    },
+    "arbitrum-sepolia": {
+      url: process.env.ARBITRUM_SEPOLIA_RPC_URL || "", // Get RPC URL from .env
+      accounts: process.env.ARBITRUM_SEPOLIA_PRIVATE_KEY !== undefined
+        ? [process.env.ARBITRUM_SEPOLIA_PRIVATE_KEY]
+        : [], // Get private key from .env
+      chainId: 421614, // Arbitrum Sepolia's chain ID
+    },
+    "arbitrum-one": {
+      url: process.env.ARBITRUM_ONE_RPC_URL || "", // Get RPC URL from .env
+      accounts: process.env.ARBITRUM_ONE_PRIVATE_KEY !== undefined
+        ? [process.env.ARBITRUM_ONE_PRIVATE_KEY]
+        : [], // Get private key from .env
+      chainId: 42161, // Arbitrum One's chain ID
+    },
     mainnet: {
       url: process.env.MAINNET_RPC_URL || "", // Get RPC URL from .env
       accounts: process.env.MAINNET_PRIVATE_KEY !== undefined
@@ -36,50 +62,6 @@ module.exports = {
         : [], // Get private key from .env
       chainId: 1, // Ethereum Mainnet's chain ID
     },
-    // Tenderly Virtual TestNets
-    virtualMainnet: {
-      url: process.env.TENDERLY_ETHEREUM_MAINNET || process.env.RPC_URL || "",
-      accounts: process.env.DEPLOYER_PRIVATE_KEY !== undefined
-        ? [process.env.DEPLOYER_PRIVATE_KEY]
-        : [],
-      chainId: 1, // Ethereum Mainnet fork
-    },
-    virtualPolygon: {
-      url: process.env.TENDERLY_POLYGON || "",
-      accounts: process.env.DEPLOYER_PRIVATE_KEY !== undefined
-        ? [process.env.DEPLOYER_PRIVATE_KEY]
-        : [],
-      chainId: 137, // Polygon fork
-    },
-    virtualArbitrum: {
-      url: process.env.TENDERLY_ARBITRUM_ONE || "",
-      accounts: process.env.DEPLOYER_PRIVATE_KEY !== undefined
-        ? [process.env.DEPLOYER_PRIVATE_KEY]
-        : [],
-      chainId: 42161, // Arbitrum One fork
-    },
-    virtualBase: {
-      url: process.env.TENDERLY_BASE || "",
-      accounts: process.env.DEPLOYER_PRIVATE_KEY !== undefined
-        ? [process.env.DEPLOYER_PRIVATE_KEY]
-        : [],
-      chainId: 8453, // Base fork
-    },
-    virtualOptimism: {
-      url: process.env.TENDERLY_OPTIMISM || "",
-      accounts: process.env.DEPLOYER_PRIVATE_KEY !== undefined
-        ? [process.env.DEPLOYER_PRIVATE_KEY]
-        : [],
-      chainId: 10, // Optimism fork
-    },
-  },
-  // Tenderly configuration
-  tenderly: {
-    // https://docs.tenderly.co/account/projects/account-project-slug
-    project: process.env.TENDERLY_PROJECT_SLUG || "project", // Your project slug
-    username: process.env.TENDERLY_ACCOUNT_SLUG || "Dusss", // Your username
-    // Automatic verification settings
-    automaticVerifications: true,
   },
   etherscan: {
     // Your API key for Etherscan

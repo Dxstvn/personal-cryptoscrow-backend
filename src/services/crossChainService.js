@@ -7,29 +7,21 @@ async function getDb() {
   return getFirestore(adminApp);
 }
 
-// Lazy initialization for LI.FI service to prevent issues during test imports
-let lifiService = null;
-async function getLifiService() {
-  if (!lifiService) {
-    try {
-      // Dynamic import to avoid loading @lifi/sdk during module parsing
-      const { default: LiFiBridgeService } = await import('./lifiService.js');
-      lifiService = new LiFiBridgeService();
-    } catch (error) {
-      console.warn('[CROSS-CHAIN] Failed to initialize LI.FI service:', error.message);
-      // Create a mock service for testing or when LI.FI is unavailable
-      lifiService = {
-        findOptimalRoute: async () => { throw new Error('LI.FI service unavailable'); },
-        executeBridgeTransfer: async () => { throw new Error('LI.FI service unavailable'); },
-        getTransactionStatus: async () => ({ status: 'UNKNOWN', substatus: 'SERVICE_UNAVAILABLE' }),
-        getSupportedChains: async () => []
-      };
-    }
-  }
-  return lifiService;
+// Mock bridge service for testing
+const mockBridgeService = {
+  findOptimalRoute: async () => { throw new Error('Bridge service unavailable'); },
+  findUniversalRoute: async () => { throw new Error('Bridge service unavailable'); },
+  executeBridgeTransfer: async () => { throw new Error('Bridge service unavailable'); },
+  getTransactionStatus: async () => ({ status: 'UNKNOWN', substatus: 'SERVICE_UNAVAILABLE' }),
+  getSupportedChains: async () => []
+};
+
+async function getBridgeService() {
+  // Return mock service - bridge functionality is deprecated
+  return mockBridgeService;
 }
 
-// Enhanced network configurations that will be enriched by LI.FI
+// Enhanced network configurations for cross-chain support
 const NETWORK_CONFIG = {
   ethereum: {
     chainId: 1,
@@ -44,8 +36,8 @@ const NETWORK_CONFIG = {
   polygon: {
     chainId: 137,
     isEVM: true,
-    nativeCurrency: 'MATIC',
-    wrappedNative: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270', // WMATIC
+    nativeCurrency: 'POL',
+    wrappedNative: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270', // WPOL
     wrappedETH: '0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619', // WETH on Polygon
     stableTokens: [
       '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174', // USDC
@@ -148,23 +140,20 @@ function getTokenAddressForBridge(tokenAddress, sourceNetwork, targetNetwork) {
 }
 
 /**
- * Initialize and get supported chains from LI.FI
+ * Initialize and get supported chains
  */
-export async function initializeLiFiChains() {
+export async function initializeSupportedChains() {
   try {
-    const lifiService = await getLifiService();
-    const supportedChains = await lifiService.getSupportedChains();
-    console.log(`[CROSS-CHAIN] Initialized ${supportedChains.length} LI.FI supported chains`);
-    return supportedChains;
-  } catch (error) {
-    console.error('[CROSS-CHAIN] Failed to initialize LI.FI chains:', error);
-    // Return fallback configuration
+    // Return fallback configuration - bridge functionality is deprecated
     return Object.entries(NETWORK_CONFIG).map(([name, config]) => ({
       chainId: config.chainId,
       name,
       nativeCurrency: { symbol: config.nativeCurrency },
-      bridgeSupported: true
+      bridgeSupported: false
     }));
+  } catch (error) {
+    console.error('[CROSS-CHAIN] Failed to initialize chains:', error);
+    return [];
   }
 }
 
@@ -183,7 +172,7 @@ export function areNetworksEVMCompatible(sourceNetwork, targetNetwork) {
 }
 
 /**
- * Get optimal transaction route using LiFi with enhanced error handling
+ * Get optimal transaction route with enhanced error handling
  * Now supports both same-chain and cross-chain transactions
  */
 export async function getOptimalTransactionRoute({
@@ -216,25 +205,8 @@ export async function getOptimalTransactionRoute({
 
     console.log(`[CROSS-CHAIN] Using token addresses: from=${fromTokenAddress}, to=${toTokenAddress}`);
 
-    const lifiService = await getLifiService();
-    
-    // LiFi now handles universal routing for all supported chains
-    console.log(`[CROSS-CHAIN] Using LiFi universal routing for ${sourceNetwork} -> ${targetNetwork}`);
-    
-    // Let LiFi determine if the route is supported
-    // No need for hardcoded address detection - LiFi handles this internally
-    
-    const route = await lifiService.findUniversalRoute({
-      fromChainId: sourceNetwork,
-      toChainId: targetNetwork,
-      fromTokenAddress,
-      toTokenAddress,
-      fromAmount: amount,
-      fromAddress,
-      toAddress,
-      dealId,
-      transactionType
-    });
+    // Bridge functionality is deprecated - throw error
+    throw new Error('Cross-chain bridging is no longer supported');
 
     // Validate route response structure
     if (!route) {
@@ -267,15 +239,13 @@ export async function getOptimalTransactionRoute({
   } catch (error) {
     console.error(`[CROSS-CHAIN] Failed to get optimal route for deal ${dealId}:`, error);
     
-    // Enhanced error handling for specific LI.FI API errors
+    // Enhanced error handling for bridge errors
     if (error.message?.includes('Token not supported')) {
       throw new Error(`Token ${tokenAddress} not supported for bridging between ${sourceNetwork} and ${targetNetwork}`);
     } else if (error.message?.includes('No routes found')) {
       throw new Error(`No bridge routes available between ${sourceNetwork} and ${targetNetwork} for this token`);
     } else if (error.message?.includes('insufficient liquidity')) {
       throw new Error(`Insufficient liquidity for bridge between ${sourceNetwork} and ${targetNetwork}`);
-    } else if (error.message?.includes('Rate limited')) {
-      throw new Error('Rate limited by LI.FI API - please try again later');
     }
     
     throw new Error(`Bridge route failed: ${error.message}`);
@@ -283,7 +253,7 @@ export async function getOptimalTransactionRoute({
 }
 
 /**
- * Get bridge information using LI.FI for cross-chain transaction
+ * Get bridge information for cross-chain transaction
  */
 export async function getTransactionInfo(sourceNetwork, targetNetwork, amount, tokenAddress, fromAddress, toAddress, dealId) {
   try {
@@ -335,7 +305,7 @@ export async function getBridgeInfo(sourceNetwork, targetNetwork, amount, tokenA
 }
 
 /**
- * Estimate transaction fees using LI.FI with enhanced validation
+ * Estimate transaction fees with enhanced validation
  */
 export async function estimateTransactionFees(sourceNetwork, targetNetwork, amount, tokenAddress, fromAddress) {
   try {
@@ -371,45 +341,8 @@ export async function estimateTransactionFees(sourceNetwork, targetNetwork, amou
       };
     }
 
-    // Use LI.FI for cross-chain fee estimation with proper token addresses
-    try {
-      const fromTokenAddress = getTokenAddressForBridge(tokenAddress, sourceNetwork, targetNetwork);
-      
-      // LiFi handles universal fee estimation for all supported chains
-      console.log(`[CROSS-CHAIN] Using LiFi universal fee estimation for ${sourceNetwork} -> ${targetNetwork}`);
-      
-      // No need for hardcoded network detection - LiFi handles this internally
-      
-      // Create a route estimation request using the same structure as findOptimalRoute
-      const lifiService = await getLifiService();
-      const routeEstimate = await lifiService.findOptimalRoute({
-        fromChainId: sourceNetwork,
-        toChainId: targetNetwork,
-        fromTokenAddress,
-        toTokenAddress: fromTokenAddress, // Same token on both chains for estimation
-        fromAmount: amount,
-        fromAddress: fromAddress || '0x0000000000000000000000000000000000000000',
-        toAddress: fromAddress || '0x0000000000000000000000000000000000000000', // Same address for estimation
-        dealId: 'fee-estimate'
-      });
-
-      if (routeEstimate) {
-        return {
-          sourceNetworkFee: '0.005', // Base gas estimate
-          targetNetworkFee: '0.001', // Estimated target network claim fee
-          bridgeFee: (routeEstimate.totalFees || 10).toFixed(2),
-          totalEstimatedFee: ((routeEstimate.totalFees || 10) + 0.006).toFixed(6),
-          estimatedTime: `${Math.round((routeEstimate.estimatedTime || 1800) / 60)} minutes`,
-          confidence: `${routeEstimate.confidence || 80}%`,
-          bridgesUsed: routeEstimate.bridgesUsed || ['unknown'],
-          tokenValidated: true,
-          fallbackMode: false
-        };
-      }
-    } catch (lifiError) {
-      console.error('[CROSS-CHAIN] LI.FI fee estimation failed:', lifiError);
-      // Continue to fallback - don't throw here
-    }
+    // Bridge functionality is deprecated - use fallback estimation
+    console.log('[CROSS-CHAIN] Using fallback fee estimation - bridge service unavailable');
     
     // Provide realistic fallback fees based on network and token type
     let bridgeFee = '10.00';
@@ -429,7 +362,7 @@ export async function estimateTransactionFees(sourceNetwork, targetNetwork, amou
       totalEstimatedFee: (parseFloat(bridgeFee) + 0.007).toFixed(6),
       estimatedTime: '15-45 minutes',
       confidence: '80%',
-      error: 'Using estimated fees - LI.FI unavailable',
+      error: 'Using estimated fees - bridge service unavailable',
       fallbackMode: true,
       tokenValidated: true
     };
@@ -452,7 +385,7 @@ export async function estimateTransactionFees(sourceNetwork, targetNetwork, amou
 }
 
 /**
- * Prepare cross-chain transaction with LI.FI integration and enhanced validation
+ * Prepare cross-chain transaction with enhanced validation
  */
 export async function prepareCrossChainTransaction(params) {
   try {
@@ -482,7 +415,7 @@ export async function prepareCrossChainTransaction(params) {
       throw new Error('Invalid toAddress format');
     }
     
-    console.log(`[CROSS-CHAIN] Using LiFi universal address validation for ${fromAddress} -> ${toAddress}`);
+    console.log(`[CROSS-CHAIN] Validating addresses ${fromAddress} -> ${toAddress}`);
 
     // Validate networks
     if (!NETWORK_CONFIG[sourceNetwork] || !NETWORK_CONFIG[targetNetwork]) {
@@ -532,7 +465,7 @@ export async function prepareCrossChainTransaction(params) {
       }
     }
 
-    // Estimate fees using LI.FI - this now always returns a valid object
+    // Estimate fees - this now always returns a valid object
     const feeEstimate = await estimateTransactionFees(
       sourceNetwork, 
       targetNetwork, 
@@ -625,7 +558,7 @@ export async function prepareCrossChainTransaction(params) {
         tokenValidated: tokenValidation.valid,
         isNativeToken: tokenValidation.isNative,
         bridgeAvailable,
-        estimationMethod: (feeEstimate && feeEstimate.fallbackMode) ? 'fallback' : 'lifi',
+        estimationMethod: 'fallback',
         tokenFallbackUsed: effectiveTokenAddress !== tokenAddress
       },
       steps
@@ -647,7 +580,7 @@ export async function prepareCrossChainTransaction(params) {
 }
 
 /**
- * Execute cross-chain transaction step with enhanced LI.FI integration and error handling
+ * Execute cross-chain transaction step with enhanced error handling
  */
 export async function executeCrossChainStep(transactionId, stepNumber, txHash = null, walletProvider = null) {
   try {
@@ -702,86 +635,15 @@ export async function executeCrossChainStep(transactionId, stepNumber, txHash = 
       };
     }
 
-    // Handle LI.FI steps with enhanced error handling
-    if (step.lifiStep && step.action === 'initiate_bridge') {
-      console.log(`[CROSS-CHAIN] Initiating LI.FI bridge for transaction ${transactionId}`);
-      
-      try {
-        // Validate bridge info exists
-        if (!transaction.bridgeInfo || transaction.bridgeInfo.error) {
-          throw new Error(`Bridge info not available: ${transaction.bridgeInfo?.error || 'Unknown error'}`);
-        }
-
-        const lifiService = await getLifiService();
-        const bridgeResult = await lifiService.executeBridgeTransfer({
-          route: transaction.bridgeInfo,
-          dealId: transaction.dealId,
-          onStatusUpdate: (dealId, updatedRoute) => {
-            console.log(`[CROSS-CHAIN] Bridge status update for deal ${dealId}:`, updatedRoute.status);
-            updateTransactionStatus(transactionId, updatedRoute);
-          },
-          onError: (dealId, error) => {
-            console.error(`[CROSS-CHAIN] Bridge error for deal ${dealId}:`, error);
-          }
-        });
-
-        step.status = 'completed';
-        step.txHash = bridgeResult.transactionHash;
-        step.executionId = bridgeResult.executionId;
-        step.completedAt = new Date();
-
-        // Auto-advance to monitoring step
-        const monitorStep = transaction.steps.find(s => s.step === 2);
-        if (monitorStep) {
-          monitorStep.status = 'in_progress';
-          monitorStep.executionId = bridgeResult.executionId;
-        }
-
-      } catch (lifiError) {
-        console.error(`[CROSS-CHAIN] LI.FI bridge execution failed:`, lifiError);
-        step.status = 'failed';
-        step.error = lifiError.message;
-        step.failedAt = new Date();
-      }
-    } 
-    else if (step.lifiStep && step.action === 'monitor_bridge') {
-      console.log(`[CROSS-CHAIN] Monitoring LI.FI bridge for transaction ${transactionId}`);
-      
-      try {
-        if (!step.executionId) {
-          throw new Error('No execution ID available for monitoring');
-        }
-
-        const lifiService = await getLifiService();
-        const status = await lifiService.getTransactionStatus(step.executionId, transaction.dealId);
-        
-        step.bridgeStatus = status.status;
-        step.lastChecked = new Date();
-
-        if (status.status === 'DONE') {
-          step.status = 'completed';
-          step.completedAt = new Date();
-          
-          // Auto-advance to confirmation step
-          const confirmStep = transaction.steps.find(s => s.step === 3);
-          if (confirmStep) {
-            confirmStep.status = 'completed';
-            confirmStep.completedAt = new Date();
-          }
-        } else if (status.status === 'FAILED') {
-          step.status = 'failed';
-          step.error = status.substatusMessage || 'Bridge transaction failed';
-          step.failedAt = new Date();
-        }
-      } catch (statusError) {
-        console.error(`[CROSS-CHAIN] Status check failed:`, statusError);
-        step.error = statusError.message;
-        step.lastChecked = new Date();
-        // Don't mark as failed immediately - might be temporary network issue
-      }
+    // Handle bridge steps - deprecated
+    if (step.lifiStep) {
+      console.log(`[CROSS-CHAIN] Bridge functionality is deprecated for transaction ${transactionId}`);
+      step.status = 'failed';
+      step.error = 'Bridge functionality is no longer supported';
+      step.failedAt = new Date();
     }
     else {
-      // Handle non-LI.FI steps (direct transfers, etc.)
+      // Handle non-bridge steps (direct transfers, etc.)
       step.status = 'completed';
       step.txHash = txHash;
       step.completedAt = new Date();
@@ -878,9 +740,8 @@ export async function getBridgeStatus(transactionId) {
       return { status: 'NOT_STARTED', message: 'Bridge not yet initiated' };
     }
 
-    const lifiService = await getLifiService();
-    const status = await lifiService.getTransactionStatus(bridgeStep.executionId, transaction.dealId);
-    return status;
+    // Bridge functionality is deprecated
+    return { status: 'UNKNOWN', message: 'Bridge service unavailable' };
   } catch (error) {
     console.error('[CROSS-CHAIN] Error getting bridge status:', error);
     throw error;
@@ -1103,8 +964,8 @@ export async function checkPendingTransactionStatus(transactionId) {
     
     if (monitoringStep?.executionId) {
       try {
-        const lifiService = await getLifiService();
-        const status = await lifiService.getTransactionStatus(monitoringStep.executionId, transaction.dealId);
+        // Bridge functionality is deprecated
+        const status = { status: 'UNKNOWN', substatus: 'SERVICE_UNAVAILABLE' };
         
         let statusUpdate = {
           bridgeStatus: status.status,
@@ -1258,8 +1119,8 @@ export async function handleStuckCrossChainTransaction(transactionId) {
     
     if (monitoringStep?.executionId) {
       try {
-        const lifiService = await getLifiService();
-        const latestStatus = await lifiService.getTransactionStatus(monitoringStep.executionId, transaction.dealId);
+        // Bridge functionality is deprecated
+        const latestStatus = { status: 'UNKNOWN', substatus: 'SERVICE_UNAVAILABLE' };
         
         if (latestStatus.status === 'DONE' || latestStatus.status === 'FAILED') {
           // Transaction was actually completed or failed - update it

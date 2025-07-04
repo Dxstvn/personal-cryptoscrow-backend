@@ -4,15 +4,7 @@
 import { jest, describe, it, expect, beforeEach, beforeAll, afterAll } from '@jest/globals';
 
 // ✅ INTEGRATION APPROACH: Minimal mocking - only external APIs that cost money
-jest.unstable_mockModule('../../../../../services/lifiService.js', () => ({
-    default: class MockLiFiService {
-        async findOptimalRoute(params) {
-            // Realistic mock that simulates actual LiFi API response structure
-            if (params.fromChainId === params.toChainId) {
-                return null; // Same chain, no bridge needed
-            }
-            
-            return {
+// Bridge service is deprecated - no longer needed
                 bridge: 'multichain',
                 estimatedTime: 1800, // 30 minutes
                 totalFees: 0.015,
@@ -38,7 +30,7 @@ jest.unstable_mockModule('../../../../../services/lifiService.js', () => ({
             await new Promise(resolve => setTimeout(resolve, 100)); // Simulate network delay
             
             return {
-                executionId: `lifi_exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                executionId: `bridge_exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                 transactionHash: `0x${Math.random().toString(16).substr(2, 64)}`,
                 bridgeProvider: 'multichain'
             };
@@ -282,7 +274,7 @@ describe('INTEGRATION vs UNIT Test Comparison', () => {
         // - Uses real crossChainService
         // - Tests actual business logic
         // - Verifies real database interactions
-        // - Only mocks expensive external APIs (LiFi)
+        // - Only mocks expensive external APIs (bridge services)
         
         const result = crossChainService.areNetworksEVMCompatible('ethereum', 'polygon');
         
@@ -323,6 +315,6 @@ INTEGRATION TEST APPROACH (✅ Correct):
 - Use REAL services: crossChainService.getBridgeInfo() calls actual function
 - Test end-to-end flows
 - Real database interactions
-- Only mock external APIs that cost money (LiFi, blockchain RPC)
+- Only mock external APIs that cost money (bridge services, blockchain RPC)
 - Test actual error scenarios from real services
 */ 

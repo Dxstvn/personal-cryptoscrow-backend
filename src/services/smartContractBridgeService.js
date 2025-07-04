@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import LiFiBridgeService from './lifiService.js';
+// LiFi service removed - bridge functionality is deprecated
 
 // CrossChainPropertyEscrow ABI (key functions)
 const CROSS_CHAIN_ESCROW_ABI = [
@@ -19,7 +19,7 @@ const CROSS_CHAIN_ESCROW_ABI = [
  */
 export class SmartContractBridgeService {
     constructor() {
-        this.lifiService = new LiFiBridgeService();
+        // Bridge service removed - functionality is deprecated
         this.providers = new Map();
         this.bridgeWallet = null;
         

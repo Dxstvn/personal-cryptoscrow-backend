@@ -71,43 +71,12 @@ function generateLiFiRouteId(transactionData) {
 }
 
 /**
- * Get optimal LiFi route for the transaction
+ * Get optimal route for cross-chain transactions (deprecated)
  */
 async function getOptimalLiFiRoute(transactionData) {
-    try {
-        const { buyerNetwork, sellerNetwork, buyerAddress, sellerAddress, amount, tokenAddress } = transactionData;
-        
-        // Import LiFi service
-        const liFiModule = await import('./lifiService.js');
-        const lifiService = new liFiModule.LiFiBridgeService();
-        
-        // Convert network names to chain IDs
-        const fromChainId = lifiService.getChainId(buyerNetwork);
-        const toChainId = lifiService.getChainId(sellerNetwork);
-        
-        if (!fromChainId || !toChainId) {
-            console.warn(`[UNIVERSAL-DEPLOYER] Unsupported network for LiFi: ${buyerNetwork} -> ${sellerNetwork}`);
-            return null;
-        }
-
-        // Find universal route
-        const route = await lifiService.findUniversalRoute({
-            fromChainId,
-            toChainId,
-            fromTokenAddress: tokenAddress || '0x0000000000000000000000000000000000000000',
-            toTokenAddress: tokenAddress || '0x0000000000000000000000000000000000000000',
-            fromAmount: ethers.parseEther(amount.toString()).toString(),
-            fromAddress: buyerAddress,
-            toAddress: sellerAddress,
-            dealId: transactionData.dealId || `deploy-${Date.now()}`,
-            transactionType: 'auto'
-        });
-
-        return route;
-    } catch (error) {
-        console.warn('[UNIVERSAL-DEPLOYER] Error getting LiFi route:', error.message);
-        return null;
-    }
+    // Bridge functionality is deprecated - return null
+    console.warn('[UNIVERSAL-DEPLOYER] Bridge functionality is deprecated');
+    return null;
 }
 
 /**
