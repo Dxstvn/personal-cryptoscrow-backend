@@ -1,7 +1,11 @@
-// src/api/routes/auth/loginSignUp.js
+// src/api/routes/auth/loginSignUpFixed.js
+// Fixed version that returns ID tokens instead of custom tokens
+
 import { getAuth as getAdminAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import { getAdminApp } from "./admin.js";
+import { getAuth, signInWithCustomToken } from "firebase/auth";
+import { ethEscrowApp } from "./authIndex.js";
 import express from "express";
 import '../../../config/env.js';
 
@@ -14,6 +18,25 @@ async function getFirebaseServices() {
     auth: getAdminAuth(app),
     db: getFirestore(app)
   };
+}
+
+// Helper function to convert custom token to ID token
+async function getIdTokenFromCustomToken(customToken) {
+  try {
+    // Get client auth instance
+    const clientAuth = getAuth(ethEscrowApp);
+    
+    // Sign in with custom token to get ID token
+    const userCredential = await signInWithCustomToken(clientAuth, customToken);
+    
+    // Get the ID token
+    const idToken = await userCredential.user.getIdToken();
+    
+    return idToken;
+  } catch (error) {
+    console.error('Error converting custom token to ID token:', error);
+    throw error;
+  }
 }
 
 // Email/Password Sign-Up Route
@@ -42,7 +65,13 @@ router.post("/signUpEmailPass", async (req, res) => {
       first_name: '',
       last_name: '',
       phone_number: '',
-      wallets: walletAddress ? [walletAddress] : [],
+      wallets: walletAddress ? [{
+        address: walletAddress.toLowerCase(),
+        name: 'Primary Wallet',
+        network: 'ethereum',
+        isPrimary: true,
+        addedAt: new Date()
+      }] : [],
       createdAt: new Date(),
       uid: userRecord.uid
     };
@@ -51,19 +80,30 @@ router.post("/signUpEmailPass", async (req, res) => {
       await db.collection('users').doc(userRecord.uid).set(userProfileData);
       console.log(`/signUpEmailPass: User profile created in Firestore for UID: ${userRecord.uid}`);
     } catch (firestoreError) {
-      console.error('/signUpEmailPass: Failed to create Firestore profile:', firestoreError);
-      // Note: User is already created in Auth, consider cleanup if this fails
+      console.error('/signUpEmailPass: Error creating user profile in Firestore:', firestoreError);
     }
     
-    // Set admin claims for non-test environments
-    if (!currentIsTest) {
-      await auth.setCustomUserClaims(userRecord.uid, { admin: true });
-      console.log(`/signUpEmailPass: Admin claims set for user ${userRecord.uid}`);
+    // For production environments, add admin claim
+    if (!currentIsTest && process.env.ALLOWED_EMAILS) {
+      const allowedEmails = process.env.ALLOWED_EMAILS.split(',').map(e => e.trim().toLowerCase());
+      if (allowedEmails.includes(email.toLowerCase())) {
+        await auth.setCustomUserClaims(userRecord.uid, { admin: true });
+        console.log(`/signUpEmailPass: Admin claims set for user ${userRecord.uid}`);
+      }
     }
     
-    console.log('/signUpEmailPass: User created successfully:', userRecord.uid);
-    res.status(201).json({ 
-      message: "User created successfully",
+    // Create a custom token first
+    const customToken = await auth.createCustomToken(userRecord.uid);
+    
+    // Convert custom token to ID token
+    const idToken = await getIdTokenFromCustomToken(customToken);
+    
+    console.log(`/signUpEmailPass: User created successfully: ${userRecord.uid}`);
+    res.status(200).json({ 
+      message: "User created successfully", 
+      token: idToken,  // Return ID token instead of custom token
+      tokenType: 'id', // Indicate this is an ID token
+      userId: userRecord.uid,
       user: { uid: userRecord.uid, email: userRecord.email }
     });
   } catch (error) {
@@ -107,22 +147,28 @@ router.post("/signInEmailPass", async (req, res) => {
     }
 
     // For production environments, verify admin claims
-    if (!currentIsTest) {
-      if (!userRecord.customClaims?.admin) {
-        console.log(`/signInEmailPass: Unauthorized attempt by non-admin user ${userRecord.uid}`);
-        return res.status(401).json({ error: 'Unauthorized user' });
+    if (!currentIsTest && process.env.ALLOWED_EMAILS) {
+      const allowedEmails = process.env.ALLOWED_EMAILS.split(',').map(e => e.trim().toLowerCase());
+      if (!allowedEmails.includes(email.toLowerCase())) {
+        console.log(`/signInEmailPass: Email not in allowed list: ${email}`);
+        return res.status(403).json({ error: 'Access denied' });
       }
       console.log(`/signInEmailPass: Admin user ${userRecord.uid} signed in.`);
     } else {
       console.log(`/signInEmailPass: Test user ${userRecord.uid} signed in.`);
     }
 
-    // Create a custom token for the frontend
+    // Create a custom token
     const customToken = await auth.createCustomToken(userRecord.uid);
+    
+    // Convert custom token to ID token
+    const idToken = await getIdTokenFromCustomToken(customToken);
     
     res.status(200).json({ 
       message: "User signed in successfully", 
-      token: customToken,
+      token: idToken,  // Return ID token instead of custom token
+      tokenType: 'id', // Indicate this is an ID token
+      userId: userRecord.uid,
       user: { uid: userRecord.uid, email: userRecord.email } 
     });
   } catch (error) {
@@ -143,83 +189,92 @@ router.post("/signInGoogle", async (req, res) => {
   const currentIsTest = process.env.NODE_ENV === 'test';
 
   if (!idToken) {
-    console.log("/signInGoogle: Missing ID token.");
-    return res.status(400).json({ error: "Missing ID token" });
+    console.log("/signInGoogle: ID token missing.");
+    return res.status(400).json({ error: "ID token is required" });
   }
 
-  console.log(`/signInGoogle: Executing in ${currentIsTest ? 'Test' : 'Production'} mode.`);
-
   try {
-    const { auth } = await getFirebaseServices();
+    const { auth, db } = await getFirebaseServices();
+    
+    // Verify the Google ID token
+    const decodedToken = await auth.verifyIdToken(idToken);
+    const uid = decodedToken.uid;
+    const email = decodedToken.email;
 
-    if (currentIsTest) {
-      // In test mode, treat idToken as a UID directly
-      if (idToken === 'invalid-token') {
-        console.log("/signInGoogle: Test mode - invalid-token received.");
-        return res.status(401).json({ error: 'Invalid ID token' });
+    console.log(`/signInGoogle: User ${uid} signed in via Google.`);
+
+    // Check if this is the user's first sign-in
+    let userProfile;
+    try {
+      const profileDoc = await db.collection('users').doc(uid).get();
+      if (!profileDoc.exists) {
+        // Create user profile for first-time Google sign-in
+        userProfile = {
+          email: email,
+          first_name: decodedToken.name ? decodedToken.name.split(' ')[0] : '',
+          last_name: decodedToken.name ? decodedToken.name.split(' ').slice(1).join(' ') : '',
+          phone_number: '',
+          wallets: [],
+          createdAt: new Date(),
+          uid: uid
+        };
+        await db.collection('users').doc(uid).set(userProfile);
+        console.log(`/signInGoogle: Created profile for new Google user ${uid}`);
+      } else {
+        userProfile = profileDoc.data();
+      }
+    } catch (profileError) {
+      console.error('/signInGoogle: Error managing user profile:', profileError);
+    }
+
+    // For production environments, verify admin claims
+    if (!currentIsTest && process.env.ALLOWED_EMAILS) {
+      const allowedEmails = process.env.ALLOWED_EMAILS.split(',').map(e => e.trim().toLowerCase());
+      if (!allowedEmails.includes(email.toLowerCase())) {
+        console.log(`/signInGoogle: Email not in allowed list: ${email}`);
+        return res.status(403).json({ error: 'Access denied' });
       }
       
-      try {
-        console.log(`/signInGoogle: Test mode - Processing user authentication`);
-        const userRecord = await auth.getUser(idToken);
-        const isAdmin = userRecord.customClaims?.admin === true;
-        console.log(`/signInGoogle: Test mode - User authenticated, admin status: ${isAdmin}`);
-        
-        if (!isAdmin) {
-          console.log("/signInGoogle: Test mode - User does not have admin claim.");
-          return res.status(401).json({ error: 'Unauthorized user (test mode - admin required)' });
-        }
-        return res.status(200).json({ 
-          message: "User authenticated (test)", 
-          uid: userRecord.uid, 
-          isAdmin: true 
-        });
-      } catch (err) {
-        console.error('/signInGoogle: Test mode - Authentication error:', err);
-        return res.status(401).json({ error: 'Invalid user UID provided as token (test mode)' });
+      // Set admin claim if needed
+      const userRecord = await auth.getUser(uid);
+      if (!userRecord.customClaims?.admin) {
+        await auth.setCustomUserClaims(uid, { admin: true });
+        console.log(`/signInGoogle: Admin claims set for user ${uid}`);
       }
-    } else {
-      // Production mode - verify the actual Google ID token
-      console.log("/signInGoogle: Production mode - Verifying ID token...");
-      const decodedToken = await auth.verifyIdToken(idToken, true);
-      const uid = decodedToken.uid;
-      console.log(`/signInGoogle: Production mode - Token verified for user`);
-
-      console.log("/signInGoogle: Production mode - Getting user details...");
-      const user = await auth.getUser(uid);
-
-      // Get allowed emails from environment variable
-      const allowedEmailsString = process.env.ALLOWED_EMAILS || "jasmindustin@gmail.com,dustin.jasmin@jaspire.co,andyrowe00@gmail.com";
-      const allowedEmails = allowedEmailsString.split(',').map(email => email.trim().toLowerCase());
-
-      if (!user.email || !allowedEmails.includes(user.email.toLowerCase())) {
-        console.warn(`/signInGoogle: Production mode - Unauthorized email attempt`);
-        return res.status(403).json({ error: "Access denied. This email address is not authorized." });
-      }
-
-      console.log(`/signInGoogle: Production mode - Email authorized`);
-      const isAdmin = user.email.toLowerCase() === "jasmindustin@gmail.com";
-      console.log(`/signInGoogle: Production mode - Admin status determined`);
-
-      return res.status(200).json({
-        message: "User authenticated",
-        uid,
-        isAdmin
-      });
     }
+
+    // Since we already have an ID token from Google, we can return it directly
+    res.status(200).json({ 
+      message: "User signed in successfully via Google",
+      token: idToken, // This is already an ID token
+      tokenType: 'id',
+      userId: uid,
+      user: { uid: uid, email: email }
+    });
   } catch (error) {
-    console.error('/signInGoogle: Authentication error:', error.code || 'Unknown error');
+    console.error('/signInGoogle: Google sign-in error:', error);
+    res.status(401).json({ error: 'Invalid Google ID token' });
+  }
+});
 
-    if (error.code === 'auth/id-token-expired') {
-      return res.status(401).json({ error: 'Login session expired, please sign in again.' });
-    } else if (error.code === 'auth/argument-error' || (error.message && error.message.includes("invalid signature"))) {
-      return res.status(401).json({
-        error: 'Invalid authentication token signature. Please ensure the frontend and backend are using the same Firebase project.'
-      });
-    } else if (error.code === 'auth/user-not-found') {
-      return res.status(404).json({ error: 'Authenticated user profile not found.' });
-    }
-    return res.status(500).json({ error: 'An internal error occurred during authentication.' });
+// Token refresh endpoint
+router.post("/refreshToken", async (req, res) => {
+  const { refreshToken } = req.body;
+
+  if (!refreshToken) {
+    return res.status(400).json({ error: "Refresh token is required" });
+  }
+
+  try {
+    // In a real implementation, you would verify the refresh token
+    // and issue a new ID token. For now, we'll return an error
+    // indicating this endpoint needs implementation
+    res.status(501).json({ 
+      error: "Token refresh not implemented. Please sign in again." 
+    });
+  } catch (error) {
+    console.error('/refreshToken: Error:', error);
+    res.status(401).json({ error: 'Invalid refresh token' });
   }
 });
 

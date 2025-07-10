@@ -1,8 +1,22 @@
 // src/services/blockchainService.js
+/**
+ * ⚠️ DEPRECATED SERVICE ⚠️
+ * This service is deprecated and will be removed in a future release.
+ * Blockchain interaction functionality has been integrated into escrowServiceV3.js.
+ * Please use escrowServiceV3.js instead for all blockchain operations.
+ * 
+ * Migration guide: See DEPRECATION_NOTICE.md
+ * Replacement: import { EscrowServiceV3 } from './escrowServiceV3.js';
+ * 
+ * @deprecated Since Phase 3 of V3 Backend Update
+ */
 import { JsonRpcProvider, Wallet, Contract, isAddress } from 'ethers';
 import { createRequire } from 'module';
 import path from 'path'; 
 import { fileURLToPath } from 'url';
+import { deprecationMonitor } from './deprecationMonitor.js';
+
+console.warn('[DEPRECATION WARNING] blockchainService.js is deprecated. Please migrate to escrowServiceV3.js');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -114,6 +128,9 @@ function getContractInstance(contractAddress) {
 }
 
 export async function triggerReleaseAfterApproval(contractAddress, dealId) {
+  // Log deprecated usage
+  await deprecationMonitor.logUsage('blockchainService.js', 'triggerReleaseAfterApproval', dealId);
+  
   if (contractABI === null) {
     return { 
       success: false, 
@@ -155,6 +172,9 @@ export async function triggerReleaseAfterApproval(contractAddress, dealId) {
 }
 
 export async function triggerCancelAfterDisputeDeadline(contractAddress, dealId) {
+  // Log deprecated usage
+  await deprecationMonitor.logUsage('blockchainService.js', 'triggerCancelAfterDisputeDeadline', dealId);
+  
   if (contractABI === null) {
     return { 
       success: false, 

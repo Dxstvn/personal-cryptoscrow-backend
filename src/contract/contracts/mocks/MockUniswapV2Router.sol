@@ -75,7 +75,20 @@ contract MockUniswapV2Router is IUniswapV2Router {
         IERC20(path[0]).transferFrom(msg.sender, address(this), amountIn);
         
         // Calculate output (2000 tokens = 1 ETH)
-        uint256 amountOut = (amountIn * 1e18) / MOCK_RATE;
+        // Adjust for token decimals
+        uint8 decimals = 18;
+        try IERC20Metadata(path[0]).decimals() returns (uint8 d) {
+            decimals = d;
+        } catch {}
+        
+        uint256 amountOut;
+        if (decimals == 6) {
+            // For USDC (6 decimals): 2000 USDC = 1 ETH
+            amountOut = (amountIn * 1e18) / (MOCK_RATE * 1e6);
+        } else {
+            // For 18 decimal tokens: 2000 tokens = 1 ETH
+            amountOut = (amountIn * 1e18) / MOCK_RATE;
+        }
         
         // Apply 0.3% fee
         amountOut = (amountOut * 997) / 1000;
@@ -134,7 +147,16 @@ contract MockUniswapV2Router is IUniswapV2Router {
             }
         } else if (path[path.length - 1] == WETH) {
             // Token to ETH
-            amounts[path.length - 1] = (amountIn * 1e18 * 997) / (MOCK_RATE * 1000);
+            uint8 decimals = 18;
+            try IERC20Metadata(path[0]).decimals() returns (uint8 d) {
+                decimals = d;
+            } catch {}
+            
+            if (decimals == 6) {
+                amounts[path.length - 1] = (amountIn * 1e18 * 997) / (MOCK_RATE * 1e6 * 1000);
+            } else {
+                amounts[path.length - 1] = (amountIn * 1e18 * 997) / (MOCK_RATE * 1000);
+            }
         } else {
             // Token to token (1:1 with fee)
             amounts[path.length - 1] = (amountIn * 997) / 1000;

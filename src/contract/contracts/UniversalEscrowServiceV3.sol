@@ -307,7 +307,7 @@ contract UniversalEscrowServiceV3 is Ownable, ReentrancyGuard {
      * @notice Release escrow funds to seller with intelligent routing
      * @param escrowId The escrow to release
      */
-    function releaseEscrow(bytes32 escrowId) external payable nonReentrant {
+    function releaseEscrow(bytes32 escrowId) external payable virtual nonReentrant {
         EscrowDeposit storage escrow = escrows[escrowId];
         
         if (escrow.buyer == address(0)) revert EscrowNotFound();
@@ -433,7 +433,7 @@ contract UniversalEscrowServiceV3 is Ownable, ReentrancyGuard {
     /**
      * @notice Handle cross-chain transfer using LayerZero
      */
-    function _handleCrossChainRelease(bytes32 escrowId, EscrowDeposit memory escrow, uint32 targetEndpointId) internal {
+    function _handleCrossChainRelease(bytes32 escrowId, EscrowDeposit memory escrow, uint32 targetEndpointId) internal virtual {
         address oftAdapter = oftAdapters[targetEndpointId];
         if (oftAdapter == address(0)) revert InvalidChainId();
         
@@ -603,5 +603,5 @@ contract UniversalEscrowServiceV3 is Ownable, ReentrancyGuard {
     }
     
     // Receive ETH
-    receive() external payable {}
+    receive() external payable virtual {}
 }

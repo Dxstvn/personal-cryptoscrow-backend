@@ -1,8 +1,21 @@
 // src/utils/contractDeployer.js
+/**
+ * ⚠️ DEPRECATED SERVICE ⚠️
+ * This service is deprecated and will be removed in a future release.
+ * Please use escrowServiceV3.js instead for all contract deployments.
+ * 
+ * Migration guide: See DEPRECATION_NOTICE.md
+ * Replacement: import { EscrowServiceV3 } from './escrowServiceV3.js';
+ * 
+ * @deprecated Since Phase 3 of V3 Backend Update
+ */
 import { JsonRpcProvider, Wallet, ContractFactory, isAddress, parseUnits as ethersParseUnits } from 'ethers';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { deprecationMonitor } from './deprecationMonitor.js';
+
+console.warn('[DEPRECATION WARNING] contractDeployer.js is deprecated. Please migrate to escrowServiceV3.js');
 
 // Handle ES module __dirname and __filename
 let __filename, __dirname;
@@ -58,6 +71,9 @@ export function __TEST_ONLY_setArtifactToNull() {
 
 
 async function deployPropertyEscrowContract(sellerAddress, buyerAddress, escrowAmountWei, privateKey, rpcUrl, serviceWallet) {
+    // Log deprecated usage
+    await deprecationMonitor.logUsage('contractDeployer.js', 'deployPropertyEscrowContract', buyerAddress);
+    
     if (!PropertyEscrowArtifact || !PropertyEscrowArtifact.abi || !PropertyEscrowArtifact.bytecode) {
         throw new Error('PropertyEscrow artifact (ABI or bytecode) not loaded. Check path and artifact integrity.');
     }

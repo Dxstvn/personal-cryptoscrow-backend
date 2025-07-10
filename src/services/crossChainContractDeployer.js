@@ -1,8 +1,21 @@
+/**
+ * ⚠️ DEPRECATED SERVICE ⚠️
+ * This service is deprecated and will be removed in a future release.
+ * Please use escrowServiceV3.js instead for all cross-chain contract deployments.
+ * 
+ * Migration guide: See DEPRECATION_NOTICE.md
+ * Replacement: import { EscrowServiceV3 } from './escrowServiceV3.js';
+ * 
+ * @deprecated Since Phase 3 of V3 Backend Update
+ */
 import { ethers, Wallet, JsonRpcProvider } from 'ethers';
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
+import { deprecationMonitor } from './deprecationMonitor.js';
+
+console.warn('[DEPRECATION WARNING] crossChainContractDeployer.js is deprecated. Please migrate to escrowServiceV3.js');
 
 /**
  * Cross-Chain Contract Deployer
@@ -87,6 +100,9 @@ export class CrossChainContractDeployer {
         rpcUrl,
         dealId
     }) {
+        // Log deprecated usage
+        await deprecationMonitor.logUsage('crossChainContractDeployer.js', 'deployCrossChainEscrow', buyerAddress);
+        
         try {
             console.log(`[CROSS-CHAIN-DEPLOYER] Deploying cross-chain escrow for deal ${dealId}`);
             console.log(`  Seller: ${sellerAddress}`);

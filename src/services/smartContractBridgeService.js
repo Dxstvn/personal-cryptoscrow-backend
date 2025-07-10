@@ -1,4 +1,19 @@
+/**
+ * ⚠️ DEPRECATED SERVICE ⚠️
+ * This service is deprecated and will be removed in a future release.
+ * LiFi integration has been replaced with Stargate in V3 contracts.
+ * Please use escrowServiceV3.js instead for all cross-chain operations.
+ * 
+ * Migration guide: See DEPRECATION_NOTICE.md
+ * Replacement: import { EscrowServiceV3 } from './escrowServiceV3.js';
+ * 
+ * @deprecated Since Phase 3 of V3 Backend Update
+ */
 import { ethers } from 'ethers';
+import { deprecationMonitor } from './deprecationMonitor.js';
+
+console.warn('[DEPRECATION WARNING] smartContractBridgeService.js is deprecated. Please migrate to escrowServiceV3.js');
+
 // LiFi service removed - bridge functionality is deprecated
 
 // CrossChainPropertyEscrow ABI (key functions)
@@ -71,6 +86,9 @@ export class SmartContractBridgeService {
         tokenAddress,
         dealId
     }) {
+        // Log deprecated usage
+        await deprecationMonitor.logUsage('smartContractBridgeService.js', 'handleIncomingCrossChainDeposit', dealId);
+        
         try {
             console.log(`[BRIDGE-SERVICE] Processing incoming cross-chain deposit for deal ${dealId}`);
             console.log(`  Contract: ${contractAddress}`);
@@ -182,6 +200,9 @@ export class SmartContractBridgeService {
         targetAddress,
         dealId
     }) {
+        // Log deprecated usage
+        await deprecationMonitor.logUsage('smartContractBridgeService.js', 'initiateCrossChainRelease', dealId);
+        
         try {
             console.log(`[BRIDGE-SERVICE] Initiating cross-chain release for deal ${dealId}`);
             console.log(`  Contract: ${contractAddress}`);
@@ -378,6 +399,9 @@ export class SmartContractBridgeService {
         bridgeTransactionId,
         dealId
     }) {
+        // Log deprecated usage
+        await deprecationMonitor.logUsage('smartContractBridgeService.js', 'confirmCrossChainRelease', dealId);
+        
         try {
             console.log(`[BRIDGE-SERVICE] Confirming cross-chain release completion for deal ${dealId}`);
             
@@ -428,6 +452,8 @@ export class SmartContractBridgeService {
         dealId,
         maxWaitTime = 1800000 // 30 minutes
     }) {
+        // Log deprecated usage
+        await deprecationMonitor.logUsage('smartContractBridgeService.js', 'monitorAndConfirmBridge', dealId);
         const startTime = Date.now();
         const checkInterval = 30000; // 30 seconds
 
@@ -487,6 +513,9 @@ export class SmartContractBridgeService {
      * Get contract state information
      */
     async getContractInfo(contractAddress) {
+        // Log deprecated usage
+        await deprecationMonitor.logUsage('smartContractBridgeService.js', 'getContractInfo', 'unknown');
+        
         try {
             const provider = this.providers.get('ethereum');
             const contract = new ethers.Contract(contractAddress, CROSS_CHAIN_ESCROW_ABI, provider);

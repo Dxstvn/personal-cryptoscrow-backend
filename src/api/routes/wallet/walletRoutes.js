@@ -3,15 +3,12 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 import { getAdminApp } from '../auth/admin.js';
 import { isAddress } from 'ethers';
-import { 
-  prepareCrossChainTransaction,
-  executeCrossChainStep,
-  getCrossChainTransactionStatus,
-  estimateTransactionFees,
-  areNetworksEVMCompatible,
-  getBridgeInfo,
-  getOptimalTransactionRoute
-} from '../../../services/crossChainService.js';
+
+// Import the new V3 escrow service
+import { EscrowServiceV3 } from '../../../services/escrowServiceV3.js';
+
+// Initialize escrow service
+const escrowService = new EscrowServiceV3();
 
 const router = express.Router();
 
@@ -122,10 +119,14 @@ function validateWalletAddress(address, network) {
 
   switch (network) {
     case 'ethereum':
+    case 'sepolia':
     case 'polygon':
+    case 'polygon-amoy':
     case 'bsc':
     case 'arbitrum':
+    case 'arbitrum-sepolia':
     case 'optimism':
+    case 'base':
       // EVM networks - use ethers validation
       if (!isAddress(address)) {
         return { valid: false, error: 'Invalid EVM wallet address' };
@@ -152,6 +153,21 @@ function validateWalletAddress(address, network) {
   }
 
   return { valid: true };
+}
+
+// Helper function to determine chain ID from network name
+function getChainId(network) {
+  const chainMap = {
+    'ethereum': 1,
+    'sepolia': 11155111,
+    'arbitrum': 42161,
+    'arbitrum-sepolia': 421614,
+    'polygon': 137,
+    'polygon-amoy': 80002,
+    'optimism': 10,
+    'base': 8453
+  };
+  return chainMap[network.toLowerCase()] || null;
 }
 
 // Register/Update wallet - POST /api/wallets/register
@@ -198,54 +214,49 @@ router.post('/register', authenticateToken, async (req, res) => {
 
     // Check if wallet already exists
     const existingWalletIndex = currentWallets.findIndex(
-      w => w.address?.toLowerCase() === address.toLowerCase() && w.network === network
+      w => w.address.toLowerCase() === address.toLowerCase() && w.network === network
     );
 
-    let updatedWallets;
-    if (existingWalletIndex >= 0) {
+    if (existingWalletIndex !== -1) {
       // Update existing wallet
-      updatedWallets = [...currentWallets];
-      updatedWallets[existingWalletIndex] = {
-        ...updatedWallets[existingWalletIndex],
-        ...walletObject
+      currentWallets[existingWalletIndex] = {
+        ...currentWallets[existingWalletIndex],
+        ...walletObject,
+        addedAt: currentWallets[existingWalletIndex].addedAt // Preserve original timestamp
       };
     } else {
       // Add new wallet
-      updatedWallets = [...currentWallets, walletObject];
+      currentWallets.push(walletObject);
     }
 
-    // If this is set as primary, unset other primary wallets
+    // If this is marked as primary, unmark others for the same network
     if (isPrimary) {
-      updatedWallets = updatedWallets.map(w => ({
-        ...w,
-        isPrimary: w.address?.toLowerCase() === address.toLowerCase() && w.network === network
-      }));
+      currentWallets.forEach(w => {
+        if (w.network === network && w.address !== address) {
+          w.isPrimary = false;
+        }
+      });
     }
 
     // Update user document
     await userRef.update({
-      wallets: updatedWallets,
-      updatedAt: FieldValue.serverTimestamp()
+      wallets: currentWallets,
+      [`walletAddresses.${network}`]: address // Quick lookup field
     });
 
-    console.log(`[WALLET] Registered wallet for user ${userId}:`, {
-      address: address.toLowerCase(),
-      name,
-      network
+    return res.json({
+      success: true,
+      wallet: walletObject,
+      message: existingWalletIndex !== -1 ? 'Wallet updated' : 'Wallet registered'
     });
-
-    res.status(201).json({
-      message: 'Wallet registered successfully',
-      wallet: walletObject
-    });
-
+    
   } catch (error) {
-    console.error('[WALLET] Error registering wallet:', error);
-    res.status(500).json({ error: 'Internal server error while registering wallet' });
+    console.error("[WALLET REGISTER] Error:", error);
+    return res.status(500).json({ error: 'Failed to register wallet' });
   }
 });
 
-// Get all user wallets - GET /api/wallets
+// Get user wallets - GET /api/wallets
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const userId = req.userId;
@@ -260,938 +271,322 @@ router.get('/', authenticateToken, async (req, res) => {
     const userData = userDoc.data();
     const wallets = userData.wallets || [];
 
-    // Transform wallets to frontend format
-    const transformedWallets = wallets.map(wallet => ({
-      address: wallet.address,
-      name: wallet.name,
-      network: wallet.network,
-      isPrimary: wallet.isPrimary || false,
-      publicKey: wallet.publicKey,
-      addedAt: wallet.addedAt,
-      balance: wallet.balance || '0'
+    return res.json({
+      success: true,
+      wallets
+    });
+    
+  } catch (error) {
+    console.error("[WALLET GET] Error:", error);
+    return res.status(500).json({ error: 'Failed to get wallets' });
+  }
+});
+
+// Get supported chains - GET /api/wallets/chains
+router.get('/chains', async (req, res) => {
+  try {
+    await escrowService.initialize();
+    
+    const chains = Object.entries(escrowService.chainConfigs).map(([chainId, config]) => ({
+      chainId: parseInt(chainId),
+      name: config.name,
+      displayName: config.name.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase()),
+      explorerUrl: config.explorerUrl,
+      contractAddress: config.contractAddress,
+      hasStargate: !!config.stargateRouter,
+      hasLayerZero: !!config.layerZeroEndpointId,
+      supportedTokens: ['ETH', 'USDC', 'USDT'] // Simplified for now
     }));
 
-    res.status(200).json({
-      wallets: transformedWallets
+    res.json({
+      success: true,
+      chains
     });
-
   } catch (error) {
-    console.error('[WALLET] Error fetching wallets:', error);
-    res.status(500).json({ error: 'Internal server error while fetching wallets' });
+    console.error("[GET CHAINS] Error:", error);
+    res.status(500).json({ error: 'Failed to get supported chains' });
   }
 });
 
-// Remove wallet - DELETE /api/wallets/:address
-router.delete('/:address', authenticateToken, async (req, res) => {
+// Get supported tokens for a chain - GET /api/wallets/tokens/:chainId
+router.get('/tokens/:chainId', async (req, res) => {
   try {
-    const userId = req.userId;
-    const { address } = req.params;
-    const { network } = req.body;
-
-    if (!address || !network) {
-      return res.status(400).json({ error: 'Address and network are required' });
-    }
-
-    const { db } = await getFirebaseServices();
-    const userRef = db.collection('users').doc(userId);
-    const userDoc = await userRef.get();
+    const { chainId } = req.params;
+    await escrowService.initialize();
     
-    if (!userDoc.exists) {
-      return res.status(404).json({ error: 'User profile not found' });
+    const config = escrowService.chainConfigs[chainId];
+    if (!config) {
+      return res.status(404).json({ error: 'Chain not supported' });
     }
 
-    const userData = userDoc.data();
-    const currentWallets = userData.wallets || [];
-
-    // Filter out the wallet to remove
-    const updatedWallets = currentWallets.filter(
-      w => !(w.address?.toLowerCase() === address.toLowerCase() && w.network === network)
-    );
-
-    // If we removed the primary wallet, set another as primary
-    const removedWallet = currentWallets.find(
-      w => w.address?.toLowerCase() === address.toLowerCase() && w.network === network
-    );
-
-    if (removedWallet?.isPrimary && updatedWallets.length > 0) {
-      updatedWallets[0].isPrimary = true;
-    }
-
-    // Update user document
-    await userRef.update({
-      wallets: updatedWallets,
-      updatedAt: FieldValue.serverTimestamp()
-    });
-
-    console.log(`[WALLET] Removed wallet for user ${userId}:`, {
-      address: address.toLowerCase(),
-      network
-    });
-
-    res.status(200).json({
-      message: 'Wallet removed successfully'
-    });
-
-  } catch (error) {
-    console.error('[WALLET] Error removing wallet:', error);
-    res.status(500).json({ error: 'Internal server error while removing wallet' });
-  }
-});
-
-// Set primary wallet - PUT /api/wallets/primary
-router.put('/primary', authenticateToken, async (req, res) => {
-  try {
-    const userId = req.userId;
-    const { address, network } = req.body;
-
-    if (!address || !network) {
-      return res.status(400).json({ error: 'Address and network are required' });
-    }
-
-    const { db } = await getFirebaseServices();
-    const userRef = db.collection('users').doc(userId);
-    const userDoc = await userRef.get();
-    
-    if (!userDoc.exists) {
-      return res.status(404).json({ error: 'User profile not found' });
-    }
-
-    const userData = userDoc.data();
-    const currentWallets = userData.wallets || [];
-
-    // Find the wallet to set as primary
-    const walletExists = currentWallets.some(
-      w => w.address?.toLowerCase() === address.toLowerCase() && w.network === network
-    );
-
-    if (!walletExists) {
-      return res.status(404).json({ error: 'Wallet not found in user profile' });
-    }
-
-    // Update primary status
-    const updatedWallets = currentWallets.map(w => ({
-      ...w,
-      isPrimary: w.address?.toLowerCase() === address.toLowerCase() && w.network === network
-    }));
-
-    // Update user document
-    await userRef.update({
-      wallets: updatedWallets,
-      updatedAt: FieldValue.serverTimestamp()
-    });
-
-    console.log(`[WALLET] Set primary wallet for user ${userId}:`, {
-      address: address.toLowerCase(),
-      network
-    });
-
-    res.status(200).json({
-      message: 'Primary wallet updated successfully'
-    });
-
-  } catch (error) {
-    console.error('[WALLET] Error setting primary wallet:', error);
-    res.status(500).json({ error: 'Internal server error while setting primary wallet' });
-  }
-});
-
-// Update wallet balance - PUT /api/wallets/balance
-router.put('/balance', authenticateToken, async (req, res) => {
-  try {
-    const userId = req.userId;
-    const { address, network, balance } = req.body;
-
-    if (!address || !network || balance === undefined) {
-      return res.status(400).json({ error: 'Address, network, and balance are required' });
-    }
-
-    const { db } = await getFirebaseServices();
-    const userRef = db.collection('users').doc(userId);
-    const userDoc = await userRef.get();
-    
-    if (!userDoc.exists) {
-      return res.status(404).json({ error: 'User profile not found' });
-    }
-
-    const userData = userDoc.data();
-    const currentWallets = userData.wallets || [];
-
-    // Find and update wallet balance
-    const updatedWallets = currentWallets.map(w => {
-      if (w.address?.toLowerCase() === address.toLowerCase() && w.network === network) {
-        return { ...w, balance, lastBalanceUpdate: new Date() };
+    // Get common tokens - in production, this would be more comprehensive
+    const tokens = [
+      {
+        address: '0x0000000000000000000000000000000000000000',
+        symbol: 'ETH',
+        name: 'Ether',
+        decimals: 18,
+        isNative: true
       }
-      return w;
-    });
+    ];
 
-    // Update user document
-    await userRef.update({
-      wallets: updatedWallets,
-      updatedAt: FieldValue.serverTimestamp()
-    });
-
-    res.status(200).json({
-      message: 'Wallet balance updated successfully'
-    });
-
-  } catch (error) {
-    console.error('[WALLET] Error updating wallet balance:', error);
-    res.status(500).json({ error: 'Internal server error while updating wallet balance' });
-  }
-});
-
-// Get wallet preferences - GET /api/wallets/preferences
-router.get('/preferences', authenticateToken, async (req, res) => {
-  try {
-    const userId = req.userId;
-    const { db } = await getFirebaseServices();
-    
-    const userDoc = await db.collection('users').doc(userId).get();
-    
-    if (!userDoc.exists) {
-      return res.status(404).json({ error: 'User profile not found' });
-    }
-
-    const userData = userDoc.data();
-    const wallets = userData.wallets || [];
-
-    // Find primary wallet
-    const primaryWallet = wallets.find(w => w.isPrimary);
-    
-    // Get preferred networks from user's wallets
-    const preferredNetworks = [...new Set(wallets.map(w => w.network))];
-
-    const preferences = {
-      primaryWallet: primaryWallet ? {
-        address: primaryWallet.address,
-        network: primaryWallet.network
-      } : null,
-      preferredNetworks
-    };
-
-    res.status(200).json({
-      preferences
-    });
-
-  } catch (error) {
-    console.error('[WALLET] Error fetching wallet preferences:', error);
-    res.status(500).json({ error: 'Internal server error while fetching wallet preferences' });
-  }
-});
-
-// Send detected wallets to backend - POST /api/wallets/detection
-router.post('/detection', authenticateToken, async (req, res) => {
-  try {
-    const userId = req.userId;
-    const { detectedWallets, walletDetails } = req.body;
-
-    if (!detectedWallets) {
-      return res.status(400).json({ error: 'Detected wallets data is required' });
-    }
-
-    const { db } = await getFirebaseServices();
-    
-    // Enhanced storage with chain compatibility info
-    const userRef = db.collection('users').doc(userId);
-    await userRef.update({
-      lastWalletDetection: {
-        timestamp: FieldValue.serverTimestamp(),
-        evmWallets: detectedWallets.evmWallets?.length || 0,
-        solanaWallets: detectedWallets.solanaWallets?.length || 0,
-        bitcoinWallets: detectedWallets.bitcoinWallets?.length || 0,
-        totalDetected: (detectedWallets.evmWallets?.length || 0) + 
-                      (detectedWallets.solanaWallets?.length || 0) + 
-                      (detectedWallets.bitcoinWallets?.length || 0),
-        // New: Store detailed wallet capabilities
-        walletCapabilities: walletDetails || {}
-      },
-      updatedAt: FieldValue.serverTimestamp()
-    });
-
-    // Check LI.FI compatibility for detected wallets
-    const compatibilityCheck = await checkBridgeCompatibility(detectedWallets);
-
-    console.log(`[WALLET] Enhanced wallet detection for user ${userId}:`, {
-      evm: detectedWallets.evmWallets?.length || 0,
-      solana: detectedWallets.solanaWallets?.length || 0,
-      bitcoin: detectedWallets.bitcoinWallets?.length || 0,
-      lifiCompatible: compatibilityCheck.compatible
-    });
-
-    res.status(200).json({
-      message: 'Wallet detection data received successfully',
-      lifiCompatibility: compatibilityCheck,
-      supportedChains: compatibilityCheck.supportedChains || []
-    });
-
-  } catch (error) {
-    console.error('[WALLET] Error processing wallet detection:', error);
-    res.status(500).json({ error: 'Internal server error while processing wallet detection' });
-  }
-});
-
-// New: Dynamic wallet capability endpoint - GET /api/wallets/capabilities/:walletAddress
-router.get('/capabilities/:walletAddress', authenticateToken, async (req, res) => {
-  try {
-    const { walletAddress } = req.params;
-    const { network } = req.query;
-
-    // Validate wallet address
-    const validation = validateWalletAddress(walletAddress, network);
-    if (!validation.valid) {
-      return res.status(400).json({ 
-        success: false, 
-        error: validation.error 
+    // Add USDC if available
+    if (chainId === '11155111') { // Sepolia
+      tokens.push({
+        address: '0x2F6F07CDcf3588944Bf4C42aC74ff24bF56e7590',
+        symbol: 'USDC',
+        name: 'USD Coin',
+        decimals: 6,
+        isNative: false
+      });
+    } else if (chainId === '421614') { // Arbitrum Sepolia
+      tokens.push({
+        address: '0x3253a335E7bFfB4790Aa4C25C4250d206E9b9773',
+        symbol: 'USDC',
+        name: 'USD Coin',
+        decimals: 6,
+        isNative: false
       });
     }
 
-    // Check what chains this wallet can access through LI.FI
-    const capabilities = await analyzeDynamicWalletCapabilities(walletAddress, network);
-
     res.json({
       success: true,
-      wallet: walletAddress,
-      network: network,
-      capabilities,
-      availableBridges: capabilities.bridges || [],
-      supportedChains: capabilities.chains || []
+      tokens
     });
-
   } catch (error) {
-    console.error('[WALLET] Error analyzing wallet capabilities:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to analyze wallet capabilities' 
-    });
+    console.error("[GET TOKENS] Error:", error);
+    res.status(500).json({ error: 'Failed to get supported tokens' });
   }
 });
 
-// New: Get LI.FI supported chains - GET /api/wallets/supported-chains
-router.get('/supported-chains', async (req, res) => {
+// Estimate transaction fees - POST /api/wallets/estimate-fees
+router.post('/estimate-fees', authenticateToken, async (req, res) => {
   try {
-    // This will eventually call LI.FI API
-    const supportedChains = await getSupportedChains();
-    
+    const { amount, sourceNetwork, targetNetwork, depositToken, targetToken } = req.body;
+
+    if (!amount || !sourceNetwork || !targetNetwork) {
+      return res.status(400).json({ 
+        error: 'Amount, source network, and target network are required' 
+      });
+    }
+
+    const sourceChainId = getChainId(sourceNetwork);
+    const targetChainId = getChainId(targetNetwork);
+
+    if (!sourceChainId || !targetChainId) {
+      return res.status(400).json({ 
+        error: 'Unsupported network' 
+      });
+    }
+
+    await escrowService.initialize();
+
+    const fees = await escrowService.estimateTotalFees({
+      amount,
+      sourceChainId,
+      targetChainId,
+      requiresSwap: depositToken !== targetToken
+    });
+
     res.json({
       success: true,
-      chains: supportedChains,
-      bridgeCount: 14,
-      dexCount: 33,
-      lastUpdated: new Date().toISOString()
+      fees: {
+        ...fees,
+        sourceNetwork,
+        targetNetwork,
+        isEnhanced: fees.isEnhanced
+      }
     });
 
   } catch (error) {
-    console.error('[WALLET] Error fetching supported chains:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch supported chains'
-    });
+    console.error("[ESTIMATE FEES] Error:", error);
+    res.status(500).json({ error: 'Failed to estimate fees' });
   }
 });
 
-/**
- * Estimate fees for cross-chain transaction
- */
-router.post('/cross-chain/estimate-fees', async (req, res) => {
+// Get cross-chain quote - POST /api/wallets/quote
+router.post('/quote', authenticateToken, async (req, res) => {
   try {
-    const { sourceNetwork, targetNetwork, amount } = req.body;
+    const { amount, sourceChainId, targetChainId, tokenAddress } = req.body;
+
+    if (!amount || !sourceChainId || !targetChainId) {
+      return res.status(400).json({ 
+        error: 'Amount, source chain ID, and target chain ID are required' 
+      });
+    }
+
+    // Ensure service is initialized before use
+    await escrowService.initialize();
+
+    const quote = await escrowService.getCrossChainQuote({
+      sourceChainId: parseInt(sourceChainId),
+      targetChainId: parseInt(targetChainId),
+      tokenAddress: tokenAddress || '0x0000000000000000000000000000000000000000',
+      amount: amount,
+      contractAddress: escrowService.chainConfigs[parseInt(sourceChainId)]?.contractAddress
+    });
+
+    res.json({
+      success: true,
+      quote
+    });
+
+  } catch (error) {
+    console.error("[GET QUOTE] Error:", error);
+    res.status(500).json({ error: 'Failed to get quote' });
+  }
+});
+
+// Get transaction route info - POST /api/wallets/route
+router.post('/route', authenticateToken, async (req, res) => {
+  try {
+    const { sourceNetwork, targetNetwork, amount, depositToken, targetToken } = req.body;
 
     if (!sourceNetwork || !targetNetwork || !amount) {
-      return res.status(400).json({
-        success: false,
-        message: 'Source network, target network, and amount are required'
+      return res.status(400).json({ 
+        error: 'Source network, target network, and amount are required' 
       });
     }
 
-    const feeEstimate = await estimateTransactionFees(sourceNetwork, targetNetwork, amount);
-    const isEVMCompatible = areNetworksEVMCompatible(sourceNetwork, targetNetwork);
-    const bridgeInfo = getBridgeInfo(sourceNetwork, targetNetwork);
+    const sourceChainId = getChainId(sourceNetwork);
+    const targetChainId = getChainId(targetNetwork);
 
-    console.log(`[WALLET] Cross-chain fee estimate: ${sourceNetwork} -> ${targetNetwork}`);
-
-    res.json({
-      success: true,
-      data: {
-        feeEstimate,
-        isEVMCompatible,
-        bridgeInfo,
-        requiresBridge: !isEVMCompatible
-      }
-    });
-  } catch (error) {
-    console.error('[WALLET] Error estimating cross-chain fees:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to estimate fees',
-      error: error.message
-    });
-  }
-});
-
-/**
- * Prepare a cross-chain transaction for escrow
- */
-router.post('/cross-chain/prepare', async (req, res) => {
-  try {
-    const {
-      fromAddress,
-      toAddress,
-      amount,
-      sourceNetwork,
-      targetNetwork,
-      dealId
-    } = req.body;
-
-    // Validate required fields
-    if (!fromAddress || !toAddress || !amount || !sourceNetwork || !targetNetwork || !dealId) {
-      return res.status(400).json({
-        success: false,
-        message: 'All transaction parameters are required'
+    if (!sourceChainId || !targetChainId) {
+      return res.status(400).json({ 
+        error: 'Unsupported network' 
       });
     }
 
-    // Get user ID from session/token (assuming it's available in req.user)
-    const userId = req.user?.uid || 'anonymous';
+    await escrowService.initialize();
 
-    const transaction = await prepareCrossChainTransaction({
-      fromAddress,
-      toAddress,
-      amount,
-      sourceNetwork,
-      targetNetwork,
-      dealId,
-      userId
-    });
+    const sourceConfig = escrowService.chainConfigs[sourceChainId];
+    const targetConfig = escrowService.chainConfigs[targetChainId];
 
-    console.log(`[WALLET] Prepared cross-chain transaction: ${transaction.id}`);
-
-    res.json({
-      success: true,
-      data: transaction
-    });
-  } catch (error) {
-    console.error('[WALLET] Error preparing cross-chain transaction:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to prepare transaction',
-      error: error.message
-    });
-  }
-});
-
-/**
- * Execute a step in cross-chain transaction
- */
-router.post('/cross-chain/:transactionId/execute-step', async (req, res) => {
-  try {
-    const { transactionId } = req.params;
-    const { stepNumber, txHash } = req.body;
-
-    if (!stepNumber) {
-      return res.status(400).json({
-        success: false,
-        message: 'Step number is required'
+    if (!sourceConfig || !targetConfig) {
+      return res.status(400).json({ 
+        error: 'Chain configuration not found' 
       });
     }
 
-    const result = await executeCrossChainStep(transactionId, stepNumber, txHash);
-
-    console.log(`[WALLET] Executed step ${stepNumber} for transaction ${transactionId}`);
-
-    res.json({
-      success: true,
-      data: result
-    });
-  } catch (error) {
-    console.error('[WALLET] Error executing cross-chain step:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to execute transaction step',
-      error: error.message
-    });
-  }
-});
-
-/**
- * Get cross-chain transaction status
- */
-router.get('/cross-chain/:transactionId/status', async (req, res) => {
-  try {
-    const { transactionId } = req.params;
-
-    const transaction = await getCrossChainTransactionStatus(transactionId);
-
-    res.json({
-      success: true,
-      data: transaction
-    });
-  } catch (error) {
-    console.error('[WALLET] Error getting cross-chain transaction status:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get transaction status',
-      error: error.message
-    });
-  }
-});
-
-/**
- * Get supported networks and bridge information
- */
-router.get('/cross-chain/networks', async (req, res) => {
-  try {
-    const networks = {
-      ethereum: { name: 'Ethereum', symbol: 'ETH', isEVM: true },
-      polygon: { name: 'Polygon', symbol: 'MATIC', isEVM: true },
-      bsc: { name: 'Binance Smart Chain', symbol: 'BNB', isEVM: true },
-      solana: { name: 'Solana', symbol: 'SOL', isEVM: false },
-      bitcoin: { name: 'Bitcoin', symbol: 'BTC', isEVM: false }
+    // Determine the best route
+    const isSameChain = sourceChainId === targetChainId;
+    const requiresSwap = depositToken !== targetToken;
+    
+    let route = {
+      type: isSameChain ? 'same-chain' : 'cross-chain',
+      method: 'direct',
+      steps: []
     };
 
-    res.json({
-      success: true,
-      data: { networks }
-    });
-  } catch (error) {
-    console.error('[WALLET] Error getting networks:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get networks',
-      error: error.message
-    });
-  }
-});
-
-// Helper functions for enhanced wallet detection
-async function checkBridgeCompatibility(detectedWallets) {
-  try {
-    // Import supported chains function
-    const { initializeSupportedChains } = await import('../../../services/crossChainService.js');
-    
-    const supportedChains = await initializeSupportedChains();
-    
-    return {
-      compatible: false, // Bridge functionality is deprecated
-      supportedChains: supportedChains.map(chain => chain.name.toLowerCase()),
-      bridgeCount: 0,
-      dexCount: 0,
-      evmSupported: (detectedWallets.evmWallets?.length || 0) > 0,
-      solanaSupported: (detectedWallets.solanaWallets?.length || 0) > 0,
-      chainsAvailable: supportedChains.length,
-      warning: 'Bridge functionality is deprecated'
-    };
-  } catch (error) {
-    console.error('[WALLET] Bridge compatibility check failed:', error);
-    // Fallback to basic compatibility
-    return {
-      compatible: false,
-      supportedChains: ['ethereum', 'polygon', 'bsc', 'arbitrum', 'optimism'],
-      bridgeCount: 0,
-      dexCount: 0,
-      evmSupported: (detectedWallets.evmWallets?.length || 0) > 0,
-      solanaSupported: (detectedWallets.solanaWallets?.length || 0) > 0,
-      error: 'Bridge service unavailable'
-    };
-  }
-}
-
-async function analyzeDynamicWalletCapabilities(walletAddress, network) {
-  try {
-    const capabilities = {
-      network,
-      walletAddress,
-      canBridge: false, // Bridge functionality is deprecated
-      estimatedTime: 'N/A'
-    };
-
-    // Use static chain data
-    const currentChainId = getChainIdFromNetwork(network);
-    
-    // Get chains for compatibility info only
-    capabilities.chains = getDefaultCompatibleChains(network);
-    capabilities.bridges = []; // No bridges available
-    capabilities.nativeToken = getNativeTokenSymbol(network);
-    capabilities.bridgeSupported = false;
-    capabilities.warning = 'Bridge functionality is deprecated';
-    
-    // Static fee estimation
-    capabilities.estimatedFees = 'N/A';
-
-    return capabilities;
-  } catch (error) {
-    console.error('[WALLET] Dynamic capability analysis failed:', error);
-    // Fallback to static analysis
-    return getStaticWalletCapabilities(walletAddress, network);
-  }
-}
-
-async function getSupportedChains() {
-  try {
-    // Return static chain data - bridge functionality is deprecated
-    const staticChains = [
-      { chainId: 1, name: 'Ethereum', symbol: 'ETH', isEVM: true },
-      { chainId: 137, name: 'Polygon', symbol: 'POL', isEVM: true },
-      { chainId: 56, name: 'BSC', symbol: 'BNB', isEVM: true },
-      { chainId: 42161, name: 'Arbitrum', symbol: 'ETH', isEVM: true },
-      { chainId: 10, name: 'Optimism', symbol: 'ETH', isEVM: true }
-    ];
-    
-    return staticChains.map(chain => ({
-      chainId: chain.chainId,
-      name: chain.name,
-      symbol: chain.symbol,
-      isEVM: chain.isEVM,
-      bridgeSupported: false, // Bridge functionality is deprecated
-      dexSupported: chain.dexSupported
-    }));
-  } catch (error) {
-    console.error('[WALLET] Failed to get LI.FI supported chains:', error);
-    // Return fallback chain list
-    return [
-      { chainId: 1, name: 'Ethereum', symbol: 'ETH', isEVM: true, bridgeSupported: true },
-      { chainId: 137, name: 'Polygon', symbol: 'MATIC', isEVM: true, bridgeSupported: true },
-      { chainId: 56, name: 'BSC', symbol: 'BNB', isEVM: true, bridgeSupported: true },
-      { chainId: 42161, name: 'Arbitrum', symbol: 'ETH', isEVM: true, bridgeSupported: true },
-      { chainId: 10, name: 'Optimism', symbol: 'ETH', isEVM: true, bridgeSupported: true },
-      { chainId: 43114, name: 'Avalanche', symbol: 'AVAX', isEVM: true, bridgeSupported: true },
-      { chainId: 250, name: 'Fantom', symbol: 'FTM', isEVM: true, bridgeSupported: true },
-      { name: 'Solana', symbol: 'SOL', isEVM: false, bridgeSupported: true }
-    ];
-  }
-}
-
-// Helper functions
-function getChainIdFromNetwork(network) {
-  const networkMapping = {
-    'ethereum': 1,
-    'polygon': 137,
-    'bsc': 56,
-    'arbitrum': 42161,
-    'optimism': 10,
-    'avalanche': 43114,
-    'fantom': 250
-  };
-  return networkMapping[network.toLowerCase()] || 1;
-}
-
-function getDefaultCompatibleChains(network) {
-  // Static fallback compatibility mapping
-  const chainMappings = {
-    'ethereum': ['polygon', 'bsc', 'arbitrum', 'optimism', 'avalanche'],
-    'polygon': ['ethereum', 'bsc', 'arbitrum', 'avalanche'],
-    'bsc': ['ethereum', 'polygon', 'avalanche'],
-    'arbitrum': ['ethereum', 'polygon', 'optimism'],
-    'optimism': ['ethereum', 'arbitrum', 'polygon'],
-    'avalanche': ['ethereum', 'polygon', 'bsc'],
-    'solana': ['ethereum', 'polygon', 'bsc'],
-    'fantom': ['ethereum', 'polygon']
-  };
-  return chainMappings[network.toLowerCase()] || ['ethereum'];
-}
-
-function getStaticWalletCapabilities(walletAddress, network) {
-  // Fallback static analysis
-  return {
-    network,
-    walletAddress,
-    canBridge: true,
-    estimatedTime: '15-45 minutes',
-    chains: getDefaultCompatibleChains(network),
-    bridges: ['lifi'],
-    estimatedFees: 'Estimate unavailable',
-    lifiSupported: false,
-    fallbackMode: true
-  };
-}
-
-// New: Get optimal bridge route between buyer and seller wallets - POST /api/wallets/optimal-route
-router.post('/optimal-route', authenticateToken, async (req, res) => {
-  try {
-    const userId = req.userId;
-    const { 
-      buyerWallet, 
-      sellerWallet, 
-      amount, 
-      tokenAddress, 
-      dealId 
-    } = req.body;
-
-    // Validate required fields
-    if (!buyerWallet || !sellerWallet || !amount) {
-      return res.status(400).json({
-        success: false,
-        error: 'Buyer wallet, seller wallet, and amount are required'
-      });
-    }
-
-    // Validate wallet addresses
-    const buyerValidation = validateWalletAddress(buyerWallet.address, buyerWallet.network);
-    const sellerValidation = validateWalletAddress(sellerWallet.address, sellerWallet.network);
-
-    if (!buyerValidation.valid) {
-      return res.status(400).json({
-        success: false,
-        error: `Invalid buyer wallet: ${buyerValidation.error}`
-      });
-    }
-
-    if (!sellerValidation.valid) {
-      return res.status(400).json({
-        success: false,
-        error: `Invalid seller wallet: ${sellerValidation.error}`
-      });
-    }
-
-    // Import cross-chain service
-            const { getOptimalTransactionRoute, estimateTransactionFees } = await import('../../../services/crossChainService.js');
-
-    let route = null;
-    let feeEstimate = null;
-
-    // Check if bridge is needed
-    if (buyerWallet.network !== sellerWallet.network) {
-      try {
-        // Get optimal route using LI.FI
-        route = await getOptimalTransactionRoute({
-          sourceNetwork: buyerWallet.network,
-          targetNetwork: sellerWallet.network,
-          amount,
-          tokenAddress: tokenAddress || '0x0000000000000000000000000000000000000000',
-          fromAddress: buyerWallet.address,
-          toAddress: sellerWallet.address,
-          dealId: dealId || `route-${Date.now()}`
-        });
-
-        // Estimate fees
-        feeEstimate = await estimateTransactionFees(
-          buyerWallet.network,
-          sellerWallet.network,
-          amount,
-          tokenAddress,
-          buyerWallet.address
-        );
-
-      } catch (error) {
-        console.error('[WALLET] Optimal route finding failed:', error);
-        return res.status(400).json({
-          success: false,
-          error: `No bridge route available: ${error.message}`,
-          fallback: {
-            route: null,
-            bridgeNeeded: true,
-            supported: false
-          }
-        });
+    if (isSameChain) {
+      if (requiresSwap) {
+        route.method = 'uniswap';
+        route.steps = [
+          { action: 'swap', from: depositToken, to: targetToken, via: 'Uniswap' },
+          { action: 'transfer', to: 'seller' }
+        ];
+      } else {
+        route.steps = [
+          { action: 'transfer', to: 'seller' }
+        ];
       }
     } else {
-      // Same network - no bridge needed
-      feeEstimate = await estimateTransactionFees(
-        buyerWallet.network,
-        sellerWallet.network,
-        amount,
-        tokenAddress,
-        buyerWallet.address
-      );
-    }
-
-    res.json({
-      success: true,
-      buyerWallet: {
-        address: buyerWallet.address,
-        network: buyerWallet.network
-      },
-      sellerWallet: {
-        address: sellerWallet.address,
-        network: sellerWallet.network
-      },
-      bridgeNeeded: buyerWallet.network !== sellerWallet.network,
-      route,
-      feeEstimate,
-      escrowNetwork: 'ethereum', // Always use Ethereum for escrow contracts
-      totalTime: route?.estimatedTime || feeEstimate?.estimatedTime || '1-5 minutes',
-      confidence: route?.confidence || feeEstimate?.confidence || '95%'
-    });
-
-  } catch (error) {
-    console.error('[WALLET] Error finding optimal route:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to find optimal route'
-    });
-  }
-});
-
-// New: Prepare cross-chain escrow transaction - POST /api/wallets/prepare-escrow
-router.post('/prepare-escrow', authenticateToken, async (req, res) => {
-  try {
-    const userId = req.userId;
-    const {
-      buyerWallet,
-      sellerWallet,
-      amount,
-      tokenAddress,
-      propertyAddress,
-      dealId
-    } = req.body;
-
-    // Validate required fields
-    if (!buyerWallet || !sellerWallet || !amount || !dealId) {
-      return res.status(400).json({
-        success: false,
-        error: 'Buyer wallet, seller wallet, amount, and deal ID are required'
-      });
-    }
-
-    // Import cross-chain service
-    const { prepareCrossChainTransaction } = await import('../../../services/crossChainService.js');
-
-    console.log(`[WALLET] Preparing escrow transaction for deal ${dealId}`);
-
-    // Prepare the cross-chain transaction using LI.FI
-    const transaction = await prepareCrossChainTransaction({
-      fromAddress: buyerWallet.address,
-      toAddress: sellerWallet.address,
-      amount,
-      tokenAddress: tokenAddress || '0x0000000000000000000000000000000000000000',
-      sourceNetwork: buyerWallet.network,
-      targetNetwork: sellerWallet.network,
-      dealId,
-      userId,
-      propertyAddress
-    });
-
-    res.json({
-      success: true,
-      transaction: {
-        id: transaction.id,
-        dealId: transaction.dealId,
-        fromAddress: transaction.fromAddress,
-        toAddress: transaction.toAddress,
-        amount: transaction.amount,
-        sourceNetwork: transaction.sourceNetwork,
-        targetNetwork: transaction.targetNetwork,
-        needsBridge: transaction.needsBridge,
-        bridgeInfo: transaction.bridgeInfo,
-        feeEstimate: transaction.feeEstimate,
-        steps: transaction.steps,
-        status: transaction.status
-      },
-      nextSteps: {
-        userAction: transaction.needsBridge 
-          ? 'Initiate bridge transfer through your wallet'
-          : 'Execute direct transfer',
-        estimatedTime: transaction.feeEstimate?.estimatedTime || '15-45 minutes'
+      // Check available cross-chain methods
+      const hasStargate = sourceConfig.stargateRouter && targetConfig.stargateRouter;
+      const hasLayerZero = sourceConfig.layerZeroEndpointId && targetConfig.layerZeroEndpointId;
+      
+      if (hasStargate) {
+        route.method = 'stargate';
+        route.steps = [
+          { action: 'bridge', from: sourceNetwork, to: targetNetwork, via: 'Stargate' }
+        ];
+        
+        if (requiresSwap) {
+          route.steps.push({ action: 'swap', from: depositToken, to: targetToken, via: 'Uniswap' });
+        }
+        
+        route.steps.push({ action: 'transfer', to: 'seller' });
+      } else if (hasLayerZero) {
+        route.method = 'layerzero';
+        route.steps = [
+          { action: 'bridge', from: sourceNetwork, to: targetNetwork, via: 'LayerZero OFT' }
+        ];
+        
+        if (requiresSwap) {
+          route.steps.push({ action: 'swap', from: depositToken, to: targetToken, via: 'Uniswap' });
+        }
+        
+        route.steps.push({ action: 'transfer', to: 'seller' });
+      } else {
+        route.method = 'unsupported';
+        route.error = 'No cross-chain bridge available for this route';
       }
+    }
+
+    res.json({
+      success: true,
+      route
     });
 
   } catch (error) {
-    console.error('[WALLET] Error preparing escrow transaction:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to prepare escrow transaction',
-      details: error.message
-    });
+    console.error("[GET ROUTE] Error:", error);
+    res.status(500).json({ error: 'Failed to get route info' });
   }
 });
 
-// New: Get user's preferred wallets for escrow - GET /api/wallets/preferred-for-escrow
-router.get('/preferred-for-escrow', authenticateToken, async (req, res) => {
+// Delete wallet - DELETE /api/wallets/:address
+router.delete('/:address', authenticateToken, async (req, res) => {
   try {
+    const { address } = req.params;
+    const { network } = req.query;
     const userId = req.userId;
-    const { amount, counterpartyNetwork } = req.query;
+
+    if (!network) {
+      return res.status(400).json({ error: 'Network parameter is required' });
+    }
 
     const { db } = await getFirebaseServices();
-    const userDoc = await db.collection('users').doc(userId).get();
+    
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
     
     if (!userDoc.exists) {
       return res.status(404).json({ error: 'User profile not found' });
     }
 
     const userData = userDoc.data();
-    const wallets = userData.wallets || [];
+    const currentWallets = userData.wallets || [];
 
-    if (wallets.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'No wallets found. Please connect a wallet first.'
-      });
-    }
-
-    // Analyze wallets for escrow suitability
-    const walletAnalysis = await Promise.all(
-      wallets.map(async (wallet) => {
-        try {
-          const capabilities = await analyzeDynamicWalletCapabilities(wallet.address, wallet.network);
-          
-          // Calculate suitability score
-          let suitabilityScore = 0;
-          
-          // Primary wallet bonus
-          if (wallet.isPrimary) suitabilityScore += 20;
-          
-          // LI.FI support bonus
-          if (capabilities.lifiSupported) suitabilityScore += 30;
-          
-          // Counterparty compatibility
-          if (counterpartyNetwork && capabilities.chains.includes(counterpartyNetwork.toLowerCase())) {
-            suitabilityScore += 25;
-          }
-          
-          // Fee efficiency (estimated)
-          if (capabilities.estimatedFees && capabilities.estimatedFees !== 'Unavailable') {
-            const feeAmount = parseFloat(capabilities.estimatedFees.replace('$', ''));
-            if (feeAmount < 10) suitabilityScore += 15;
-            else if (feeAmount < 50) suitabilityScore += 10;
-            else suitabilityScore += 5;
-          }
-
-          // Speed bonus
-          if (capabilities.estimatedTime.includes('15-45')) suitabilityScore += 10;
-
-          return {
-            ...wallet,
-            capabilities,
-            suitabilityScore,
-            recommended: suitabilityScore >= 50
-          };
-        } catch (error) {
-          console.warn(`[WALLET] Failed to analyze wallet ${wallet.address}:`, error);
-          return {
-            ...wallet,
-            capabilities: { error: 'Analysis failed' },
-            suitabilityScore: 0,
-            recommended: false
-          };
-        }
-      })
+    // Filter out the wallet to delete
+    const updatedWallets = currentWallets.filter(
+      w => !(w.address.toLowerCase() === address.toLowerCase() && w.network === network)
     );
 
-    // Sort by suitability score
-    const sortedWallets = walletAnalysis.sort((a, b) => b.suitabilityScore - a.suitabilityScore);
-    
-    // Get the best wallet for escrow
-    const recommendedWallet = sortedWallets[0];
+    if (updatedWallets.length === currentWallets.length) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
 
-    res.json({
+    // Update user document
+    const updateData = {
+      wallets: updatedWallets
+    };
+
+    // Remove from quick lookup if it was the registered address for this network
+    if (userData.walletAddresses && userData.walletAddresses[network] === address) {
+      updateData[`walletAddresses.${network}`] = FieldValue.delete();
+    }
+
+    await userRef.update(updateData);
+
+    return res.json({
       success: true,
-      wallets: sortedWallets,
-      recommended: recommendedWallet,
-      totalWallets: wallets.length,
-      analysis: {
-        amount: amount || 'Not specified',
-        counterpartyNetwork: counterpartyNetwork || 'Not specified',
-        bestScore: recommendedWallet?.suitabilityScore || 0,
-        lifiCompatibleWallets: sortedWallets.filter(w => w.capabilities.lifiSupported).length
-      }
+      message: 'Wallet deleted successfully'
     });
-
+    
   } catch (error) {
-    console.error('[WALLET] Error analyzing preferred wallets:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to analyze wallet preferences'
-    });
+    console.error("[WALLET DELETE] Error:", error);
+    return res.status(500).json({ error: 'Failed to delete wallet' });
   }
 });
 
-export default router; 
+export default router;

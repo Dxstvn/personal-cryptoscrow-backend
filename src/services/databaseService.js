@@ -329,3 +329,72 @@ export async function updateCrossChainDealStatus(dealId, updateData) {
     console.error(`[DBService] Error updating cross-chain status for deal ${dealId} to ${updateData.status}:`, error);
   }
 }
+
+/**
+ * Get all escrows with active (unresolved) disputes
+ * @returns {Promise<Array<Object>>} List of escrow records with active disputes
+ */
+export async function getActiveDisputes() {
+  try {
+    const db = await getDb();
+    const snapshot = await db.collection('escrows')
+      .where('disputeRaised', '==', true)
+      .where('disputeResolved', '!=', true)
+      .get();
+
+    if (snapshot.empty) {
+      return [];
+    }
+
+    return snapshot.docs.map(doc => ({
+      escrowId: doc.id,
+      ...doc.data()
+    }));
+  } catch (error) {
+    console.error('[DBService] Error fetching active disputes:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update dispute information for an escrow
+ * @param {string} escrowId - The escrow ID
+ * @param {Object} disputeData - The dispute data to update
+ */
+export async function updateDispute(escrowId, disputeData) {
+  try {
+    const db = await getDb();
+    await db.collection('escrows').doc(escrowId).update({
+      ...disputeData,
+      lastUpdated: FieldValue.serverTimestamp()
+    });
+    console.log(`[DBService] Updated dispute for escrow ${escrowId}`);
+  } catch (error) {
+    console.error('[DBService] Error updating dispute:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get escrow by ID
+ * @param {string} escrowId - The escrow ID
+ * @returns {Promise<Object|null>} The escrow data or null if not found
+ */
+export async function getEscrowById(escrowId) {
+  try {
+    const db = await getDb();
+    const doc = await db.collection('escrows').doc(escrowId).get();
+    
+    if (!doc.exists) {
+      return null;
+    }
+    
+    return {
+      escrowId: doc.id,
+      ...doc.data()
+    };
+  } catch (error) {
+    console.error('[DBService] Error fetching escrow:', error);
+    throw error;
+  }
+}

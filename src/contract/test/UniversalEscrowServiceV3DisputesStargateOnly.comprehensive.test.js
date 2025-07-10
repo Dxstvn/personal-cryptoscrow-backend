@@ -1,0 +1,1339 @@
+const { expect } = require("chai");
+const { ethers } = require("hardhat");
+const { time } = require("@nomicfoundation/hardhat-network-helpers");
+
+describe("UniversalEscrowServiceV3DisputesStargateOnly - Comprehensive Tests", function () {
+  let escrow;
+  let owner, buyer, seller, serviceWallet, buyer2, seller2, attacker;
+  let weth, usdc, usdt, dai;
+  let uniswapRouter;
+  let mockStargateRouter, mockStargateRouterETH;
+  
+  const SERVICE_FEE_BPS = 200; // 2%
+  const MAX_SLIPPAGE_BPS = 500; // 5%
+  const DISPUTE_WINDOW = 48 * 60 * 60; // 48 hours
+  const DISPUTE_RESOLUTION_PERIOD = 7 * 24 * 60 * 60; // 7 days
+  
+  beforeEach(async function () {
+    [owner, buyer, seller, serviceWallet, buyer2, seller2, attacker] = await ethers.getSigners();
+    
+    // Deploy mock tokens
+    const MockWETH = await ethers.getContractFactory("contracts/mocks/MockWETH.sol:MockWETH");
+    weth = await MockWETH.deploy();
+    await weth.waitForDeployment();
+    
+    const MockERC20 = await ethers.getContractFactory("contracts/mocks/MockERC20.sol:MockERC20");
+    usdc = await MockERC20.deploy("USD Coin", "USDC", 6);
+    await usdc.waitForDeployment();
+    usdt = await MockERC20.deploy("Tether", "USDT", 6);
+    await usdt.waitForDeployment();
+    dai = await MockERC20.deploy("DAI Stablecoin", "DAI", 18);
+    await dai.waitForDeployment();
+    
+    // Deploy mock Uniswap router
+    const MockRouter = await ethers.getContractFactory("contracts/mocks/MockUniswapV2Router.sol:MockUniswapV2Router");
+    uniswapRouter = await MockRouter.deploy(await weth.getAddress());
+    await uniswapRouter.waitForDeployment();
+    
+    // Add liquidity to mock router
+    const routerAddress = await uniswapRouter.getAddress();
+    await weth.deposit({ value: ethers.parseEther("50") });
+    await weth.transfer(routerAddress, ethers.parseEther("50"));
+    await usdc.mint(routerAddress, ethers.parseUnits("500000", 6)); // 500K USDC
+    await usdt.mint(routerAddress, ethers.parseUnits("500000", 6)); // 500K USDT
+    await dai.mint(routerAddress, ethers.parseEther("500000")); // 500K DAI
+    
+    // Send ETH to router for ETH swaps
+    await owner.sendTransaction({
+      to: routerAddress,
+      value: ethers.parseEther("30")
+    });
+    
+    // Deploy mock Stargate routers
+    const MockStargate = await ethers.getContractFactory("contracts/mocks/MockStargateRouter.sol:MockStargateRouter");
+    mockStargateRouter = await MockStargate.deploy();
+    await mockStargateRouter.waitForDeployment();
+    mockStargateRouterETH = await MockStargate.deploy();
+    await mockStargateRouterETH.waitForDeployment();
+    
+    // Deploy UniversalEscrowServiceV3DisputesStargateOnly
+    const UniversalEscrowServiceV3DisputesStargateOnly = await ethers.getContractFactory("UniversalEscrowServiceV3DisputesStargateOnly");
+    escrow = await UniversalEscrowServiceV3DisputesStargateOnly.deploy(
+      serviceWallet.address,
+      await weth.getAddress(),
+      await uniswapRouter.getAddress()
+    );
+    await escrow.waitForDeployment();
+    
+    // Configure Stargate routers
+    await escrow.connect(owner).setStargateRouter(
+      31337, // chainId
+      await mockStargateRouter.getAddress(),
+      await mockStargateRouterETH.getAddress()
+    );
+    await escrow.connect(owner).setStargateChainId(31337, 199); // Hardhat Stargate ID
+    await escrow.connect(owner).setStargateChainId(42161, 110); // Arbitrum Stargate ID
+    await escrow.connect(owner).setStargateChainId(10, 111); // Optimism Stargate ID
+    await escrow.connect(owner).setStargateChainId(137, 109); // Polygon Stargate ID
+    await escrow.connect(owner).setStargateChainId(11155111, 10161); // Sepolia Stargate ID
+    await escrow.connect(owner).setStargateChainId(421614, 10231); // Arbitrum Sepolia Stargate ID
+    
+    // Configure supported tokens
+    await escrow.connect(owner).configureToken(31337, ethers.ZeroAddress, 13, true); // ETH
+    await escrow.connect(owner).configureToken(31337, await usdc.getAddress(), 1, false); // USDC
+    await escrow.connect(owner).configureToken(31337, await usdt.getAddress(), 2, false); // USDT
+    await escrow.connect(owner).configureToken(31337, await dai.getAddress(), 3, false); // DAI
+    
+    await escrow.connect(owner).configureToken(42161, ethers.ZeroAddress, 13, true); // ETH on Arbitrum
+    await escrow.connect(owner).configureToken(42161, await usdc.getAddress(), 1, false); // USDC on Arbitrum
+    await escrow.connect(owner).configureToken(42161, await usdt.getAddress(), 2, false); // USDT on Arbitrum
+    
+    await escrow.connect(owner).configureToken(137, ethers.ZeroAddress, 13, true); // ETH on Polygon
+    await escrow.connect(owner).configureToken(137, await usdc.getAddress(), 1, false); // USDC on Polygon
+    
+    await escrow.connect(owner).configureToken(10, ethers.ZeroAddress, 13, true); // ETH on Optimism
+    await escrow.connect(owner).configureToken(10, await usdc.getAddress(), 1, false); // USDC on Optimism
+    
+    await escrow.connect(owner).configureToken(11155111, ethers.ZeroAddress, 13, true); // ETH on Sepolia
+    await escrow.connect(owner).configureToken(11155111, "0x2F6F07CDcf3588944Bf4C42aC74ff24bF56e7590", 1, false); // USDC on Sepolia
+    
+    await escrow.connect(owner).configureToken(421614, ethers.ZeroAddress, 13, true); // ETH on Arbitrum Sepolia
+    await escrow.connect(owner).configureToken(421614, "0x3253a335E7bFfB4790Aa4C25C4250d206E9b9773", 1, false); // USDC on Arbitrum Sepolia
+    
+    // Set condition updater (only owner can do this)
+    await escrow.connect(owner).setConditionUpdater(serviceWallet.address, true);
+    
+    // Mint tokens to users for testing
+    await usdc.mint(buyer.address, ethers.parseUnits("10000", 6));
+    await usdc.mint(buyer2.address, ethers.parseUnits("10000", 6));
+    await usdt.mint(buyer.address, ethers.parseUnits("10000", 6));
+    await usdt.mint(buyer2.address, ethers.parseUnits("10000", 6));
+    await dai.mint(buyer.address, ethers.parseEther("10000"));
+    await dai.mint(buyer2.address, ethers.parseEther("10000"));
+  });
+
+  describe("Basic Escrow Creation and Validation", function () {
+    it("Should create ETH escrow with correct parameters", async function () {
+      const depositAmount = ethers.parseEther("1.0");
+      const expectedServiceFee = depositAmount * BigInt(SERVICE_FEE_BPS) / 10000n;
+      const expectedNetAmount = depositAmount - expectedServiceFee;
+      
+      const serviceWalletBalanceBefore = await ethers.provider.getBalance(serviceWallet.address);
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        ethers.ZeroAddress, // ETH
+        depositAmount,
+        ethers.ZeroAddress, // ETH
+        31337, // same chain
+        { value: depositAmount }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args[0];
+      
+      // Verify escrow data
+      const escrowData = await escrow.escrows(escrowId);
+      expect(escrowData.buyer).to.equal(buyer.address);
+      expect(escrowData.seller).to.equal(seller.address);
+      expect(escrowData.depositToken).to.equal(ethers.ZeroAddress);
+      expect(escrowData.depositAmount).to.equal(depositAmount);
+      expect(escrowData.netAmount).to.equal(expectedNetAmount);
+      expect(escrowData.targetToken).to.equal(ethers.ZeroAddress);
+      expect(escrowData.targetChainId).to.equal(31337);
+      expect(escrowData.released).to.be.false;
+      expect(escrowData.conditionMet).to.be.false;
+      
+      // Verify service fee was sent
+      const serviceWalletBalanceAfter = await ethers.provider.getBalance(serviceWallet.address);
+      expect(serviceWalletBalanceAfter - serviceWalletBalanceBefore).to.equal(expectedServiceFee);
+      
+      // Verify contract holds net amount
+      const contractBalance = await ethers.provider.getBalance(await escrow.getAddress());
+      expect(contractBalance).to.equal(expectedNetAmount);
+    });
+
+    it("Should create ERC20 escrow with correct parameters", async function () {
+      const depositAmount = ethers.parseUnits("1000", 6); // 1000 USDC
+      const expectedServiceFee = depositAmount * BigInt(SERVICE_FEE_BPS) / 10000n;
+      const expectedNetAmount = depositAmount - expectedServiceFee;
+      
+      // Approve tokens
+      await usdc.connect(buyer).approve(await escrow.getAddress(), depositAmount);
+      
+      const serviceWalletBalanceBefore = await usdc.balanceOf(serviceWallet.address);
+      const contractBalanceBefore = await usdc.balanceOf(await escrow.getAddress());
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        await usdc.getAddress(),
+        depositAmount,
+        await usdc.getAddress(),
+        31337
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs.find(log => {
+        try {
+          const parsed = escrow.interface.parseLog(log);
+          return parsed.name === "EscrowCreated";
+        } catch { return false; }
+      }).args[0];
+      
+      // Verify token transfers
+      const serviceWalletBalanceAfter = await usdc.balanceOf(serviceWallet.address);
+      expect(serviceWalletBalanceAfter - serviceWalletBalanceBefore).to.equal(expectedServiceFee);
+      
+      const contractBalanceAfter = await usdc.balanceOf(await escrow.getAddress());
+      expect(contractBalanceAfter - contractBalanceBefore).to.equal(expectedNetAmount);
+    });
+
+    it("Should prevent creating escrow with zero amount", async function () {
+      await expect(
+        escrow.connect(buyer).createEscrow(
+          seller.address,
+          ethers.ZeroAddress,
+          0,
+          ethers.ZeroAddress,
+          31337,
+          { value: 0 }
+        )
+      ).to.be.revertedWithCustomError(escrow, "InvalidAmount");
+    });
+
+    it("Should prevent creating escrow with zero address seller", async function () {
+      await expect(
+        escrow.connect(buyer).createEscrow(
+          ethers.ZeroAddress,
+          ethers.ZeroAddress,
+          ethers.parseEther("1"),
+          ethers.ZeroAddress,
+          31337,
+          { value: ethers.parseEther("1") }
+        )
+      ).to.be.revertedWithCustomError(escrow, "InvalidRecipient");
+    });
+
+    it("Should prevent ETH escrow with mismatched value", async function () {
+      await expect(
+        escrow.connect(buyer).createEscrow(
+          seller.address,
+          ethers.ZeroAddress,
+          ethers.parseEther("2"),
+          ethers.ZeroAddress,
+          31337,
+          { value: ethers.parseEther("1") }
+        )
+      ).to.be.revertedWithCustomError(escrow, "InvalidAmount");
+    });
+
+    it("Should track user escrows correctly", async function () {
+      // Create multiple escrows
+      for (let i = 0; i < 3; i++) {
+        await escrow.connect(buyer).createEscrow(
+          seller.address,
+          ethers.ZeroAddress,
+          ethers.parseEther("0.1"),
+          ethers.ZeroAddress,
+          31337,
+          { value: ethers.parseEther("0.1") }
+        );
+      }
+      
+      const userEscrows = await escrow.getUserEscrows(buyer.address);
+      expect(userEscrows.length).to.equal(3);
+    });
+  });
+
+  describe("Same-Chain Token Swaps", function () {
+    it("Should swap ETH to USDC on release", async function () {
+      const depositAmount = ethers.parseEther("1.0");
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        ethers.ZeroAddress, // ETH deposit
+        depositAmount,
+        await usdc.getAddress(), // USDC target
+        31337,
+        { value: depositAmount }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args[0];
+      
+      // Update condition and wait for dispute window
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      const sellerUSDCBefore = await usdc.balanceOf(seller.address);
+      
+      await escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId);
+      
+      const sellerUSDCAfter = await usdc.balanceOf(seller.address);
+      expect(sellerUSDCAfter).to.be.gt(sellerUSDCBefore);
+    });
+
+    it("Should handle token to ETH swaps", async function () {
+      const depositAmount = ethers.parseUnits("1000", 6);
+      
+      await usdc.connect(buyer).approve(await escrow.getAddress(), depositAmount);
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        await usdc.getAddress(), // USDC deposit
+        depositAmount,
+        ethers.ZeroAddress, // ETH target
+        31337
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs.find(log => {
+        try {
+          const parsed = escrow.interface.parseLog(log);
+          return parsed.name === "EscrowCreated";
+        } catch { return false; }
+      }).args[0];
+      
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      const sellerBalanceBefore = await ethers.provider.getBalance(seller.address);
+      
+      await escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId);
+      
+      const sellerBalanceAfter = await ethers.provider.getBalance(seller.address);
+      expect(sellerBalanceAfter).to.be.gt(sellerBalanceBefore);
+    });
+
+    it("Should swap between ERC20 tokens", async function () {
+      const depositAmount = ethers.parseUnits("1000", 6);
+      
+      await usdc.connect(buyer).approve(await escrow.getAddress(), depositAmount);
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        await usdc.getAddress(), // USDC deposit
+        depositAmount,
+        await usdt.getAddress(), // USDT target
+        31337
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs.find(log => {
+        try {
+          const parsed = escrow.interface.parseLog(log);
+          return parsed.name === "EscrowCreated";
+        } catch { return false; }
+      }).args[0];
+      
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      const sellerUSDTBefore = await usdt.balanceOf(seller.address);
+      
+      await escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId);
+      
+      const sellerUSDTAfter = await usdt.balanceOf(seller.address);
+      expect(sellerUSDTAfter).to.be.gt(sellerUSDTBefore);
+    });
+
+    it("Should respect slippage protection", async function () {
+      const depositAmount = ethers.parseEther("1.0");
+      
+      // Set reasonable slippage (5%)
+      await escrow.connect(owner).setMaxSlippage(500); // 5%
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        ethers.ZeroAddress,
+        depositAmount,
+        await usdc.getAddress(),
+        31337,
+        { value: depositAmount }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args[0];
+      
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      // With reasonable slippage, this should work
+      await expect(
+        escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId)
+      ).to.not.be.reverted;
+      
+      // Verify the swap occurred
+      const sellerBalance = await usdc.balanceOf(seller.address);
+      expect(sellerBalance).to.be.gt(0);
+    });
+  });
+
+  describe("Cross-Chain Transfers via Stargate ONLY", function () {
+    it("Should create cross-chain escrow with proper validation", async function () {
+      const depositAmount = ethers.parseEther("1.0");
+      
+      // Should accept supported chain/token
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        ethers.ZeroAddress,
+        depositAmount,
+        ethers.ZeroAddress,
+        42161, // Arbitrum (configured)
+        { value: depositAmount }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args[0];
+      
+      const escrowData = await escrow.escrows(escrowId);
+      expect(escrowData.targetChainId).to.equal(42161);
+    });
+
+    it("Should reject unsupported chains", async function () {
+      const depositAmount = ethers.parseEther("1.0");
+      
+      // Should reject unsupported chain
+      await expect(
+        escrow.connect(buyer).createEscrow(
+          seller.address,
+          ethers.ZeroAddress,
+          depositAmount,
+          ethers.ZeroAddress,
+          1, // Mainnet (not configured)
+          { value: depositAmount }
+        )
+      ).to.be.revertedWithCustomError(escrow, "CrossChainNotSupported");
+    });
+
+    it("Should reject unsupported tokens on target chain", async function () {
+      const depositAmount = ethers.parseEther("1.0");
+      
+      // DAI not configured on Arbitrum
+      await expect(
+        escrow.connect(buyer).createEscrow(
+          seller.address,
+          ethers.ZeroAddress,
+          depositAmount,
+          await dai.getAddress(), // DAI not configured on Arbitrum
+          42161,
+          { value: depositAmount }
+        )
+      ).to.be.revertedWithCustomError(escrow, "TokenNotSupported");
+    });
+
+    it("Should provide cross-chain quotes", async function () {
+      const amount = ethers.parseEther("1");
+      
+      // Get quote for ETH to Arbitrum
+      const [fee, supported] = await escrow.getCrossChainQuote(42161, ethers.ZeroAddress, amount);
+      
+      expect(supported).to.be.true;
+      expect(fee).to.be.gt(0); // Should have some fee
+      
+      // Get quote for unsupported chain
+      const [fee2, supported2] = await escrow.getCrossChainQuote(1, ethers.ZeroAddress, amount);
+      
+      expect(supported2).to.be.false;
+      expect(fee2).to.equal(0);
+    });
+
+    it("Should handle ETH transfer via Stargate", async function () {
+      const depositAmount = ethers.parseEther("1.0");
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        ethers.ZeroAddress,
+        depositAmount,
+        ethers.ZeroAddress,
+        137, // Polygon
+        { value: depositAmount }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args[0];
+      
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      // Mock Stargate fee
+      const stargateFee = ethers.parseEther("0.005");
+      
+      await expect(
+        escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId, { value: stargateFee })
+      ).to.emit(escrow, "StargateTransferInitiated");
+    });
+
+    it("Should handle USDC transfer via Stargate", async function () {
+      const depositAmount = ethers.parseUnits("1000", 6);
+      
+      await usdc.connect(buyer).approve(await escrow.getAddress(), depositAmount);
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        await usdc.getAddress(),
+        depositAmount,
+        await usdc.getAddress(),
+        42161, // Arbitrum
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs.find(log => {
+        try {
+          const parsed = escrow.interface.parseLog(log);
+          return parsed.name === "EscrowCreated";
+        } catch { return false; }
+      }).args[0];
+      
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      const stargateFee = ethers.parseEther("0.005");
+      
+      await expect(
+        escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId, { value: stargateFee })
+      ).to.emit(escrow, "StargateTransferInitiated");
+    });
+
+    it("Should convert unsupported token to supported for Stargate", async function () {
+      const depositAmount = ethers.parseEther("1000"); // DAI
+      
+      await dai.connect(buyer).approve(await escrow.getAddress(), depositAmount);
+      
+      // DAI -> USDC on Arbitrum (DAI not supported, should convert to ETH first)
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        await dai.getAddress(),
+        depositAmount,
+        await usdc.getAddress(),
+        42161
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs.find(log => {
+        try {
+          const parsed = escrow.interface.parseLog(log);
+          return parsed.name === "EscrowCreated";
+        } catch { return false; }
+      }).args[0];
+      
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      const stargateFee = ethers.parseEther("0.005");
+      
+      // Should convert DAI to supported token then bridge
+      await expect(
+        escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId, { value: stargateFee })
+      ).to.not.be.reverted;
+    });
+
+    it("Should NOT have LayerZero OFT functions", async function () {
+      // Verify no OFT-related functions exist
+      expect(escrow.oftAdapters).to.be.undefined;
+      expect(escrow.swapComposers).to.be.undefined;
+      expect(escrow.setOFTAdapter).to.be.undefined;
+      expect(escrow.setSwapComposer).to.be.undefined;
+    });
+  });
+
+  describe("Dispute Resolution System", function () {
+    let escrowId;
+    const depositAmount = ethers.parseEther("1");
+    
+    beforeEach(async function () {
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        ethers.ZeroAddress,
+        depositAmount,
+        ethers.ZeroAddress,
+        31337,
+        { value: depositAmount }
+      );
+      const receipt = await tx.wait();
+      escrowId = receipt.logs[0].args[0];
+    });
+
+    it("Should track dispute window from condition update", async function () {
+      // Update condition to start dispute window
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      
+      const disputeInfo = await escrow.getDisputeInfo(escrowId);
+      expect(disputeInfo[5]).to.be.gt(0); // conditionMetTimestamp
+    });
+
+    it("Should allow buyer to raise dispute within window", async function () {
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      
+      await expect(
+        escrow.connect(buyer).raiseDispute(escrowId, "Item not as described")
+      ).to.emit(escrow, "DisputeRaised")
+        .withArgs(escrowId, buyer.address, "Item not as described");
+      
+      const disputeInfo = await escrow.getDisputeInfo(escrowId);
+      expect(disputeInfo[0]).to.be.true; // disputeRaised
+      expect(disputeInfo[1]).to.equal(buyer.address); // disputeRaisedBy
+    });
+
+    it("Should allow seller to raise dispute within window", async function () {
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      
+      await expect(
+        escrow.connect(seller).raiseDispute(escrowId, "Buyer violated terms")
+      ).to.emit(escrow, "DisputeRaised");
+    });
+
+    it("Should prevent attacker from raising dispute", async function () {
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      
+      await expect(
+        escrow.connect(attacker).raiseDispute(escrowId, "Fake dispute")
+      ).to.be.revertedWithCustomError(escrow, "NotBuyerOrSeller");
+    });
+
+    it("Should reject dispute after window", async function () {
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      
+      // Skip past dispute window
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      await expect(
+        escrow.connect(buyer).raiseDispute(escrowId, "Too late")
+      ).to.be.revertedWithCustomError(escrow, "DisputeWindowPassed");
+    });
+
+    it("Should prevent double disputes", async function () {
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      
+      await escrow.connect(buyer).raiseDispute(escrowId, "First dispute");
+      
+      await expect(
+        escrow.connect(buyer).raiseDispute(escrowId, "Second dispute")
+      ).to.be.revertedWithCustomError(escrow, "DisputeAlreadyRaised");
+    });
+
+    it("Should allow service wallet to resolve dispute in favor of seller", async function () {
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await escrow.connect(buyer).raiseDispute(escrowId, "Test dispute");
+      
+      const sellerBalanceBefore = await ethers.provider.getBalance(seller.address);
+      
+      await expect(
+        escrow.connect(serviceWallet).resolveDispute(escrowId, true)
+      ).to.emit(escrow, "DisputeResolved").withArgs(escrowId, true);
+      
+      const sellerBalanceAfter = await ethers.provider.getBalance(seller.address);
+      const expectedAmount = depositAmount * (10000n - BigInt(SERVICE_FEE_BPS)) / 10000n;
+      expect(sellerBalanceAfter - sellerBalanceBefore).to.equal(expectedAmount);
+    });
+
+    it("Should allow service wallet to resolve dispute in favor of buyer", async function () {
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await escrow.connect(buyer).raiseDispute(escrowId, "Test dispute");
+      
+      const buyerBalanceBefore = await ethers.provider.getBalance(buyer.address);
+      
+      await expect(
+        escrow.connect(serviceWallet).resolveDispute(escrowId, false)
+      ).to.emit(escrow, "DisputeResolved").withArgs(escrowId, false);
+      
+      const buyerBalanceAfter = await ethers.provider.getBalance(buyer.address);
+      const expectedAmount = depositAmount * (10000n - BigInt(SERVICE_FEE_BPS)) / 10000n;
+      expect(buyerBalanceAfter - buyerBalanceBefore).to.equal(expectedAmount);
+    });
+
+    it("Should return funds to buyer if dispute not resolved in time", async function () {
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await escrow.connect(buyer).raiseDispute(escrowId, "Test dispute");
+      
+      const buyerBalanceBefore = await ethers.provider.getBalance(buyer.address);
+      
+      // Skip past resolution period
+      await time.increase(DISPUTE_RESOLUTION_PERIOD + 1);
+      
+      // Anyone can trigger return
+      await escrow.connect(seller).returnFundsAfterDisputeTimeout(escrowId);
+      
+      const buyerBalanceAfter = await ethers.provider.getBalance(buyer.address);
+      const expectedAmount = depositAmount * (10000n - BigInt(SERVICE_FEE_BPS)) / 10000n;
+      expect(buyerBalanceAfter - buyerBalanceBefore).to.equal(expectedAmount);
+    });
+
+    it("Should prevent release during dispute window", async function () {
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      
+      await expect(
+        escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId)
+      ).to.be.revertedWithCustomError(escrow, "DisputeWindowActive");
+    });
+
+    it("Should allow release after dispute window with no dispute", async function () {
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      
+      // Skip dispute window
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      await expect(
+        escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId)
+      ).to.emit(escrow, "AutomaticRelease");
+    });
+
+    it("Should provide dispute status information", async function () {
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      
+      // Check can release status
+      let [canRelease, reason] = await escrow.canReleaseEscrow(escrowId);
+      expect(canRelease).to.be.false;
+      expect(reason).to.equal("Dispute window active");
+      
+      // Skip dispute window
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      [canRelease, reason] = await escrow.canReleaseEscrow(escrowId);
+      expect(canRelease).to.be.true;
+      expect(reason).to.equal("Can release");
+    });
+  });
+
+  describe("Condition Management", function () {
+    let escrowId;
+    
+    beforeEach(async function () {
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        ethers.ZeroAddress,
+        ethers.parseEther("1"),
+        ethers.ZeroAddress,
+        31337,
+        { value: ethers.parseEther("1") }
+      );
+      const receipt = await tx.wait();
+      escrowId = receipt.logs[0].args[0];
+    });
+
+    it("Should only allow service wallet to update conditions with dispute", async function () {
+      await expect(
+        escrow.connect(attacker).updateConditionWithDispute(escrowId, true)
+      ).to.be.revertedWithCustomError(escrow, "DisputeNotServiceWallet");
+      
+      await expect(
+        escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true)
+      ).to.emit(escrow, "ConditionUpdated");
+    });
+
+    it("Should prevent release before conditions are met", async function () {
+      await expect(
+        escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId)
+      ).to.be.revertedWithCustomError(escrow, "DisputeConditionNotMet");
+    });
+
+    it("Should emit correct event data", async function () {
+      await expect(
+        escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true)
+      ).to.emit(escrow, "ConditionUpdated")
+        .withArgs(escrowId, true, serviceWallet.address);
+    });
+  });
+
+  describe("Service Fee Handling", function () {
+    it("Should calculate fees correctly for different amounts", async function () {
+      const amounts = [
+        ethers.parseEther("0.01"),
+        ethers.parseEther("1"),
+        ethers.parseEther("10"),
+        ethers.parseEther("100"),
+        ethers.parseEther("1000")
+      ];
+      
+      for (const amount of amounts) {
+        const expectedFee = amount * BigInt(SERVICE_FEE_BPS) / 10000n;
+        const expectedNet = amount - expectedFee;
+        
+        const tx = await escrow.connect(buyer).createEscrow(
+          seller.address,
+          ethers.ZeroAddress,
+          amount,
+          ethers.ZeroAddress,
+          31337,
+          { value: amount }
+        );
+        
+        const receipt = await tx.wait();
+        const escrowId = receipt.logs[0].args[0];
+        
+        const escrowData = await escrow.escrows(escrowId);
+        expect(escrowData.netAmount).to.equal(expectedNet);
+      }
+    });
+
+    it("Should handle fee updates by owner", async function () {
+      await escrow.connect(owner).setServiceWallet(buyer2.address);
+      
+      const depositAmount = ethers.parseEther("1");
+      const balanceBefore = await ethers.provider.getBalance(buyer2.address);
+      
+      await escrow.connect(buyer).createEscrow(
+        seller.address,
+        ethers.ZeroAddress,
+        depositAmount,
+        ethers.ZeroAddress,
+        31337,
+        { value: depositAmount }
+      );
+      
+      const balanceAfter = await ethers.provider.getBalance(buyer2.address);
+      const expectedFee = depositAmount * BigInt(SERVICE_FEE_BPS) / 10000n;
+      expect(balanceAfter - balanceBefore).to.equal(expectedFee);
+    });
+  });
+
+  describe("Complex Multi-hop Scenarios", function () {
+    it("Should handle ETH -> USDC cross-chain to Arbitrum", async function () {
+      const depositAmount = ethers.parseEther("1.0");
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        ethers.ZeroAddress, // ETH on source
+        depositAmount,
+        await usdc.getAddress(), // USDC on target
+        42161, // Arbitrum
+        { value: depositAmount }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args[0];
+      
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      const crossChainFee = ethers.parseEther("0.01");
+      await expect(
+        escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId, { value: crossChainFee })
+      ).to.not.be.reverted;
+    });
+
+    it("Should handle USDC -> ETH cross-chain to Optimism", async function () {
+      const depositAmount = ethers.parseUnits("1000", 6);
+      
+      await usdc.connect(buyer).approve(await escrow.getAddress(), depositAmount);
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        await usdc.getAddress(), // USDC on source
+        depositAmount,
+        ethers.ZeroAddress, // ETH on target
+        10, // Optimism
+        { value: 0 }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs.find(log => {
+        try {
+          const parsed = escrow.interface.parseLog(log);
+          return parsed.name === "EscrowCreated";
+        } catch { return false; }
+      }).args[0];
+      
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      const crossChainFee = ethers.parseEther("0.01");
+      await expect(
+        escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId, { value: crossChainFee })
+      ).to.not.be.reverted;
+    });
+  });
+
+  describe("Error Recovery and Edge Cases", function () {
+    it("Should handle large swaps with sufficient liquidity", async function () {
+      const depositAmount = ethers.parseEther("10"); // Large amount
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        ethers.ZeroAddress,
+        depositAmount,
+        await usdc.getAddress(),
+        31337,
+        { value: depositAmount }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args[0];
+      
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      // This should work with sufficient liquidity
+      await escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId);
+      
+      // Verify swap succeeded
+      const sellerBalance = await usdc.balanceOf(seller.address);
+      expect(sellerBalance).to.be.gt(0);
+    });
+
+    it("Should handle zero-value cross-chain fees", async function () {
+      const depositAmount = ethers.parseEther("1");
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        ethers.ZeroAddress,
+        depositAmount,
+        ethers.ZeroAddress,
+        42161, // Cross-chain
+        { value: depositAmount }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args[0];
+      
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      // Should fail without fee
+      await expect(
+        escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId, { value: 0 })
+      ).to.be.reverted;
+    });
+
+    it("Should allow creating escrow to self", async function () {
+      const depositAmount = ethers.parseEther("1");
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        buyer.address, // Self
+        ethers.ZeroAddress,
+        depositAmount,
+        ethers.ZeroAddress,
+        31337,
+        { value: depositAmount }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args[0];
+      
+      const escrowData = await escrow.escrows(escrowId);
+      expect(escrowData.buyer).to.equal(buyer.address);
+      expect(escrowData.seller).to.equal(buyer.address);
+    });
+  });
+
+  describe("Gas Optimization Tests", function () {
+    it("Should handle batch operations efficiently", async function () {
+      const escrowIds = [];
+      const depositAmount = ethers.parseEther("0.1");
+      
+      // Create multiple escrows
+      for (let i = 0; i < 5; i++) {
+        const tx = await escrow.connect(buyer).createEscrow(
+          seller.address,
+          ethers.ZeroAddress,
+          depositAmount,
+          ethers.ZeroAddress,
+          31337,
+          { value: depositAmount }
+        );
+        const receipt = await tx.wait();
+        escrowIds.push(receipt.logs[0].args[0]);
+      }
+      
+      // Update all conditions
+      for (const escrowId of escrowIds) {
+        await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      }
+      
+      // Skip dispute window
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      // Release all
+      for (const escrowId of escrowIds) {
+        const tx = await escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId);
+        const receipt = await tx.wait();
+        expect(receipt.gasUsed).to.be.lt(300000); // Reasonable gas limit
+      }
+    });
+
+    it("Should optimize storage usage", async function () {
+      const depositAmount = ethers.parseEther("1");
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        ethers.ZeroAddress,
+        depositAmount,
+        ethers.ZeroAddress,
+        31337,
+        { value: depositAmount }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args[0];
+      
+      // Toggle condition multiple times
+      for (let i = 0; i < 10; i++) {
+        await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, i % 2 === 0);
+      }
+      
+      const escrowData = await escrow.escrows(escrowId);
+      expect(escrowData.conditionMet).to.be.false; // Last update was false
+    });
+  });
+
+  describe("Integration with External Protocols", function () {
+    it("Should integrate with Uniswap V2 correctly", async function () {
+      const depositAmount = ethers.parseEther("1");
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        ethers.ZeroAddress,
+        depositAmount,
+        await usdc.getAddress(),
+        31337,
+        { value: depositAmount }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args[0];
+      
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      const releaseTx = await escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId);
+      await expect(releaseTx).to.emit(escrow, "AutomaticRelease");
+      
+      const sellerUSDCBalance = await usdc.balanceOf(seller.address);
+      expect(sellerUSDCBalance).to.be.gt(0);
+    });
+
+    it("Should handle WETH operations correctly", async function () {
+      const depositAmount = ethers.parseEther("0.5");
+      
+      // First wrap some ETH
+      await weth.connect(buyer).deposit({ value: depositAmount });
+      await weth.connect(buyer).approve(await escrow.getAddress(), depositAmount);
+      
+      // Create escrow with WETH -> WETH (same token to avoid router issues)
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        await weth.getAddress(), // WETH deposit
+        depositAmount,
+        await weth.getAddress(), // WETH target
+        31337
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs.find(log => {
+        try {
+          const parsed = escrow.interface.parseLog(log);
+          return parsed.name === "EscrowCreated";
+        } catch { return false; }
+      }).args[0];
+      
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      const sellerWETHBefore = await weth.balanceOf(seller.address);
+      
+      await escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId);
+      
+      const sellerWETHAfter = await weth.balanceOf(seller.address);
+      const expectedAmount = depositAmount * (10000n - BigInt(SERVICE_FEE_BPS)) / 10000n;
+      expect(sellerWETHAfter - sellerWETHBefore).to.equal(expectedAmount);
+    });
+  });
+
+  describe("Admin Functions", function () {
+    it("Should allow owner to update service wallet", async function () {
+      const newServiceWallet = buyer2.address;
+      
+      await escrow.connect(owner).setServiceWallet(newServiceWallet);
+      
+      expect(await escrow.serviceWallet()).to.equal(newServiceWallet);
+    });
+
+    it("Should allow owner to update slippage", async function () {
+      const newSlippage = 1000; // 10%
+      
+      await escrow.connect(owner).setMaxSlippage(newSlippage);
+      
+      expect(await escrow.maxSlippageBps()).to.equal(newSlippage);
+    });
+
+    it("Should allow owner to manage condition updaters", async function () {
+      await escrow.connect(owner).setConditionUpdater(buyer2.address, true);
+      
+      expect(await escrow.conditionUpdaters(buyer2.address)).to.be.true;
+      
+      // Remove updater
+      await escrow.connect(owner).setConditionUpdater(buyer2.address, false);
+      expect(await escrow.conditionUpdaters(buyer2.address)).to.be.false;
+    });
+
+    it("Should prevent non-owner from admin functions", async function () {
+      await expect(
+        escrow.connect(attacker).setServiceWallet(attacker.address)
+      ).to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount");
+      
+      await expect(
+        escrow.connect(attacker).setMaxSlippage(10000)
+      ).to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount");
+    });
+
+    it("Should allow owner to configure Stargate tokens", async function () {
+      // Add new token support
+      await escrow.connect(owner).configureToken(
+        31337,
+        "0x1234567890123456789012345678901234567890",
+        5, // Pool ID
+        false // Not native
+      );
+      
+      const tokenConfig = await escrow.tokenConfigs(31337, "0x1234567890123456789012345678901234567890");
+      expect(tokenConfig.poolId).to.equal(5);
+      expect(tokenConfig.supported).to.be.true;
+      
+      // Disable token
+      await escrow.connect(owner).disableToken(31337, "0x1234567890123456789012345678901234567890");
+      
+      const disabledConfig = await escrow.tokenConfigs(31337, "0x1234567890123456789012345678901234567890");
+      expect(disabledConfig.supported).to.be.false;
+    });
+  });
+
+  describe("View Functions and Getters", function () {
+    it("Should return correct escrow details", async function () {
+      const depositAmount = ethers.parseEther("1");
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        ethers.ZeroAddress,
+        depositAmount,
+        ethers.ZeroAddress,
+        31337,
+        { value: depositAmount }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args[0];
+      
+      const details = await escrow.getEscrow(escrowId);
+      expect(details.buyer).to.equal(buyer.address);
+      expect(details.seller).to.equal(seller.address);
+      expect(details.depositAmount).to.equal(depositAmount);
+    });
+
+    it("Should track user escrows correctly", async function () {
+      const depositAmount = ethers.parseEther("0.1");
+      const escrowIds = [];
+      
+      // Create escrows from different buyers
+      for (let i = 0; i < 3; i++) {
+        const tx = await escrow.connect(buyer).createEscrow(
+          seller.address,
+          ethers.ZeroAddress,
+          depositAmount,
+          ethers.ZeroAddress,
+          31337,
+          { value: depositAmount }
+        );
+        const receipt = await tx.wait();
+        escrowIds.push(receipt.logs[0].args[0]);
+      }
+      
+      // Create escrow from buyer2
+      await escrow.connect(buyer2).createEscrow(
+        seller.address,
+        ethers.ZeroAddress,
+        depositAmount,
+        ethers.ZeroAddress,
+        31337,
+        { value: depositAmount }
+      );
+      
+      const buyerEscrows = await escrow.getUserEscrows(buyer.address);
+      expect(buyerEscrows.length).to.equal(3);
+      expect(buyerEscrows).to.deep.equal(escrowIds);
+      
+      const buyer2Escrows = await escrow.getUserEscrows(buyer2.address);
+      expect(buyer2Escrows.length).to.equal(1);
+    });
+
+    it("Should return dispute information", async function () {
+      const depositAmount = ethers.parseEther("1");
+      
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        ethers.ZeroAddress,
+        depositAmount,
+        ethers.ZeroAddress,
+        31337,
+        { value: depositAmount }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args[0];
+      
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await escrow.connect(buyer).raiseDispute(escrowId, "Test reason");
+      
+      const disputeInfo = await escrow.getDisputeInfo(escrowId);
+      expect(disputeInfo[0]).to.be.true; // disputeRaised
+      expect(disputeInfo[1]).to.equal(buyer.address); // disputeRaisedBy
+      expect(disputeInfo[4]).to.equal("Test reason"); // disputeReason
+    });
+  });
+
+  describe("Emergency Functions", function () {
+    it("Should allow owner to withdraw stuck funds", async function () {
+      // Send some ETH directly to contract
+      await owner.sendTransaction({
+        to: await escrow.getAddress(),
+        value: ethers.parseEther("1")
+      });
+      
+      const ownerBalanceBefore = await ethers.provider.getBalance(owner.address);
+      
+      await escrow.connect(owner).emergencyWithdraw(ethers.ZeroAddress, ethers.parseEther("1"));
+      
+      const ownerBalanceAfter = await ethers.provider.getBalance(owner.address);
+      expect(ownerBalanceAfter).to.be.gt(ownerBalanceBefore);
+    });
+
+    it("Should allow owner to withdraw stuck tokens", async function () {
+      // Send tokens directly to contract
+      await usdc.mint(await escrow.getAddress(), ethers.parseUnits("1000", 6));
+      
+      const ownerBalanceBefore = await usdc.balanceOf(owner.address);
+      
+      await escrow.connect(owner).emergencyWithdraw(await usdc.getAddress(), ethers.parseUnits("1000", 6));
+      
+      const ownerBalanceAfter = await usdc.balanceOf(owner.address);
+      expect(ownerBalanceAfter - ownerBalanceBefore).to.equal(ethers.parseUnits("1000", 6));
+    });
+  });
+
+  describe("Real-world Transaction Scenarios", function () {
+    it("Should handle marketplace purchase flow with disputes", async function () {
+      const purchasePrice = ethers.parseEther("5");
+      
+      // Buyer creates escrow for NFT purchase
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        ethers.ZeroAddress,
+        purchasePrice,
+        ethers.ZeroAddress,
+        31337,
+        { value: purchasePrice }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args[0];
+      
+      // Seller transfers NFT (simulated by condition update)
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      
+      // Buyer is unhappy and raises dispute
+      await escrow.connect(buyer).raiseDispute(escrowId, "NFT not authentic");
+      
+      // Service wallet investigates and sides with seller
+      await escrow.connect(serviceWallet).resolveDispute(escrowId, true);
+      
+      // Verify seller received funds
+      const escrowData = await escrow.escrows(escrowId);
+      expect(escrowData.released).to.be.true;
+    });
+
+    it("Should handle cross-border payment with currency conversion", async function () {
+      // Scenario: USD to EUR equivalent
+      const usdAmount = ethers.parseUnits("1000", 6); // 1000 USDC
+      
+      await usdc.connect(buyer).approve(await escrow.getAddress(), usdAmount);
+      
+      // Create escrow USDC -> USDT (simulating USD -> EUR)
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address,
+        await usdc.getAddress(),
+        usdAmount,
+        await usdt.getAddress(), // Different stablecoin
+        31337
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs.find(log => {
+        try {
+          const parsed = escrow.interface.parseLog(log);
+          return parsed.name === "EscrowCreated";
+        } catch { return false; }
+      }).args[0];
+      
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      await escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId);
+      
+      // Seller receives converted currency
+      const sellerBalance = await usdt.balanceOf(seller.address);
+      expect(sellerBalance).to.be.gt(0);
+    });
+
+    it("Should handle multi-chain DeFi integration", async function () {
+      // Scenario: Yield farming rewards distribution
+      const rewardAmount = ethers.parseEther("10");
+      
+      // Protocol creates escrow for rewards distribution
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address, // Farmer
+        ethers.ZeroAddress,
+        rewardAmount,
+        await usdc.getAddress(), // Rewards in USDC on Arbitrum
+        42161,
+        { value: rewardAmount }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args[0];
+      
+      // Farming period complete
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await time.increase(DISPUTE_WINDOW + 1);
+      
+      // Release rewards cross-chain
+      const crossChainFee = ethers.parseEther("0.01");
+      await escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId, { value: crossChainFee });
+      
+      const escrowData = await escrow.escrows(escrowId);
+      expect(escrowData.released).to.be.true;
+    });
+
+    it("Should handle freelance payment with milestone disputes", async function () {
+      const paymentAmount = ethers.parseEther("2");
+      
+      // Client creates escrow for freelancer
+      const tx = await escrow.connect(buyer).createEscrow(
+        seller.address, // Freelancer
+        ethers.ZeroAddress,
+        paymentAmount,
+        ethers.ZeroAddress,
+        31337,
+        { value: paymentAmount }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args[0];
+      
+      // Work completed
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      
+      // Client disputes quality
+      await escrow.connect(buyer).raiseDispute(escrowId, "Work quality below expectations");
+      
+      // Wait for automatic resolution timeout
+      await time.increase(DISPUTE_RESOLUTION_PERIOD + 1);
+      
+      // Funds automatically returned to buyer
+      const buyerBalanceBefore = await ethers.provider.getBalance(buyer.address);
+      await escrow.connect(buyer).returnFundsAfterDisputeTimeout(escrowId);
+      const buyerBalanceAfter = await ethers.provider.getBalance(buyer.address);
+      
+      const netAmount = paymentAmount * (10000n - BigInt(SERVICE_FEE_BPS)) / 10000n;
+      expect(buyerBalanceAfter - buyerBalanceBefore).to.be.closeTo(netAmount, ethers.parseEther("0.01"));
+    });
+  });
+});

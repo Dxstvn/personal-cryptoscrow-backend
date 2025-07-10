@@ -1,7 +1,7 @@
 // Import the hardhat-toolbox which bundles common plugins
 require("@nomicfoundation/hardhat-toolbox");
 // Import dotenv to load environment variables
-require('dotenv/config');
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 require("hardhat-gas-reporter");
 
 /** @type import('hardhat/config').HardhatUserConfig */
@@ -11,8 +11,9 @@ module.exports = {
     settings: {
       optimizer: {
         enabled: true,
-        runs: 200, // Standard optimization
+        runs: 1, // Maximum optimization for contract size
       },
+      viaIR: true, // Enable IR-based optimization for better size reduction
     },
   },
   networks: {
@@ -22,31 +23,27 @@ module.exports = {
     },
     sepolia: {
       url: process.env.SEPOLIA_RPC_URL || "", // Get RPC URL from .env
-      accounts: process.env.SEPOLIA_PRIVATE_KEY !== undefined
-        ? [process.env.SEPOLIA_PRIVATE_KEY]
+      accounts: process.env.DEPLOYER_PRIVATE_KEY !== undefined
+        ? [process.env.DEPLOYER_PRIVATE_KEY]
         : [], // Get private key from .env
       chainId: 11155111, // Sepolia's chain ID
+      timeout: 600000, // 10 minutes
     },
     "polygon-amoy": {
-      url: process.env.POLYGON_RPC_URL || "", // Get RPC URL from .env
-      accounts: (() => {
-        const accounts = [];
-        if (process.env.POLYGON_PRIVATE_KEY !== undefined) {
-          accounts.push(process.env.POLYGON_PRIVATE_KEY);
-        }
-        if (process.env.BACKEND_WALLET_PRIVATE_KEY !== undefined) {
-          accounts.push(process.env.BACKEND_WALLET_PRIVATE_KEY);
-        }
-        return accounts;
-      })(), // Get private keys from .env
+      url: process.env.POLYGON_AMOY_RPC_URL || "", // Get RPC URL from .env
+      accounts: process.env.DEPLOYER_PRIVATE_KEY !== undefined
+        ? [process.env.DEPLOYER_PRIVATE_KEY]
+        : [], // Get private key from .env
       chainId: 80002, // Polygon Amoy's chain ID
+      timeout: 600000, // 10 minutes
     },
     "arbitrum-sepolia": {
       url: process.env.ARBITRUM_SEPOLIA_RPC_URL || "", // Get RPC URL from .env
-      accounts: process.env.ARBITRUM_SEPOLIA_PRIVATE_KEY !== undefined
-        ? [process.env.ARBITRUM_SEPOLIA_PRIVATE_KEY]
+      accounts: process.env.DEPLOYER_PRIVATE_KEY !== undefined
+        ? [process.env.DEPLOYER_PRIVATE_KEY]
         : [], // Get private key from .env
       chainId: 421614, // Arbitrum Sepolia's chain ID
+      timeout: 600000, // 10 minutes
     },
     "arbitrum-one": {
       url: process.env.ARBITRUM_ONE_RPC_URL || "", // Get RPC URL from .env
@@ -87,6 +84,6 @@ module.exports = {
     artifacts: "./artifacts" // Where compilation output goes
   },
   mocha: {
-    timeout: 40000 // Increase timeout for tests if needed (e.g., for forking tests)
+    timeout: 600000 // 10 minutes timeout for tests
   }
 };

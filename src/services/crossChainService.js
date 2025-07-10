@@ -1,5 +1,19 @@
+/**
+ * ⚠️ DEPRECATED SERVICE ⚠️
+ * This service is deprecated and will be removed in a future release.
+ * Cross-chain functionality has been integrated into escrowServiceV3.js.
+ * Please use escrowServiceV3.js instead for all cross-chain operations.
+ * 
+ * Migration guide: See DEPRECATION_NOTICE.md
+ * Replacement: import { EscrowServiceV3 } from './escrowServiceV3.js';
+ * 
+ * @deprecated Since Phase 3 of V3 Backend Update
+ */
 import { getAdminApp } from '../api/routes/auth/admin.js';
 import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { deprecationMonitor } from './deprecationMonitor.js';
+
+console.warn('[DEPRECATION WARNING] crossChainService.js is deprecated. Please migrate to escrowServiceV3.js');
 
 // Helper function to get database
 async function getDb() {
@@ -185,6 +199,9 @@ export async function getOptimalTransactionRoute({
   dealId,
   transactionType = 'auto'
 }) {
+  // Log deprecated usage
+  await deprecationMonitor.logUsage('crossChainService.js', 'getOptimalTransactionRoute', dealId);
+  
   try {
     console.log(`[CROSS-CHAIN] Finding optimal transaction route for deal ${dealId}: ${sourceNetwork} -> ${targetNetwork}`);
 
@@ -256,6 +273,9 @@ export async function getOptimalTransactionRoute({
  * Get bridge information for cross-chain transaction
  */
 export async function getTransactionInfo(sourceNetwork, targetNetwork, amount, tokenAddress, fromAddress, toAddress, dealId) {
+  // Log deprecated usage
+  await deprecationMonitor.logUsage('crossChainService.js', 'getTransactionInfo', dealId);
+  
   try {
     // NEW: Now handles both same-chain and cross-chain transactions
     const isSameChain = areNetworksEVMCompatible(sourceNetwork, targetNetwork) && sourceNetwork === targetNetwork;
@@ -281,6 +301,9 @@ export async function getTransactionInfo(sourceNetwork, targetNetwork, amount, t
 
 // Legacy bridge info function for backward compatibility
 export async function getBridgeInfo(sourceNetwork, targetNetwork, amount, tokenAddress, fromAddress, toAddress, dealId) {
+  // Log deprecated usage
+  await deprecationMonitor.logUsage('crossChainService.js', 'getBridgeInfo', dealId);
+  
   try {
     if (areNetworksEVMCompatible(sourceNetwork, targetNetwork) && sourceNetwork === targetNetwork) {
       return null; // No bridge needed for same-chain transactions
@@ -308,6 +331,9 @@ export async function getBridgeInfo(sourceNetwork, targetNetwork, amount, tokenA
  * Estimate transaction fees with enhanced validation
  */
 export async function estimateTransactionFees(sourceNetwork, targetNetwork, amount, tokenAddress, fromAddress) {
+  // Log deprecated usage
+  await deprecationMonitor.logUsage('crossChainService.js', 'estimateTransactionFees', fromAddress || 'unknown');
+  
   try {
     const sourceConfig = NETWORK_CONFIG[sourceNetwork];
     const targetConfig = NETWORK_CONFIG[targetNetwork];
