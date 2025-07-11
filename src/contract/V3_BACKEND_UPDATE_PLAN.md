@@ -322,16 +322,149 @@ const quote = await escrowService.quotSwap(fromToken, toToken, amount, chainId);
 - ✅ Integrated deprecation monitoring into all deprecated service methods
 - ✅ Each deprecated service now logs warnings and tracks usage metrics
 
-### Phase 4: Cleanup (Week 4)
-1. Remove deprecated service files
-2. Remove old endpoints
-3. Clean up unused imports
-4. Document new architecture
+### Phase 4: Deep Cleanup & Security Enhancement (Week 4)
+
+#### A. Deep Codebase Cleanup
+1. **Remove Deprecated Services & Dependencies**
+   - Delete all deprecated service files after monitoring confirms no usage
+   - Remove LiFi integration code and dependencies
+   - Remove old contract ABIs and artifacts (PropertyEscrow, CrossChainPropertyEscrow)
+   - Clean up package.json dependencies no longer needed
+   
+2. **Remove Unnecessary Files**
+   - Delete all frontend-related files (if any remain)
+   - Remove unused test files and mocks
+   - Clean up old migration scripts
+   - Delete temporary files and logs
+   - Remove outdated documentation
+   - Clean up old contract deployment scripts
+   
+3. **Consolidate Contract Files**
+   - Keep only V3DisputesStargateOnly contract and its tests
+   - Remove all experimental contract versions
+   - Clean up hardhat artifacts for old contracts
+   - Organize remaining contracts in clear structure
+   
+4. **API Route Cleanup**
+   - Remove deprecated endpoints
+   - Consolidate duplicate route logic
+   - Remove unused middleware
+   - Clean up old route handlers
+   
+5. **Test Suite Optimization**
+   - Remove tests for deprecated services
+   - Consolidate redundant test files
+   - Update all tests to use escrowServiceV3
+   - Remove obsolete test utilities
+   
+6. **Documentation Cleanup**
+   - Remove outdated API documentation
+   - Delete old deployment guides
+   - Consolidate README files
+   - Update all documentation to reflect V3 architecture
+
+#### B. AWS Secrets Manager Integration
+1. **Full Implementation**
+   - Replace all environment variables with AWS Secrets Manager
+   - Implement secret rotation for private keys
+   - Add caching layer for frequently accessed secrets
+   - Create secret versioning strategy
+   
+2. **Secrets to Migrate**
+   - RPC URLs for all supported chains
+   - Private keys (backend wallet, service wallet)
+   - Firebase service account credentials
+   - API keys (Infura, Alchemy, etc.)
+   - Database connection strings
+   - JWT secrets
+   
+3. **Implementation Details**
+   ```javascript
+   // secretsManager.js
+   class SecretsManager {
+     async getSecret(secretName, versionId = null)
+     async rotateSecret(secretName)
+     async cacheSecret(secretName, ttl = 3600)
+     async batchGetSecrets(secretNames)
+   }
+   ```
+   
+4. **Testing & Validation**
+   - Unit tests for secrets retrieval
+   - Integration tests with mock secrets
+   - Performance tests for cached vs non-cached
+   - Rotation simulation tests
+   - Failover and retry logic tests
+   
+5. **Security Enhancements**
+   - Remove all hardcoded secrets
+   - Implement least-privilege IAM policies
+   - Add secret access logging
+   - Create secret usage audit trail
+
+#### C. File Structure After Cleanup
+```
+personal-cryptoscrow-backend/
+├── src/
+│   ├── api/
+│   │   ├── routes/
+│   │   │   ├── auth/          # Authentication routes only
+│   │   │   ├── transaction/   # V3 transaction routes
+│   │   │   ├── wallet/        # Wallet management
+│   │   │   ├── contact/       # Contact/invitation system
+│   │   │   └── health/        # Health checks
+│   │   └── middleware/        # Clean middleware only
+│   ├── services/
+│   │   ├── escrowServiceV3.js           # Main service
+│   │   ├── contractConditionSync.js     # Real-time sync
+│   │   ├── disputeMonitor.js            # Dispute tracking
+│   │   ├── secretsManager.js            # AWS Secrets Manager
+│   │   └── __tests__/                   # V3 tests only
+│   ├── contract/
+│   │   ├── contracts/
+│   │   │   └── UniversalEscrowServiceV3DisputesStargateOnly.sol
+│   │   ├── test/                        # Contract tests
+│   │   ├── scripts/                     # Deployment scripts only
+│   │   └── hardhat.config.js
+│   └── utils/                           # Minimal utilities
+├── package.json                         # Cleaned dependencies
+├── .env.example                         # Example only, no real values
+└── README.md                            # Updated documentation
+```
+
+#### D. Cleanup Checklist
+- [ ] Run deprecation monitor for 1 week to confirm no usage
+- [ ] Backup current codebase before cleanup
+- [ ] Delete deprecated services one by one
+- [ ] Remove unused npm packages
+- [ ] Clean contract artifacts
+- [ ] Remove old test files
+- [ ] Delete temporary and log files
+- [ ] Implement AWS Secrets Manager
+- [ ] Migrate all secrets
+- [ ] Test secret rotation
+- [ ] Update all import statements
+- [ ] Run full test suite
+- [ ] Update documentation
+- [ ] Create final architecture diagram
+- [ ] Performance benchmark before/after
 
 ### Simplified Architecture Result:
 ```
-Before: 6 service files + complex routing
-After:  1 service file + clean API routes
+Before: 
+- 6+ service files with overlapping functionality
+- Complex routing with multiple contract types
+- Hardcoded secrets in .env files
+- Mixed frontend/backend code
+- 50+ unused files and dependencies
+
+After:  
+- 1 main service file (escrowServiceV3.js)
+- Clean API routes with single contract type
+- AWS Secrets Manager for all secrets
+- Pure backend codebase
+- Minimal, focused file structure
+- 70% reduction in codebase size
 ```
 
 ## Key Considerations

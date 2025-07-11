@@ -1,3 +1,4 @@
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 process.env.FIRESTORE_EMULATOR_HOST = 'localhost:5004'; // MUST BE AT THE VERY TOP
 console.log(`[Test File Top] FIRESTORE_EMULATOR_HOST set to: ${process.env.FIRESTORE_EMULATOR_HOST}`);
 
@@ -29,9 +30,9 @@ import { deleteAdminApp } from '../../../api/routes/auth/admin.js';
 let db; // Declare db here, initialize in beforeAll
 
 // Mock node-cron
-const mockCronSchedule = jest.fn(() => ({ start: jest.fn(), stop: jest.fn() }));
-const mockCronValidate = jest.fn().mockReturnValue(true);
-jest.unstable_mockModule('node-cron', () => ({
+const mockCronSchedule = vi.fn(() => ({ start: vi.fn(), stop: vi.fn() }));
+const mockCronValidate = vi.fn().mockReturnValue(true);
+vi.mock('node-cron', () => ({
   schedule: mockCronSchedule,
   validate: mockCronValidate,
   default: {
@@ -41,23 +42,23 @@ jest.unstable_mockModule('node-cron', () => ({
 }));
 
 // Mock blockchainService
-const mockTriggerReleaseAfterApproval = jest.fn();
-const mockTriggerCancelAfterDisputeDeadline = jest.fn();
-const mockInitializeBlockchainService = jest.fn();
+const mockTriggerReleaseAfterApproval = vi.fn();
+const mockTriggerCancelAfterDisputeDeadline = vi.fn();
+const mockInitializeBlockchainService = vi.fn();
 
 // ✅ NEW: Mock cross-chain service
-const mockCheckPendingTransactionStatus = jest.fn();
-const mockTriggerCrossChainReleaseAfterApprovalSimple = jest.fn();
-const mockTriggerCrossChainCancelAfterDisputeDeadline = jest.fn();
-const mockHandleStuckCrossChainTransaction = jest.fn();
-const mockGetCrossChainTransactionsForDeal = jest.fn();
+const mockCheckPendingTransactionStatus = vi.fn();
+const mockTriggerCrossChainReleaseAfterApprovalSimple = vi.fn();
+const mockTriggerCrossChainCancelAfterDisputeDeadline = vi.fn();
+const mockHandleStuckCrossChainTransaction = vi.fn();
+const mockGetCrossChainTransactionsForDeal = vi.fn();
 
 // Use an object to hold the mock ABI, allowing its `current` property to be reassigned
 // and the getter will always access the latest assignment.
 const mockContractABIHolder = { current: [{ type: "function", name: "defaultMockFunction" }] }; 
 
 // In the test file, replace the existing blockchainService mock with this:
-jest.unstable_mockModule('../../blockchainService.js', () => {
+vi.mock('../../blockchainService.js', () => {
   return {
     __esModule: true,
     initializeBlockchainService: mockInitializeBlockchainService,
@@ -67,17 +68,17 @@ jest.unstable_mockModule('../../blockchainService.js', () => {
       console.log(`[TEST DEBUGGERY] contractABI getter invoked. Returning: ${JSON.stringify(mockContractABIHolder.current)}`);
       return mockContractABIHolder.current;
     },
-    __TEST_ONLY_simulateAbiLoadingFailure: jest.fn(),
-    __TEST_ONLY_getInternalAbiState: jest.fn(),
-    initializeService: jest.fn().mockResolvedValue(true),
+    __TEST_ONLY_simulateAbiLoadingFailure: vi.fn(),
+    __TEST_ONLY_getInternalAbiState: vi.fn(),
+    initializeService: vi.fn().mockResolvedValue(true),
   };
 });
 
 // Import the actual blockchainService to spy on its methods
 // import * as actualBlockchainService from '../../blockchainService.js'; // No longer needed for spying
 // Spy on the methods we expect scheduledJobs to call
-// const triggerReleaseSpy = jest.spyOn(actualBlockchainService, 'triggerReleaseAfterApproval'); // Replaced by mock
-// const triggerCancelSpy = jest.spyOn(actualBlockchainService, 'triggerCancelAfterDisputeDeadline'); // Replaced by mock
+// const triggerReleaseSpy = vi.spyOn(actualBlockchainService, 'triggerReleaseAfterApproval'); // Replaced by mock
+// const triggerCancelSpy = vi.spyOn(actualBlockchainService, 'triggerCancelAfterDisputeDeadline'); // Replaced by mock
 
 
 // Import the module to test AFTER mocks and spies are set up
@@ -206,7 +207,7 @@ describe('Scheduled Jobs Integration Tests', () => {
     jest.resetModules();
 
     // Mock blockchain service
-    jest.unstable_mockModule('../../blockchainService.js', () => ({
+    vi.mock('../../blockchainService.js', () => ({
       __esModule: true,
       initializeBlockchainService: mockInitializeBlockchainService,
       triggerReleaseAfterApproval: mockTriggerReleaseAfterApproval,
@@ -215,18 +216,18 @@ describe('Scheduled Jobs Integration Tests', () => {
     }));
 
     // ✅ NEW: Mock cross-chain service
-    jest.unstable_mockModule('../../crossChainService.js', () => ({
+    vi.mock('../../crossChainService.js', () => ({
       __esModule: true,
       checkPendingTransactionStatus: mockCheckPendingTransactionStatus,
       triggerCrossChainReleaseAfterApprovalSimple: mockTriggerCrossChainReleaseAfterApprovalSimple,
       triggerCrossChainCancelAfterDisputeDeadline: mockTriggerCrossChainCancelAfterDisputeDeadline,
       handleStuckCrossChainTransaction: mockHandleStuckCrossChainTransaction,
       getCrossChainTransactionsForDeal: mockGetCrossChainTransactionsForDeal,
-      retryCrossChainTransactionStep: jest.fn().mockResolvedValue({ success: true })
+      retryCrossChainTransactionStep: vi.fn().mockResolvedValue({ success: true })
     }));
 
     // Mock cron
-    jest.unstable_mockModule('node-cron', () => ({
+    vi.mock('node-cron', () => ({
       __esModule: true,
       schedule: mockCronSchedule,
       validate: mockCronValidate,
@@ -280,8 +281,8 @@ describe('Scheduled Jobs Integration Tests', () => {
   });
 
   afterEach(() => {
-    jest.resetAllMocks();
-    jest.useRealTimers();
+    vi.resetAllMocks();
+    vi.useRealTimers();
   });
 
   afterAll(async () => {
@@ -424,18 +425,18 @@ describe('Scheduled Jobs Integration Tests', () => {
       jest.resetModules();
       
       // Mock blockchain service as unavailable
-      jest.unstable_mockModule('../../blockchainService.js', () => ({
+      vi.mock('../../blockchainService.js', () => ({
         __esModule: true,
         get contractABI() { return null; }
       }));
 
       // Keep cross-chain service available
-      jest.unstable_mockModule('../../crossChainService.js', () => ({
+      vi.mock('../../crossChainService.js', () => ({
         __esModule: true,
         checkPendingTransactionStatus: mockCheckPendingTransactionStatus,
       }));
 
-      jest.unstable_mockModule('node-cron', () => ({
+      vi.mock('node-cron', () => ({
         __esModule: true,
         schedule: mockCronSchedule,
         validate: mockCronValidate,
@@ -520,7 +521,7 @@ describe('Scheduled Jobs Integration Tests', () => {
 
   describe('Performance and Concurrency', () => {
     it('should prevent concurrent executions of the same job type', async () => {
-      jest.useFakeTimers();
+      vi.useFakeTimers();
       
       if (typeof __TEST_ONLY_resetJobRunningFlag === 'function') {
         __TEST_ONLY_resetJobRunningFlag();
@@ -536,11 +537,11 @@ describe('Scheduled Jobs Integration Tests', () => {
       // Should only execute database queries once (second job skipped)
       expect(jest.mocked(getDealsPastFinalApproval)).toHaveBeenCalledTimes(1);
       
-      jest.useRealTimers();
+      vi.useRealTimers();
     });
 
     it('should allow concurrent execution of different job types', async () => {
-      jest.useFakeTimers();
+      vi.useFakeTimers();
       
       if (typeof __TEST_ONLY_resetJobRunningFlag === 'function') {
         __TEST_ONLY_resetJobRunningFlag();
@@ -557,7 +558,7 @@ describe('Scheduled Jobs Integration Tests', () => {
       expect(jest.mocked(getDealsPastFinalApproval)).toHaveBeenCalled();
       expect(jest.mocked(getCrossChainTransactionsPendingCheck)).toHaveBeenCalled();
       
-      jest.useRealTimers();
+      vi.useRealTimers();
     });
 
     it('should handle high-frequency cross-chain monitoring efficiently', async () => {

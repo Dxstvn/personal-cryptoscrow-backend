@@ -4,16 +4,18 @@ import express from 'express';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { ethers } from 'ethers';
+import config from '../../../config/index.js';
 
 const router = express.Router();
 
 // Detailed health check with timing metrics
 router.get('/', async (req, res) => {
+  await config.initialize();
   const startTime = Date.now();
   const health = {
     status: 'OK',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV,
+    environment: config.get('NODE_ENV'),
     version: process.env.npm_package_version || '1.0.0',
     uptime: process.uptime(),
     memory: process.memoryUsage(),
@@ -42,12 +44,12 @@ router.get('/', async (req, res) => {
     // Blockchain connectivity check
     const bcStart = Date.now();
     try {
-      const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
+      const provider = new ethers.JsonRpcProvider(config.get('RPC_URL'));
       await provider.getBlockNumber();
       health.checks.blockchain = {
         status: 'OK',
         responseTime: Date.now() - bcStart,
-        chainId: process.env.CHAIN_ID
+        chainId: config.get('CHAIN_ID')
       };
     } catch (error) {
       health.checks.blockchain = {

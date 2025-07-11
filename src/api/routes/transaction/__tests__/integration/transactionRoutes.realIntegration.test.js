@@ -1,3 +1,4 @@
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 // TRUE Integration Test Example for Cross-Chain Transactions
 // This file demonstrates how integration tests should be structured vs unit tests
 

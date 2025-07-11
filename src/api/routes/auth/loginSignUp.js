@@ -7,9 +7,18 @@ import { getAdminApp } from "./admin.js";
 import { getAuth, signInWithCustomToken } from "firebase/auth";
 import { ethEscrowApp } from "./authIndex.js";
 import express from "express";
-import '../../../config/env.js';
+import config from '../../../config/index.js';
 
 const router = express.Router();
+
+// Ensure config is initialized
+let configInitialized = false;
+async function ensureConfig() {
+  if (!configInitialized) {
+    await config.initialize();
+    configInitialized = true;
+  }
+}
 
 // Helper function to get Firebase services
 async function getFirebaseServices() {
@@ -41,6 +50,7 @@ async function getIdTokenFromCustomToken(customToken) {
 
 // Email/Password Sign-Up Route
 router.post("/signUpEmailPass", async (req, res) => {
+  await ensureConfig();
   const { email, password, walletAddress } = req.body;
   const currentIsTest = process.env.NODE_ENV === 'test';
 
@@ -84,8 +94,8 @@ router.post("/signUpEmailPass", async (req, res) => {
     }
     
     // For production environments, add admin claim
-    if (!currentIsTest && process.env.ALLOWED_EMAILS) {
-      const allowedEmails = process.env.ALLOWED_EMAILS.split(',').map(e => e.trim().toLowerCase());
+    if (!currentIsTest && config.get('ALLOWED_EMAILS')) {
+      const allowedEmails = config.get('ALLOWED_EMAILS').split(',').map(e => e.trim().toLowerCase());
       if (allowedEmails.includes(email.toLowerCase())) {
         await auth.setCustomUserClaims(userRecord.uid, { admin: true });
         console.log(`/signUpEmailPass: Admin claims set for user ${userRecord.uid}`);
@@ -122,6 +132,7 @@ router.post("/signUpEmailPass", async (req, res) => {
 
 // Email/Password Sign-In Route  
 router.post("/signInEmailPass", async (req, res) => {
+  await ensureConfig();
   const { email, password } = req.body;
   const currentIsTest = process.env.NODE_ENV === 'test';
 
@@ -147,8 +158,8 @@ router.post("/signInEmailPass", async (req, res) => {
     }
 
     // For production environments, verify admin claims
-    if (!currentIsTest && process.env.ALLOWED_EMAILS) {
-      const allowedEmails = process.env.ALLOWED_EMAILS.split(',').map(e => e.trim().toLowerCase());
+    if (!currentIsTest && config.get('ALLOWED_EMAILS')) {
+      const allowedEmails = config.get('ALLOWED_EMAILS').split(',').map(e => e.trim().toLowerCase());
       if (!allowedEmails.includes(email.toLowerCase())) {
         console.log(`/signInEmailPass: Email not in allowed list: ${email}`);
         return res.status(403).json({ error: 'Access denied' });
@@ -185,6 +196,7 @@ router.post("/signInEmailPass", async (req, res) => {
 
 // Google Sign-In Route
 router.post("/signInGoogle", async (req, res) => {
+  await ensureConfig();
   const { idToken } = req.body;
   const currentIsTest = process.env.NODE_ENV === 'test';
 
@@ -228,8 +240,8 @@ router.post("/signInGoogle", async (req, res) => {
     }
 
     // For production environments, verify admin claims
-    if (!currentIsTest && process.env.ALLOWED_EMAILS) {
-      const allowedEmails = process.env.ALLOWED_EMAILS.split(',').map(e => e.trim().toLowerCase());
+    if (!currentIsTest && config.get('ALLOWED_EMAILS')) {
+      const allowedEmails = config.get('ALLOWED_EMAILS').split(',').map(e => e.trim().toLowerCase());
       if (!allowedEmails.includes(email.toLowerCase())) {
         console.log(`/signInGoogle: Email not in allowed list: ${email}`);
         return res.status(403).json({ error: 'Access denied' });

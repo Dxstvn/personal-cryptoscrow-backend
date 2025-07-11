@@ -1,16 +1,18 @@
 import express from "express";
 import { getFirestore } from "firebase-admin/firestore";
 import { getAdminApp } from "../auth/admin.js";
+import config from '../../../config/index.js';
 
 const router = express.Router();
 
 // Simple health check without Firebase (for basic connectivity test)
-router.get("/simple", (req, res) => {
+router.get("/simple", async (req, res) => {
+  await config.initialize();
   res.status(200).json({ 
     status: "OK", 
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    port: process.env.PORT || 'unknown'
+    environment: config.get('NODE_ENV') || 'development',
+    port: config.get('PORT') || 'unknown'
   });
 });
 
@@ -52,7 +54,7 @@ router.get("/", async (req, res) => {
       status: "OK", 
       firebase: "connected",
       timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || 'development'
+      environment: config.get('NODE_ENV') || 'development'
     });
   } catch (error) {
     console.error("Health check failed:", error);
@@ -60,7 +62,7 @@ router.get("/", async (req, res) => {
       error: "Internal Server Error", 
       details: error.message,
       timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || 'development'
+      environment: config.get('NODE_ENV') || 'development'
     });
   }
 });

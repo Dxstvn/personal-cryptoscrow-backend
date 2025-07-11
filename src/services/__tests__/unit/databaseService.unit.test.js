@@ -1,30 +1,30 @@
-import { jest } from '@jest/globals';
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 
 // Mock Firestore and adminApp before importing the service
-const mockGetFirestore = jest.fn();
-const mockCollection = jest.fn();
-const mockDoc = jest.fn();
-const mockWhere = jest.fn();
-const mockGet = jest.fn();
-const mockUpdate = jest.fn();
-const mockFieldValueServerTimestamp = jest.fn(() => 'mock_server_timestamp');
-const mockFieldValueArrayUnion = jest.fn((...args) => ({ type: 'arrayUnion', args }));
-const mockTimestampNow = jest.fn();
+const mockGetFirestore = vi.fn();
+const mockCollection = vi.fn();
+const mockDoc = vi.fn();
+const mockWhere = vi.fn();
+const mockGet = vi.fn();
+const mockUpdate = vi.fn();
+const mockFieldValueServerTimestamp = vi.fn(() => 'mock_server_timestamp');
+const mockFieldValueArrayUnion = vi.fn((...args) => ({ type: 'arrayUnion', args }));
+const mockTimestampNow = vi.fn();
 const mockAdminApp = {}; // Mock adminApp
 
 // Mock the firebase-admin default import - this is what databaseService uses in test mode
-const mockFirestore = jest.fn();
-jest.unstable_mockModule('firebase-admin', () => ({
+const mockFirestore = vi.fn();
+vi.mock('firebase-admin', () => ({
   default: {
     firestore: mockFirestore,
   },
 }));
 
-jest.unstable_mockModule('firebase-admin/firestore', () => ({
+vi.mock('firebase-admin/firestore', () => ({
   getFirestore: mockGetFirestore,
   Timestamp: {
     now: mockTimestampNow,
-    fromDate: jest.fn(date => ({
+    fromDate: vi.fn(date => ({
       toDate: () => date,
       toMillis: () => date.getTime(),
       seconds: Math.floor(date.getTime() / 1000),
@@ -38,9 +38,9 @@ jest.unstable_mockModule('firebase-admin/firestore', () => ({
   },
 }));
 
-jest.unstable_mockModule('../../../api/routes/auth/admin.js', () => ({
+vi.mock('../../../api/routes/auth/admin.js', () => ({
   adminApp: mockAdminApp,
-  getAdminApp: jest.fn().mockResolvedValue(mockAdminApp),
+  getAdminApp: vi.fn().mockResolvedValue(mockAdminApp),
 }));
 
 // Dynamically import the service functions after mocks are set up
@@ -78,7 +78,7 @@ describe('Database Service - Unit Tests', () => {
   });
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
     // Reset and reconfigure mocks that might change per test or need fresh instances
     // mockGetFirestore is already configured in beforeAll for initial db setup.
@@ -91,8 +91,8 @@ describe('Database Service - Unit Tests', () => {
     mockWhere.mockReturnValue({
       where: mockWhere, // Chain .where calls
       get: mockGet,
-      orderBy: jest.fn().mockReturnThis(), // Mock orderBy if used with where
-      limit: jest.fn().mockReturnThis(),   // Mock limit if used with where
+      orderBy: vi.fn().mockReturnThis(), // Mock orderBy if used with where
+      limit: vi.fn().mockReturnThis(),   // Mock limit if used with where
     });
     mockDoc.mockReturnValue({
         update: mockUpdate,
@@ -135,7 +135,7 @@ describe('Database Service - Unit Tests', () => {
     });
 
     it('should log an error and return an empty array if Firestore query fails', async () => {
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const firestoreError = new Error('Firestore query failed');
       mockGet.mockRejectedValue(firestoreError);
 
@@ -171,7 +171,7 @@ describe('Database Service - Unit Tests', () => {
     });
 
     it('should log an error and return an empty array if Firestore query fails', async () => {
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const firestoreError = new Error('Firestore query failed for dispute');
       mockGet.mockRejectedValue(firestoreError);
 
@@ -242,7 +242,7 @@ describe('Database Service - Unit Tests', () => {
     });
 
     it('should log an error and not call update if dealId is missing', async () => {
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       await updateDealStatusInDB(null, { status: newStatus, timelineEventMessage: eventMessage });
       expect(consoleErrorSpy).toHaveBeenCalledWith("[DBService] Invalid parameters for updateDealStatusInDB:", { dealId: null, updateData: { status: newStatus, timelineEventMessage: eventMessage } });
       expect(mockUpdate).not.toHaveBeenCalled();
@@ -250,7 +250,7 @@ describe('Database Service - Unit Tests', () => {
     });
 
     it('should log an error and not call update if newStatus is missing', async () => {
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         await updateDealStatusInDB(dealId, { timelineEventMessage: eventMessage }); // status is missing
         expect(consoleErrorSpy).toHaveBeenCalledWith("[DBService] Invalid parameters for updateDealStatusInDB:", { dealId, updateData: { timelineEventMessage: eventMessage } });
         expect(mockUpdate).not.toHaveBeenCalled();
@@ -258,7 +258,7 @@ describe('Database Service - Unit Tests', () => {
       });
 
     it('should log an error and not call update if eventMessage is missing', async () => {
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         await updateDealStatusInDB(dealId, { status: newStatus }); // eventMessage is missing
         expect(consoleErrorSpy).toHaveBeenCalledWith("[DBService] Invalid parameters for updateDealStatusInDB:", { dealId, updateData: { status: newStatus } });
         expect(mockUpdate).not.toHaveBeenCalled();
@@ -266,7 +266,7 @@ describe('Database Service - Unit Tests', () => {
     });
     
     it('should log an error if Firestore update fails', async () => {
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const firestoreError = new Error('Firestore update failed');
       mockUpdate.mockRejectedValue(firestoreError);
 
@@ -321,7 +321,7 @@ describe('Database Service - Unit Tests', () => {
       });
 
       it('should handle errors gracefully', async () => {
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const error = new Error('Firestore query failed');
         mockGet.mockRejectedValue(error);
 
@@ -386,7 +386,7 @@ describe('Database Service - Unit Tests', () => {
       });
 
       it('should handle errors gracefully', async () => {
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const error = new Error('Transaction check failed');
         mockGet.mockRejectedValue(error);
 
@@ -433,7 +433,7 @@ describe('Database Service - Unit Tests', () => {
       });
 
       it('should handle errors gracefully', async () => {
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const error = new Error('Stuck deals query failed');
         mockGet.mockRejectedValue(error);
 
@@ -478,7 +478,7 @@ describe('Database Service - Unit Tests', () => {
       });
 
       it('should handle errors gracefully', async () => {
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const error = new Error('Cross-chain approval query failed');
         mockGet.mockRejectedValue(error);
 
@@ -523,7 +523,7 @@ describe('Database Service - Unit Tests', () => {
       });
 
       it('should handle errors gracefully', async () => {
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const error = new Error('Cross-chain dispute query failed');
         mockGet.mockRejectedValue(error);
 
@@ -609,7 +609,7 @@ describe('Database Service - Unit Tests', () => {
       });
 
       it('should validate required cross-chain parameters', async () => {
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         
         await updateCrossChainDealStatus(dealId, {
           status: newStatus,
@@ -629,7 +629,7 @@ describe('Database Service - Unit Tests', () => {
       });
 
       it('should log error if dealId is missing', async () => {
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         
         await updateCrossChainDealStatus(null, {
           status: newStatus,
@@ -647,7 +647,7 @@ describe('Database Service - Unit Tests', () => {
       });
 
       it('should handle Firestore update failures', async () => {
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const firestoreError = new Error('Cross-chain update failed');
         mockUpdate.mockRejectedValue(firestoreError);
 

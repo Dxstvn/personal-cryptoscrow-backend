@@ -57,7 +57,7 @@ if (process.env.NODE_ENV === 'test') {
 
 // Load polyfills first
 import './config/polyfills.js';
-import './config/env.js';
+import config from './config/index.js';
 import express from 'express';
 import cors from 'cors';
 import { 
@@ -125,19 +125,32 @@ app.use('*', (req, res) => {
 // Secure error handler (must be last)
 app.use(secureErrorHandler);
 
-const port = process.env.PORT || 3000;
+// Initialize configuration before starting server
+async function startServer() {
+  try {
+    await config.initialize();
+    
+    const port = config.get('PORT') || 3000;
+    
+    const server = app.listen(port, () => {
+      console.log(`🚀 CryptoEscrow Backend server running on port ${port}`);
+      console.log(`Environment: ${config.get('NODE_ENV')}`);
+      console.log(`AWS Secrets Manager: ${config.get('USE_AWS_SECRETS') ? 'Enabled' : 'Disabled'}`);
+    });
+    
+    // Graceful shutdown
+    process.on('SIGTERM', () => {
+      console.log('SIGTERM received, shutting down gracefully');
+      server.close(() => {
+        console.log('Process terminated');
+      });
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
 
-const server = app.listen(port, () => {
-  console.log(`🚀 CryptoEscrow Backend server running on port ${port}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
-  server.close(() => {
-    console.log('Process terminated');
-  });
-});
+startServer();
 
 export default app; 

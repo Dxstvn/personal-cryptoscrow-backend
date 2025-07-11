@@ -1,45 +1,45 @@
 // src/api/routes/auth/__tests__/unit/loginSignUp.unit.test.js
-import { jest } from '@jest/globals';
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 
 // Create mock objects that will hold all our mock functions for Firebase Admin SDK
 const mockFirebaseAdminAuth = {
-  createUser: jest.fn(),
-  getUserByEmail: jest.fn(),
-  createCustomToken: jest.fn(),
-  setCustomUserClaims: jest.fn(),
-  getUser: jest.fn(),
-  verifyIdToken: jest.fn(),
+  createUser: vi.fn(),
+  getUserByEmail: vi.fn(),
+  createCustomToken: vi.fn(),
+  setCustomUserClaims: vi.fn(),
+  getUser: vi.fn(),
+  verifyIdToken: vi.fn(),
 };
 
 const mockFirebaseAdminFirestore = {
-  collection: jest.fn(),
+  collection: vi.fn(),
 };
 
 const mockAdminApp = { name: 'mockAdminApp' };
 
 // Mock firebase-admin/auth (Admin SDK)
-jest.unstable_mockModule('firebase-admin/auth', () => ({
-  getAuth: jest.fn(() => mockFirebaseAdminAuth),
+vi.mock('firebase-admin/auth', () => ({
+  getAuth: vi.fn(() => mockFirebaseAdminAuth),
 }));
 
 // Mock firebase-admin/firestore (Admin SDK)
-jest.unstable_mockModule('firebase-admin/firestore', () => ({
-  getFirestore: jest.fn(() => mockFirebaseAdminFirestore),
+vi.mock('firebase-admin/firestore', () => ({
+  getFirestore: vi.fn(() => mockFirebaseAdminFirestore),
 }));
 
 // Mock admin.js
-jest.unstable_mockModule('../../admin.js', () => ({
-  getAdminApp: jest.fn().mockResolvedValue(mockAdminApp),
+vi.mock('../../admin.js', () => ({
+  getAdminApp: vi.fn().mockResolvedValue(mockAdminApp),
 }));
 
 // Mock Firestore operations
 const mockFirestoreDoc = {
-  set: jest.fn().mockResolvedValue({}),
+  set: vi.fn().mockResolvedValue({}),
 };
 
 const mockFirestoreCollection = {
-  doc: jest.fn(() => mockFirestoreDoc),
+  doc: vi.fn(() => mockFirestoreDoc),
 };
 
 let router;
@@ -55,9 +55,9 @@ const mockRequest = (body = {}, params = {}, query = {}, method = 'POST', url = 
 
 const mockResponse = () => {
   const res = {};
-  res.status = jest.fn().mockReturnThis();
-  res.json = jest.fn().mockReturnThis();
-  res.send = jest.fn().mockReturnThis();
+  res.status = vi.fn().mockReturnThis();
+  res.json = vi.fn().mockReturnThis();
+  res.send = vi.fn().mockReturnThis();
   return res;
 };
 
@@ -65,7 +65,7 @@ let originalNodeEnv;
 
 describe('Unit Tests for loginSignUp.js Router', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     originalNodeEnv = process.env.NODE_ENV;
     
     // Setup default Firestore mocks
@@ -115,7 +115,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
       const req = mockRequest({ email: 'test@example.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
       await router(req, res, next);
 
       // Allow any pending microtasks/macrotasks to complete
@@ -148,7 +148,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
       const req = mockRequest({ email: 'test@example.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
       await router(req, res, next);
 
       await new Promise(resolve => setImmediate(resolve));
@@ -169,7 +169,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
     it('should return 400 if email or password is missing', async () => {
       const req = mockRequest({ email: 'test@example.com' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
       await router(req, res, next);
 
       await new Promise(resolve => setImmediate(resolve));
@@ -186,7 +186,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       
       const req = mockRequest({ email: 'test@example.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
       await router(req, res, next);
 
       await new Promise(resolve => setImmediate(resolve));
@@ -203,7 +203,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       
       const req = mockRequest({ email: 'test@example.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
       await router(req, res, next);
 
       await new Promise(resolve => setImmediate(resolve));
@@ -230,7 +230,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
       const req = mockRequest({ email: 'test@example.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
       await router(req, res, next);
 
       await new Promise(resolve => setImmediate(resolve));
@@ -257,7 +257,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
       const req = mockRequest({ email: 'admin@example.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
       await router(req, res, next);
 
       await new Promise(resolve => setImmediate(resolve));
@@ -283,7 +283,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
       const req = mockRequest({ email: 'user@example.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
       await router(req, res, next);
 
       await new Promise(resolve => setImmediate(resolve));
@@ -296,7 +296,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
     it('should return 400 if email or password is missing for sign in', async () => {
       const req = mockRequest({ email: 'test@example.com' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
       await router(req, res, next);
 
       await new Promise(resolve => setImmediate(resolve));
@@ -313,7 +313,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       
       const req = mockRequest({ email: 'nonexistent@example.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
       await router(req, res, next);
 
       await new Promise(resolve => setImmediate(resolve));
@@ -329,7 +329,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       
       const req = mockRequest({ email: 'test@example.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
       await router(req, res, next);
 
       await new Promise(resolve => setImmediate(resolve));
@@ -347,7 +347,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
     it('should return 400 if idToken is missing', async () => {
       const req = mockRequest({}, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
       await router(req, res, next);
 
       await new Promise(resolve => setImmediate(resolve));
@@ -365,7 +365,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       it('should return 401 for literal "invalid-token" in test mode', async () => {
         const req = mockRequest({ idToken: 'invalid-token' }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
-        const next = jest.fn();
+        const next = vi.fn();
         await router(req, res, next);
 
         await new Promise(resolve => setImmediate(resolve));
@@ -383,7 +383,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
         
         const req = mockRequest({ idToken: adminUid }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
-        const next = jest.fn();
+        const next = vi.fn();
         await router(req, res, next);
 
         await new Promise(resolve => setImmediate(resolve));
@@ -406,7 +406,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
         
         const req = mockRequest({ idToken: userUid }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
-        const next = jest.fn();
+        const next = vi.fn();
         await router(req, res, next);
 
         await new Promise(resolve => setImmediate(resolve));
@@ -421,7 +421,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
         
         const req = mockRequest({ idToken: 'unknownUid' }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
-        const next = jest.fn();
+        const next = vi.fn();
         await router(req, res, next);
 
         await new Promise(resolve => setImmediate(resolve));
@@ -445,7 +445,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
         const req = mockRequest({ idToken: 'validGoogleToken' }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
-        const next = jest.fn();
+        const next = vi.fn();
         await router(req, res, next);
 
         await new Promise(resolve => setImmediate(resolve));
@@ -464,7 +464,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
         const req = mockRequest({ idToken: 'validGoogleTokenUser' }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
-        const next = jest.fn();
+        const next = vi.fn();
         await router(req, res, next);
 
         await new Promise(resolve => setImmediate(resolve));
@@ -482,7 +482,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
         const req = mockRequest({ idToken: 'validGoogleTokenUnauthorized' }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
-        const next = jest.fn();
+        const next = vi.fn();
         await router(req, res, next);
 
         await new Promise(resolve => setImmediate(resolve));
@@ -500,7 +500,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
         
         const req = mockRequest({ idToken: 'expiredToken' }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
-        const next = jest.fn();
+        const next = vi.fn();
         await router(req, res, next);
 
         await new Promise(resolve => setImmediate(resolve));
@@ -517,7 +517,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
         const req = mockRequest({ idToken: 'invalidSigToken' }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
-        const next = jest.fn();
+        const next = vi.fn();
         await router(req, res, next);
 
         await new Promise(resolve => setImmediate(resolve));
@@ -538,7 +538,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
         const req = mockRequest({ idToken: 'tokenForNotFoundUser' }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
-        const next = jest.fn();
+        const next = vi.fn();
         await router(req, res, next);
 
         await new Promise(resolve => setImmediate(resolve));
@@ -555,7 +555,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
         
         const req = mockRequest({ idToken: 'tokenCausingInternalError' }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
-        const next = jest.fn();
+        const next = vi.fn();
         await router(req, res, next);
 
         await new Promise(resolve => setImmediate(resolve));

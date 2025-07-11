@@ -1,6 +1,7 @@
 // Deprecation Monitor - Tracks usage of deprecated services
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAdminApp } from '../api/routes/auth/admin.js';
+import config from '../config/index.js';
 
 class DeprecationMonitor {
   constructor() {
@@ -16,6 +17,7 @@ class DeprecationMonitor {
   }
 
   async initialize() {
+    await config.initialize();
     const adminApp = await getAdminApp();
     this.db = getFirestore(adminApp);
   }
@@ -47,7 +49,7 @@ class DeprecationMonitor {
         method: methodName,
         userId,
         timestamp,
-        environment: process.env.NODE_ENV || 'development'
+        environment: config.get('NODE_ENV') || 'development'
       });
     } catch (error) {
       console.error('[DEPRECATION MONITOR] Failed to log to Firestore:', error);

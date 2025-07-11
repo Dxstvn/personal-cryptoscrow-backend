@@ -1,3 +1,4 @@
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 // Import required modules
 import request from 'supertest';
 import express from 'express';

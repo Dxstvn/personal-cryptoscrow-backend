@@ -1,3 +1,4 @@
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { jest, describe, it, expect, beforeEach, afterEach, afterAll, beforeAll } from '@jest/globals';
 import { initializeApp as initializeAdminApp, getApps, deleteApp } from 'firebase-admin/app';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';

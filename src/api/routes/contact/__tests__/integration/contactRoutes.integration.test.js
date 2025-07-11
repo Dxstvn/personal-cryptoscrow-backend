@@ -1,3 +1,4 @@
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import contactRouter from '../../contactRoutes.js'; // Adjust path relative to test file

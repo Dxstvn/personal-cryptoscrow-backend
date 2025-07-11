@@ -1,36 +1,36 @@
-import { jest } from '@jest/globals';
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import express from 'express';
 import request from 'supertest'; // Import supertest
 // import router from '../../contactRoutes.js'; // Will be dynamically imported
 
 // --- New Mock Setup --- 
 const mockFirestoreInstance = {
-  collection: jest.fn(),
-  runTransaction: jest.fn(),
-  batch: jest.fn(),
+  collection: vi.fn(),
+  runTransaction: vi.fn(),
+  batch: vi.fn(),
 };
 
 const mockAuthInstance = {
-  verifyIdToken: jest.fn(),
+  verifyIdToken: vi.fn(),
 };
 
 const mockAdminApp = { name: 'mockAdminApp' };
-const mockFieldValueServerTimestamp = jest.fn(() => 'mock_server_timestamp');
+const mockFieldValueServerTimestamp = vi.fn(() => 'mock_server_timestamp');
 
-jest.unstable_mockModule('firebase-admin/firestore', () => ({
-  getFirestore: jest.fn(() => mockFirestoreInstance),
+vi.mock('firebase-admin/firestore', () => ({
+  getFirestore: vi.fn(() => mockFirestoreInstance),
   FieldValue: {
     serverTimestamp: mockFieldValueServerTimestamp,
   },
 }));
 
-jest.unstable_mockModule('firebase-admin/auth', () => ({
-  getAuth: jest.fn(() => mockAuthInstance),
+vi.mock('firebase-admin/auth', () => ({
+  getAuth: vi.fn(() => mockAuthInstance),
 }));
 
-jest.unstable_mockModule('../../../auth/admin.js', () => ({
+vi.mock('../../../auth/admin.js', () => ({
   adminApp: mockAdminApp,
-  getAdminApp: jest.fn().mockResolvedValue(mockAdminApp),
+  getAdminApp: vi.fn().mockResolvedValue(mockAdminApp),
 }));
 
 // Cache for collection mocks
@@ -59,7 +59,7 @@ const initializeFirestoreMocks = () => {
     // console.log(`[LOG TEST DEBUG] Firestore Mock Cache MISS for collection: ${collectionPath} - Creating new mock.`);
 
     const collectionMethods = {
-      doc: jest.fn(docId => {
+      doc: vi.fn(docId => {
         const docPath = `${collectionPath}/${docId}`;
         if (documentCache[docPath]) {
           // console.log(`[LOG TEST DEBUG] Firestore Mock Cache HIT for document: ${docPath}`);
@@ -68,11 +68,11 @@ const initializeFirestoreMocks = () => {
         // console.log(`[LOG TEST DEBUG] Firestore Mock Cache MISS for document: ${docPath} - Creating new mock.`);
 
         const docRefMock = {
-          get: jest.fn().mockResolvedValue({ exists: false, data: () => undefined, id: docId, path: docPath }),
-          set: jest.fn().mockResolvedValue(undefined),
-          update: jest.fn().mockResolvedValue(undefined),
-          delete: jest.fn().mockResolvedValue(undefined),
-          collection: jest.fn(subCollectionName => {
+          get: vi.fn().mockResolvedValue({ exists: false, data: () => undefined, id: docId, path: docPath }),
+          set: vi.fn().mockResolvedValue(undefined),
+          update: vi.fn().mockResolvedValue(undefined),
+          delete: vi.fn().mockResolvedValue(undefined),
+          collection: vi.fn(subCollectionName => {
             const subCollectionPath = `${docPath}/${subCollectionName}`;
             if (subCollectionCache[subCollectionPath]) {
               // console.log(`[LOG TEST DEBUG] Firestore Mock Cache HIT for subcollection: ${subCollectionPath}`);
@@ -81,7 +81,7 @@ const initializeFirestoreMocks = () => {
             // console.log(`[LOG TEST DEBUG] Firestore Mock Cache MISS for subcollection: ${subCollectionPath} - Creating new mock.`);
             
             const subCollectionMock = {
-              doc: jest.fn(subDocId => {
+              doc: vi.fn(subDocId => {
                 const fullSubDocPath = `${subCollectionPath}/${subDocId}`;
                 if (documentCache[fullSubDocPath]) {
                   // console.log(`[LOG TEST DEBUG] Firestore Mock Cache HIT for sub-document: ${fullSubDocPath}`);
@@ -89,20 +89,20 @@ const initializeFirestoreMocks = () => {
                 }
                 // console.log(`[LOG TEST DEBUG] Firestore Mock Cache MISS for sub-document: ${fullSubDocPath} - Creating new mock.`);
                 const subDocRef = {
-                  get: jest.fn().mockResolvedValue({ exists: false, data: () => undefined, id: subDocId, path: fullSubDocPath }),
-                  set: jest.fn().mockResolvedValue(undefined),
-                  update: jest.fn().mockResolvedValue(undefined),
-                  delete: jest.fn().mockResolvedValue(undefined),
+                  get: vi.fn().mockResolvedValue({ exists: false, data: () => undefined, id: subDocId, path: fullSubDocPath }),
+                  set: vi.fn().mockResolvedValue(undefined),
+                  update: vi.fn().mockResolvedValue(undefined),
+                  delete: vi.fn().mockResolvedValue(undefined),
                   path: fullSubDocPath,
                 };
                 documentCache[fullSubDocPath] = subDocRef;
                 return subDocRef;
               }),
-              where: jest.fn(),
-              orderBy: jest.fn(),
-              limit: jest.fn(),
-              add: jest.fn().mockResolvedValue({ id: 'mockSubAddedId' }),
-              get: jest.fn().mockResolvedValue({ empty: true, docs: [] }),
+              where: vi.fn(),
+              orderBy: vi.fn(),
+              limit: vi.fn(),
+              add: vi.fn().mockResolvedValue({ id: 'mockSubAddedId' }),
+              get: vi.fn().mockResolvedValue({ empty: true, docs: [] }),
               path: subCollectionPath,
             };
             subCollectionMock.where.mockReturnThis();
@@ -116,11 +116,11 @@ const initializeFirestoreMocks = () => {
         documentCache[docPath] = docRefMock;
         return docRefMock;
       }),
-      where: jest.fn(),
-      orderBy: jest.fn(),
-      limit: jest.fn(),
-      add: jest.fn().mockResolvedValue({ id: 'mockAddedId' }),
-      get: jest.fn().mockResolvedValue({ empty: true, docs: [] }),
+      where: vi.fn(),
+      orderBy: vi.fn(),
+      limit: vi.fn(),
+      add: vi.fn().mockResolvedValue({ id: 'mockAddedId' }),
+      get: vi.fn().mockResolvedValue({ empty: true, docs: [] }),
       path: collectionPath,
     };
 
@@ -134,20 +134,20 @@ const initializeFirestoreMocks = () => {
 
   mockFirestoreInstance.runTransaction.mockImplementation(async (updateFunction) => {
     const mockTransaction = {
-      get: jest.fn(ref => {
+      get: vi.fn(ref => {
         // console.log(`[LOG TEST DEBUG] Transaction.get called for path: ${ref.path}, id: ${ref.id}`);
         return Promise.resolve({ exists: false, data: () => undefined, id: ref.id, path: ref.path });
       }),
-      set: jest.fn().mockResolvedValue(undefined),
-      update: jest.fn().mockResolvedValue(undefined),
-      delete: jest.fn().mockResolvedValue(undefined),
+      set: vi.fn().mockResolvedValue(undefined),
+      update: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
     };
     return updateFunction(mockTransaction);
   });
 
   mockFirestoreInstance.batch.mockReturnValue({
-    delete: jest.fn(),
-    commit: jest.fn().mockResolvedValue(undefined),
+    delete: vi.fn(),
+    commit: vi.fn().mockResolvedValue(undefined),
   });
 };
 // --- End New Mock Setup ---
@@ -180,9 +180,9 @@ const mockRequest = (body = {}, params = {}, query = {}, headers = {}, userId) =
 
 const mockResponse = () => {
   const res = {};
-  res.status = jest.fn().mockReturnValue(res);
-  res.json = jest.fn().mockReturnValue(res);
-  res.send = jest.fn().mockReturnValue(res); // For potential text responses
+  res.status = vi.fn().mockReturnValue(res);
+  res.json = vi.fn().mockReturnValue(res);
+  res.send = vi.fn().mockReturnValue(res); // For potential text responses
   return res;
 };
 
@@ -198,7 +198,7 @@ describe('Unit Tests for contactRoutes.js', () => {
 
   beforeEach(() => {
     console.log('[LOG TEST LIFECYCLE] Running beforeEach...');
-    jest.clearAllMocks(); // Clear all mocks including those from jest.unstable_mockModule
+    vi.clearAllMocks(); // Clear all mocks including those from jest.unstable_mockModule
     
     // Re-initialize our new Firestore mock structure WITH CACHING
     initializeFirestoreMocks(); 
@@ -224,7 +224,7 @@ describe('Unit Tests for contactRoutes.js', () => {
       console.log('[LOG TEST RUN] authenticateToken Middleware: should call next() if token is valid');
       const req = mockRequest({}, {}, {}, { authorization: 'Bearer validtoken' });
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       // Simulate how the middleware might be called if it were standalone
       // For router, this is implicitly tested by authenticated routes
@@ -513,9 +513,9 @@ describe('Unit Tests for contactRoutes.js', () => {
     };
 
     it('should accept an invitation successfully', async () => {
-      const transactionGetMock = jest.fn().mockResolvedValue({ exists: true, data: () => mockInvitationData, id: 'invite123', path: 'contactInvitations/invite123' });
-      const transactionSetMock = jest.fn().mockResolvedValue(undefined);
-      const transactionUpdateMock = jest.fn().mockResolvedValue(undefined);
+      const transactionGetMock = vi.fn().mockResolvedValue({ exists: true, data: () => mockInvitationData, id: 'invite123', path: 'contactInvitations/invite123' });
+      const transactionSetMock = vi.fn().mockResolvedValue(undefined);
+      const transactionUpdateMock = vi.fn().mockResolvedValue(undefined);
 
       // Override the default runTransaction mock for this specific test
       mockFirestoreInstance.runTransaction.mockImplementationOnce(async (updateFunction) => {
@@ -523,7 +523,7 @@ describe('Unit Tests for contactRoutes.js', () => {
           get: transactionGetMock, // Use the test-specific mock
           set: transactionSetMock,
           update: transactionUpdateMock,
-          delete: jest.fn(), 
+          delete: vi.fn(), 
         };
         return updateFunction(mockTransaction);
       });
@@ -566,16 +566,16 @@ describe('Unit Tests for contactRoutes.js', () => {
     });
 
     it('should deny an invitation successfully', async () => {
-      const transactionGetMock = jest.fn().mockResolvedValue({ exists: true, data: () => mockInvitationData, id: 'invite123', path: 'contactInvitations/invite123' });
-      const transactionUpdateMock = jest.fn().mockResolvedValue(undefined);
+      const transactionGetMock = vi.fn().mockResolvedValue({ exists: true, data: () => mockInvitationData, id: 'invite123', path: 'contactInvitations/invite123' });
+      const transactionUpdateMock = vi.fn().mockResolvedValue(undefined);
 
       // Override the default runTransaction mock for this specific test
       mockFirestoreInstance.runTransaction.mockImplementationOnce(async (updateFunction) => {
         const mockTransaction = {
           get: transactionGetMock, // Use the test-specific mock
-          set: jest.fn(), 
+          set: vi.fn(), 
           update: transactionUpdateMock,
-          delete: jest.fn(), 
+          delete: vi.fn(), 
         };
         return updateFunction(mockTransaction);
       });
@@ -615,7 +615,7 @@ describe('Unit Tests for contactRoutes.js', () => {
 
     it('should return 404 if invitation not found in transaction', async () => {
       mockFirestoreInstance.runTransaction.mockImplementationOnce(async (updateFunction) => {
-        const mockTransaction = { get: jest.fn().mockResolvedValue({ exists: false }) }; // Invitation not found
+        const mockTransaction = { get: vi.fn().mockResolvedValue({ exists: false }) }; // Invitation not found
         return updateFunction(mockTransaction);
       });
       const response = await testAgent.post('/contact/response')
@@ -628,7 +628,7 @@ describe('Unit Tests for contactRoutes.js', () => {
     it('should return 403 if user is not the receiver', async () => {
       mockFirestoreInstance.runTransaction.mockImplementationOnce(async (updateFunction) => {
         const mockTransaction = { 
-          get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ ...mockInvitationData, receiverId: 'anotherUser' }) }) 
+          get: vi.fn().mockResolvedValue({ exists: true, data: () => ({ ...mockInvitationData, receiverId: 'anotherUser' }) }) 
         };
         return updateFunction(mockTransaction);
       });
@@ -642,7 +642,7 @@ describe('Unit Tests for contactRoutes.js', () => {
     it('should return 400 if invitation already processed', async () => {
        mockFirestoreInstance.runTransaction.mockImplementationOnce(async (updateFunction) => {
         const mockTransaction = { 
-          get: jest.fn().mockResolvedValue({ exists: true, data: () => ({ ...mockInvitationData, status: 'accepted' }) }) 
+          get: vi.fn().mockResolvedValue({ exists: true, data: () => ({ ...mockInvitationData, status: 'accepted' }) }) 
         };
         return updateFunction(mockTransaction);
       });
@@ -727,8 +727,8 @@ describe('Unit Tests for contactRoutes.js', () => {
     const contactIdToDelete = 'contactToRemove123';
 
     it('should delete a contact successfully', async () => {
-      const batchDeleteMock = jest.fn();
-      const batchCommitMock = jest.fn().mockResolvedValue(undefined);
+      const batchDeleteMock = vi.fn();
+      const batchCommitMock = vi.fn().mockResolvedValue(undefined);
       mockFirestoreInstance.batch.mockReturnValueOnce({ delete: batchDeleteMock, commit: batchCommitMock });
 
       const response = await testAgent.delete(`/contact/contacts/${contactIdToDelete}`).set('Authorization', 'Bearer validtoken');
@@ -765,7 +765,7 @@ describe('Unit Tests for contactRoutes.js', () => {
     });
 
     it('should return 500 on batch commit error', async () => {
-      mockFirestoreInstance.batch.mockReturnValueOnce({ delete: jest.fn(), commit: jest.fn().mockRejectedValue(new Error('Batch commit failed')) });
+      mockFirestoreInstance.batch.mockReturnValueOnce({ delete: vi.fn(), commit: vi.fn().mockRejectedValue(new Error('Batch commit failed')) });
       const response = await testAgent.delete(`/contact/contacts/${contactIdToDelete}`).set('Authorization', 'Bearer validtoken');
       expect(response.status).toBe(500);
       expect(response.body.error).toBe('Internal server error while removing contact');

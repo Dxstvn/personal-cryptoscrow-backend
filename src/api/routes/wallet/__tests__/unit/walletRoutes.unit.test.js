@@ -1,59 +1,59 @@
-import { jest } from '@jest/globals';
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import express from 'express';
 
 // Create mock objects for Firebase Admin SDK
 const mockFirebaseAdminAuth = {
-  verifyIdToken: jest.fn(),
-  getUser: jest.fn(),
+  verifyIdToken: vi.fn(),
+  getUser: vi.fn(),
 };
 
 const mockFirebaseAdminFirestore = {
-  collection: jest.fn(),
+  collection: vi.fn(),
 };
 
 const mockAdminApp = { name: 'mockAdminApp' };
 
 // Mock firebase-admin/auth (Admin SDK)
-jest.unstable_mockModule('firebase-admin/auth', () => ({
-  getAuth: jest.fn(() => mockFirebaseAdminAuth),
+vi.mock('firebase-admin/auth', () => ({
+  getAuth: vi.fn(() => mockFirebaseAdminAuth),
 }));
 
 // Mock firebase-admin/firestore (Admin SDK)
-jest.unstable_mockModule('firebase-admin/firestore', () => ({
-  getFirestore: jest.fn(() => mockFirebaseAdminFirestore),
+vi.mock('firebase-admin/firestore', () => ({
+  getFirestore: vi.fn(() => mockFirebaseAdminFirestore),
   FieldValue: {
-    serverTimestamp: jest.fn(() => ({ _type: 'serverTimestamp' })),
+    serverTimestamp: vi.fn(() => ({ _type: 'serverTimestamp' })),
   },
 }));
 
 // Mock admin.js
-jest.unstable_mockModule('../../../auth/admin.js', () => ({
-  getAdminApp: jest.fn().mockResolvedValue(mockAdminApp),
+vi.mock('../../../auth/admin.js', () => ({
+  getAdminApp: vi.fn().mockResolvedValue(mockAdminApp),
 }));
 
 // Mock ethers for address validation
-jest.unstable_mockModule('ethers', () => ({
-  isAddress: jest.fn(),
+vi.mock('ethers', () => ({
+  isAddress: vi.fn(),
 }));
 
 // Mock cross-chain service
-jest.unstable_mockModule('../../../../../services/crossChainService.js', () => ({
-  prepareCrossChainTransaction: jest.fn(),
-  executeCrossChainStep: jest.fn(),
-  getCrossChainTransactionStatus: jest.fn(),
-  estimateTransactionFees: jest.fn(),
-  areNetworksEVMCompatible: jest.fn(),
-  getBridgeInfo: jest.fn(),
+vi.mock('../../../../../services/crossChainService.js', () => ({
+  prepareCrossChainTransaction: vi.fn(),
+  executeCrossChainStep: vi.fn(),
+  getCrossChainTransactionStatus: vi.fn(),
+  estimateTransactionFees: vi.fn(),
+  areNetworksEVMCompatible: vi.fn(),
+  getBridgeInfo: vi.fn(),
 }));
 
 // Mock Firestore operations
 const mockFirestoreDoc = {
-  get: jest.fn(),
-  update: jest.fn(),
+  get: vi.fn(),
+  update: vi.fn(),
 };
 
 const mockFirestoreCollection = {
-  doc: jest.fn(() => mockFirestoreDoc),
+  doc: vi.fn(() => mockFirestoreDoc),
 };
 
 let router;
@@ -80,9 +80,9 @@ const mockRequest = (body = {}, params = {}, query = {}, method = 'POST', url = 
 
 const mockResponse = () => {
   const res = {};
-  res.status = jest.fn().mockReturnThis();
-  res.json = jest.fn().mockReturnThis();
-  res.send = jest.fn().mockReturnThis();
+  res.status = vi.fn().mockReturnThis();
+  res.json = vi.fn().mockReturnThis();
+  res.send = vi.fn().mockReturnThis();
   return res;
 };
 
@@ -90,7 +90,7 @@ let originalNodeEnv;
 
 describe('Unit Tests for walletRoutes.js Router', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     originalNodeEnv = process.env.NODE_ENV;
     
     // Setup default Firestore mocks
@@ -155,7 +155,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
       const req = mockRequest({}, {}, {}, 'GET', '/');
       delete req.headers.authorization;
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -167,7 +167,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
     it('should authenticate successfully with valid token', async () => {
       const req = mockRequest({}, {}, {}, 'GET', '/');
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -180,7 +180,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
 
       const req = mockRequest({}, {}, {}, 'GET', '/');
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -204,7 +204,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
 
       const req = mockRequest(walletData, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -237,7 +237,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
     it('should return 400 if required fields are missing', async () => {
       const req = mockRequest({ address: '0x742d35Cc6639C0532fEb88c5cd5Bb8b68C287CfA' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -257,7 +257,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
 
       const req = mockRequest(walletData, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -275,7 +275,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
 
       const req = mockRequest(walletData, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -293,7 +293,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
 
       const req = mockRequest(walletData, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -313,7 +313,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
 
       const req = mockRequest(walletData, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -348,7 +348,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
 
       const req = mockRequest(walletData, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -390,7 +390,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
 
       const req = mockRequest({}, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -412,7 +412,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
     it('should return empty array if user has no wallets', async () => {
       const req = mockRequest({}, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -458,7 +458,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
         `/${addressToRemove}`
       );
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -480,7 +480,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
     it('should return 400 if address or network missing', async () => {
       const req = mockRequest({}, { address: '0x123' }, {}, routeMethod, '/0x123');
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -522,7 +522,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
         `/${primaryAddress}`
       );
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -577,7 +577,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
         routeUrl
       );
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -610,7 +610,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
         routeUrl
       );
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -651,7 +651,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
         routeUrl
       );
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -681,7 +681,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
         routeUrl
       );
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -722,7 +722,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
 
       const req = mockRequest({}, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -756,7 +756,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
 
       const req = mockRequest({}, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -786,7 +786,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
 
       const req = mockRequest(detectionData, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -813,7 +813,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
     it('should return 400 if detection data missing', async () => {
       const req = mockRequest({}, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -837,7 +837,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
 
       const req = mockRequest(feeRequest, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -862,7 +862,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
     it('should return 400 if required parameters missing', async () => {
       const req = mockRequest({ sourceNetwork: 'ethereum' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -892,7 +892,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
       const req = mockRequest(transactionData, {}, {}, routeMethod, routeUrl);
       req.user = { uid: 'testUserId' };
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -918,7 +918,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
         fromAddress: '0x742d35cc6639c0532feb88c5cd5bb8b68c287cfa'
       }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -943,7 +943,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
         '/cross-chain/tx_test_123/execute-step'
       );
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -972,7 +972,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
         '/cross-chain/tx_test_123/execute-step'
       );
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -997,7 +997,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
         '/cross-chain/tx_test_123/status'
       );
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -1021,7 +1021,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
     it('should return supported networks successfully', async () => {
       const req = mockRequest({}, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -1057,7 +1057,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
 
       const req = mockRequest({}, {}, {}, 'GET', '/');
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));
@@ -1077,7 +1077,7 @@ describe('Unit Tests for walletRoutes.js Router', () => {
         amount: '1.0'
       }, {}, {}, 'POST', '/cross-chain/estimate-fees');
       const res = mockResponse();
-      const next = jest.fn();
+      const next = vi.fn();
 
       await router(req, res, next);
       await new Promise(resolve => setImmediate(resolve));

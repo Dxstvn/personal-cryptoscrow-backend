@@ -1,5 +1,5 @@
 // src/api/routes/database/__tests__/unit/fileUploadDownload.unit.test.js
-import { jest } from '@jest/globals'; // Import the jest object
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest'; // Import the jest object
 import { Readable } from 'stream'; // Import Readable statically as it doesn't need to be dynamic after mocks
 
 console.log('[LOG] Test file execution start: fileUploadDownload.unit.test.js');
@@ -7,21 +7,21 @@ console.log('[LOG] Test file execution start: fileUploadDownload.unit.test.js');
 const mocks = {
   // Initialize all mock functions you'll use here
   // For example:
-  fileURLToPath: jest.fn(),
-  adminInitializeApp: jest.fn(),
-  adminApp: jest.fn(),
-  adminGetApps: jest.fn(),
+  fileURLToPath: vi.fn(),
+  adminInitializeApp: vi.fn(),
+  adminApp: vi.fn(),
+  adminGetApps: vi.fn(),
 
   // Stable mock for the .file() method
-  adminStorageFileMock: jest.fn(filePath => {
+  adminStorageFileMock: vi.fn(filePath => {
     console.log(`[LOG MOCK] adminStorageFileMock (formerly adminStorageInstance.bucket().file) called with: ${filePath}`);
     return mocks.adminStorageFileInstance; // Return the individual file operations mock
   }),
 
   adminStorageInstance: {
-    bucket: jest.fn(() => ({
+    bucket: vi.fn(() => ({
       name: 'mock-admin-bucket',
-      // file: jest.fn(filePath => { // OLD inline mock
+      // file: vi.fn(filePath => { // OLD inline mock
       //   console.log(`[LOG MOCK] adminStorageInstance.bucket().file called with: ${filePath}`);
       //   return mocks.adminStorageFileInstance;
       // }), 
@@ -29,61 +29,61 @@ const mocks = {
     })),
   },
   adminStorageFileInstance: {
-    createReadStream: jest.fn(() => {
+    createReadStream: vi.fn(() => {
       console.log('[LOG MOCK] adminStorageFileInstance.createReadStream called');
       // Return a new basic Readable stream for each call by default
       const stream = new Readable();
       stream._read = () => {};
       return stream;
     }),
-    exists: jest.fn(() => {
+    exists: vi.fn(() => {
       console.log('[LOG MOCK] adminStorageFileInstance.exists called');
       return Promise.resolve([true]); // Default to exists
     }),
-    delete: jest.fn(() => {
+    delete: vi.fn(() => {
       console.log('[LOG MOCK] adminStorageFileInstance.delete called');
       return Promise.resolve();
     }),
-    getSignedUrl: jest.fn(() => {
+    getSignedUrl: vi.fn(() => {
       console.log('[LOG MOCK] adminStorageFileInstance.getSignedUrl called');
       return Promise.resolve(['http://fake-signed.url/default.jpg']);
     }),
-    save: jest.fn((buffer, options) => {
+    save: vi.fn((buffer, options) => {
       console.log('[LOG MOCK] adminStorageFileInstance.save called with buffer length:', buffer?.length, 'and options:', options);
       return Promise.resolve();
     }),
   },
-  databaseServiceGetDealById: jest.fn(),
-  databaseServiceAddFileMetadata: jest.fn(),
-  databaseServiceGetFileMetadata: jest.fn(),
-  databaseServiceDeleteFileMetadata: jest.fn(),
-  adminAuthVerifyIdToken: jest.fn(), // This will be configured in beforeEach
-  getFirebaseAdminApp: jest.fn(),
-  getFirebaseClientApp: jest.fn(),
-  getFirebaseClientStorage: jest.fn(),
-  clientStorageRef: jest.fn(),
-  clientUploadBytesResumable: jest.fn(),
-  clientUploadBytes: jest.fn(),
-  clientGetDownloadURL: jest.fn(),
-  clientDeleteObject: jest.fn(),
+  databaseServiceGetDealById: vi.fn(),
+  databaseServiceAddFileMetadata: vi.fn(),
+  databaseServiceGetFileMetadata: vi.fn(),
+  databaseServiceDeleteFileMetadata: vi.fn(),
+  adminAuthVerifyIdToken: vi.fn(), // This will be configured in beforeEach
+  getFirebaseAdminApp: vi.fn(),
+  getFirebaseClientApp: vi.fn(),
+  getFirebaseClientStorage: vi.fn(),
+  clientStorageRef: vi.fn(),
+  clientUploadBytesResumable: vi.fn(),
+  clientUploadBytes: vi.fn(),
+  clientGetDownloadURL: vi.fn(),
+  clientDeleteObject: vi.fn(),
   multerInstance: {
-    single: jest.fn(fieldName => {
+    single: vi.fn(fieldName => {
       console.log(`[LOG MOCK GLOBAL] mocks.multerInstance.single setup for field: ${fieldName}. It will return mocks.multerMiddlewareHandler.`);
       // This 'single' method, when called (e.g., upload.single('file')),
       // should return the actual middleware function we want to control per test.
       return mocks.multerMiddlewareHandler; // Key change: return the handler directly
     }),
-    array: jest.fn(fieldName => (req, res, next) => {
+    array: vi.fn(fieldName => (req, res, next) => {
       console.log(`[LOG MOCK GLOBAL] Executing default pass-through multer middleware for field array: ${fieldName}`);
       next();
     }),
   },
-  busboyConstructor: jest.fn(), // For Busboy mock
-  connectStorageEmulator: jest.fn(),
-  connectAuthEmulator: jest.fn(),
-  getFirestore: jest.fn(), // This will be configured in the module mock
+  busboyConstructor: vi.fn(), // For Busboy mock
+  connectStorageEmulator: vi.fn(),
+  connectAuthEmulator: vi.fn(),
+  getFirestore: vi.fn(), // This will be configured in the module mock
   firestoreInstance: {
-    collection: jest.fn(collectionName => {
+    collection: vi.fn(collectionName => {
       console.log(`[LOG MOCK] firestoreInstance.collection called with: "${collectionName}"`);
       // Return a specific mock for 'deals' collection or a general one
       if (collectionName === 'deals') {
@@ -91,33 +91,33 @@ const mocks = {
       }
       return mocks.firestoreCollectionInstance;
     }),
-    doc: jest.fn(docPath => { // This is if db.doc() is called directly
+    doc: vi.fn(docPath => { // This is if db.doc() is called directly
       console.log(`[LOG MOCK] firestoreInstance.doc called with: "${docPath}"`);
       return mocks.firestoreDocInstance;
     }),
   },
   firestoreCollectionInstance: {
-    doc: jest.fn(docId => {
+    doc: vi.fn(docId => {
       console.log(`[LOG MOCK] firestoreCollectionInstance.doc called with: "${docId}" (type: ${typeof docId})`);
       // Potentially return different doc instances based on docId if complex logic is needed
       // For now, always returns the same generic doc instance.
       return mocks.firestoreDocInstance;
     }),
-    add: jest.fn(data => {
+    add: vi.fn(data => {
       console.log('[LOG MOCK] firestoreCollectionInstance.add called with data:', data);
       return Promise.resolve(mocks.firestoreDocRefInstance);
     }),
-    where: jest.fn((...args) => {
+    where: vi.fn((...args) => {
       console.log(`[LOG MOCK] firestoreCollectionInstance.where called with: field='${args[0]}', opStr='${args[1]}', value='${args[2]}'`);
       return mocks.firestoreQueryInstance;
     }),
-    get: jest.fn(() => {
+    get: vi.fn(() => {
       console.log('[LOG MOCK] firestoreCollectionInstance.get CALLED.');
       return Promise.resolve(mocks.firestoreQuerySnapshotInstance);
     }),
   },
   firestoreDocInstance: {
-    get: jest.fn(() => {
+    get: vi.fn(() => {
       // This is the critical mock for document existence.
       // It will use the state of mocks.firestoreDocSnapshotInstance by default.
       // Tests needing specific exists state (e.g., false) should adjust mocks.firestoreDocSnapshotInstance.exists
@@ -125,19 +125,19 @@ const mocks = {
       console.log(`[LOG MOCK] firestoreDocInstance.get CALLED. Returning snapshot with exists: ${mocks.firestoreDocSnapshotInstance.exists}`);
       return Promise.resolve(mocks.firestoreDocSnapshotInstance);
     }),
-    set: jest.fn(data => {
+    set: vi.fn(data => {
       console.log('[LOG MOCK] firestoreDocInstance.set called with data:', data);
       return Promise.resolve();
     }),
-    update: jest.fn(data => {
+    update: vi.fn(data => {
       console.log('[LOG MOCK] firestoreDocInstance.update called with data:', data);
       return Promise.resolve();
     }),
-    delete: jest.fn(() => {
+    delete: vi.fn(() => {
       console.log('[LOG MOCK] firestoreDocInstance.delete called');
       return Promise.resolve();
     }),
-    collection: jest.fn(subCollectionName => {
+    collection: vi.fn(subCollectionName => {
       console.log(`[LOG MOCK] firestoreDocInstance.collection called for sub-collection: "${subCollectionName}"`);
       return mocks.firestoreCollectionInstance; // Assuming subcollections behave like top-level ones for now
     }),
@@ -148,20 +148,20 @@ const mocks = {
   },
   firestoreDocSnapshotInstance: { // Default state for a document snapshot
     exists: true, // Default to true, tests can override this for "not found" cases
-    data: jest.fn(() => {
+    data: vi.fn(() => {
       console.log('[LOG MOCK] firestoreDocSnapshotInstance.data CALLED.');
       return { defaultMockData: true, participants: [/* default participants if any */] };
     }),
     id: 'mockGlobalDocId',
   },
   firestoreQueryInstance: {
-    where: jest.fn((...args) => {
+    where: vi.fn((...args) => {
       console.log(`[LOG MOCK] firestoreQueryInstance.where called with: field='${args[0]}', opStr='${args[1]}', value='${args[2]}'`);
       return mocks.firestoreQueryInstance;
     }),
-    orderBy: jest.fn(() => mocks.firestoreQueryInstance),
-    limit: jest.fn(() => mocks.firestoreQueryInstance),
-    get: jest.fn(() => {
+    orderBy: vi.fn(() => mocks.firestoreQueryInstance),
+    limit: vi.fn(() => mocks.firestoreQueryInstance),
+    get: vi.fn(() => {
       console.log('[LOG MOCK] firestoreQueryInstance.get CALLED.');
       return Promise.resolve(mocks.firestoreQuerySnapshotInstance);
     }),
@@ -169,14 +169,14 @@ const mocks = {
   firestoreQuerySnapshotInstance: { // Default state for a query snapshot
     empty: false, // Default to not empty
     docs: [],     // Default to empty array of docs, tests should populate for results
-    forEach: jest.fn(callback => mocks.firestoreQuerySnapshotInstance.docs.forEach(callback)),
+    forEach: vi.fn(callback => mocks.firestoreQuerySnapshotInstance.docs.forEach(callback)),
   },
-  v4: jest.fn(() => 'mock-uuid-v4'),
+  v4: vi.fn(() => 'mock-uuid-v4'),
   mockEthEscrowApp: { name: 'mockEthEscrowApp' },
   mockAdminApp: { name: 'mockAdminAppFirebase' }, // Ensure this is distinct if needed
   mockMemoryStorageResult: { type: 'mock-memory-storage' },
   // New mock for the actual multer middleware handler
-  multerMiddlewareHandler: jest.fn((req, res, next) => {
+  multerMiddlewareHandler: vi.fn((req, res, next) => {
     console.log('[LOG MOCK GLOBAL] Executing default pass-through multer middleware HANDLER. This handler should be overridden by test-specific implementations.');
     // By default, this does not populate req.file. Tests need to mock its implementation.
     next();
@@ -200,10 +200,10 @@ console.log('[LOG] Defined static mock data (e.g., mockClientFirebaseStorageInst
 // Configure all unstable_mockModule calls at the top-level
 console.log('[LOG] Starting unstable_mockModule setup');
 
-jest.unstable_mockModule('url', () => {
+vi.mock('url', () => {
   console.log('[LOG] unstable_mockModule factory for "url" executing');
   // Ensure the mock function is assigned to the mocks object if it's used elsewhere by that name
-  mocks.fileURLToPath = jest.fn((url) => {
+  mocks.fileURLToPath = vi.fn((url) => {
     console.log(`[LOG] mock url.fileURLToPath called with: ${url}`);
     return url && url.includes && url.includes('fileUploadDownload.js') ? '/mocked/path/to/fileUploadDownload.js' : '/mocked/path/default_file.js';
   });
@@ -213,7 +213,7 @@ jest.unstable_mockModule('url', () => {
   };
 });
 
-jest.unstable_mockModule('firebase-admin/app', () => {
+vi.mock('firebase-admin/app', () => {
   console.log('[LOG] unstable_mockModule factory for "firebase-admin/app" executing');
   // Ensure mock functions are pre-defined in the `mocks` object or assigned here
   // and then returned in the module structure.
@@ -225,33 +225,33 @@ jest.unstable_mockModule('firebase-admin/app', () => {
   };
 });
 
-jest.unstable_mockModule('firebase-admin/storage', () => {
+vi.mock('firebase-admin/storage', () => {
   console.log('[LOG] unstable_mockModule factory for "firebase-admin/storage" executing');
   return {
-    getStorage: jest.fn(() => mocks.adminStorageInstance), // mocks.adminStorageInstance should be predefined
+    getStorage: vi.fn(() => mocks.adminStorageInstance), // mocks.adminStorageInstance should be predefined
     // Add other 'firebase-admin/storage' exports if used
   };
 });
 
-jest.unstable_mockModule('firebase-admin/auth', () => {
+vi.mock('firebase-admin/auth', () => {
   console.log('[LOG] unstable_mockModule factory for "firebase-admin/auth" executing');
   return {
-    getAuth: jest.fn(() => ({
+    getAuth: vi.fn(() => ({
       verifyIdToken: mocks.adminAuthVerifyIdToken, // Ensure this is assigned
     })),
   };
 });
 
-jest.unstable_mockModule('firebase/app', () => {
+vi.mock('firebase/app', () => {
   console.log('[LOG] unstable_mockModule factory for "firebase/app" executing');
   return {
     initializeApp: mocks.getFirebaseClientApp, // Or however client app is initialized/retrieved
-    getApps: jest.fn(() => []), // Mock implementation for getApps
+    getApps: vi.fn(() => []), // Mock implementation for getApps
     // Add other 'firebase/app' exports if used
   };
 });
 
-jest.unstable_mockModule('firebase/storage', () => {
+vi.mock('firebase/storage', () => {
   console.log('[LOG] unstable_mockModule factory for "firebase/storage" executing');
   return {
     getStorage: mocks.getFirebaseClientStorage,
@@ -265,10 +265,10 @@ jest.unstable_mockModule('firebase/storage', () => {
   };
 });
 
-jest.unstable_mockModule('firebase/auth', () => {
+vi.mock('firebase/auth', () => {
   console.log('[LOG] unstable_mockModule factory for "firebase/auth" executing');
   return {
-    getAuth: jest.fn(() => ({
+    getAuth: vi.fn(() => ({
       // Add any client auth mock methods if needed
     })),
     connectAuthEmulator: mocks.connectAuthEmulator,
@@ -278,15 +278,15 @@ jest.unstable_mockModule('firebase/auth', () => {
 
 
 // Mocking multer
-jest.unstable_mockModule('multer', () => {
+vi.mock('multer', () => {
   console.log('[LOG] unstable_mockModule factory for "multer" executing');
-  const mockMulterFunction = jest.fn(options => {
+  const mockMulterFunction = vi.fn(options => {
     console.log('[LOG MOCK GLOBAL] multer() factory function called with options:', options);
     // multer() returns an object with a `single` method (and others like `array`, `fields`).
     // That `single` method, when called (e.g., `upload.single('file')`), returns the actual middleware.
     return mocks.multerInstance; // mocks.multerInstance has .single(), .array()
   });
-  mockMulterFunction.memoryStorage = jest.fn(() => {
+  mockMulterFunction.memoryStorage = vi.fn(() => {
     console.log('[LOG MOCK GLOBAL] multer.memoryStorage() called');
     return mocks.mockMemoryStorageResult;
   });
@@ -298,14 +298,14 @@ jest.unstable_mockModule('multer', () => {
 
 
 // Mocking busboy if used directly or by a dependency like connect-busboy
-jest.unstable_mockModule('busboy', () => {
+vi.mock('busboy', () => {
     console.log('[LOG] unstable_mockModule factory for "busboy" executing');
     // mocks.busboyInstance should mock the Busboy class/interface
     // For example, it should be a constructor that can be instantiated with `new Busboy()`
     // and should handle events like 'file', 'field', 'finish', 'error'.
     // This is a simplified placeholder. A full Busboy mock can be complex.
-    const MockBusboy = jest.fn(function(options) {
-        this.on = jest.fn((event, callback) => {
+    const MockBusboy = vi.fn(function(options) {
+        this.on = vi.fn((event, callback) => {
             // Simulate events based on test needs
             if (event === 'field' && options.testFields) {
                 options.testFields.forEach(field => callback(field.name, field.value));
@@ -328,7 +328,7 @@ jest.unstable_mockModule('busboy', () => {
             }
             return this; // Allow chaining .on() calls
         });
-        this.end = jest.fn((data) => { // Mock the .end() method if it's called
+        this.end = vi.fn((data) => { // Mock the .end() method if it's called
             if (data && this.on.mock.calls.some(call => call[0] === 'data')) { // If there's a 'data' handler
                 this.on.mock.calls.find(call => call[0] === 'data')[1](data); // Call it
             }
@@ -349,19 +349,19 @@ jest.unstable_mockModule('busboy', () => {
 
 
 // Mocking helperFunctions.js if it's used by fileUploadDownload.js
-jest.unstable_mockModule('../../../../../helperFunctions.js', () => {
+vi.mock('../../../../../helperFunctions.js', () => {
     console.log('[LOG] unstable_mockModule factory for "../../../../../helperFunctions.js" executing');
     return {
         // Add any functions from helperFunctions.js that are used by the router
         // For example:
-        // generateUniqueId: jest.fn(() => 'mock-unique-id'),
-        // formatError: jest.fn(err => ({ message: err.message || 'Mock error' })),
+        // generateUniqueId: vi.fn(() => 'mock-unique-id'),
+        // formatError: vi.fn(err => ({ message: err.message || 'Mock error' })),
     };
 });
 
 
 // Mocking databaseService.js
-jest.unstable_mockModule('../../../../../services/databaseService.js', () => {
+vi.mock('../../../../../services/databaseService.js', () => {
   console.log('[LOG] unstable_mockModule factory for "../../../../../services/databaseService.js" executing');
   return {
     getDealById: mocks.databaseServiceGetDealById,
@@ -373,7 +373,7 @@ jest.unstable_mockModule('../../../../../services/databaseService.js', () => {
 });
 
 // Mocking firebase-admin/firestore
-jest.unstable_mockModule('firebase-admin/firestore', () => {
+vi.mock('firebase-admin/firestore', () => {
   console.log('[LOG] unstable_mockModule factory for "firebase-admin/firestore" executing');
   mocks.getFirestore.mockReturnValue(mocks.firestoreInstance); // Ensure getFirestore returns the mock instance
   return {
@@ -383,7 +383,7 @@ jest.unstable_mockModule('firebase-admin/firestore', () => {
 });
 
 // Mocking uuid
-jest.unstable_mockModule('uuid', () => {
+vi.mock('uuid', () => {
   console.log('[LOG] unstable_mockModule factory for "uuid" executing');
   return {
     v4: mocks.v4,
@@ -394,7 +394,7 @@ jest.unstable_mockModule('uuid', () => {
 // Relative path from fileUploadDownload.unit.test.js to authIndex.js
 // __tests__/unit/ -> ../../ -> database/ -> ../ -> routes/ -> ../ -> api/
 // So, ../../../../auth/authIndex.js
-jest.unstable_mockModule('../../../auth/authIndex.js', () => {
+vi.mock('../../../auth/authIndex.js', () => {
   console.log('[LOG] unstable_mockModule factory for "../../../auth/authIndex.js" executing');
   return {
     ethEscrowApp: mocks.mockEthEscrowApp, // Provide the mock app instance
@@ -403,21 +403,21 @@ jest.unstable_mockModule('../../../auth/authIndex.js', () => {
 
 // Mocking admin.js
 // Relative path from fileUploadDownload.unit.test.js to admin.js
-jest.unstable_mockModule('../../../auth/admin.js', () => {
+vi.mock('../../../auth/admin.js', () => {
   console.log('[LOG] unstable_mockModule factory for "../../../auth/admin.js" executing');
   return {
     adminApp: mocks.mockAdminApp, // Provide the mock admin app instance
-    getAdminApp: jest.fn().mockResolvedValue(mocks.mockAdminApp),
+    getAdminApp: vi.fn().mockResolvedValue(mocks.mockAdminApp),
     // Mock deleteAdminApp if it were ever called by the router (it isn't)
-    // deleteAdminApp: jest.fn(),
+    // deleteAdminApp: vi.fn(),
   };
 });
 
 // Mocking securityMiddleware.js for rate limiting
-jest.unstable_mockModule('../../../../middleware/securityMiddleware.js', () => {
+vi.mock('../../../../middleware/securityMiddleware.js', () => {
   console.log('[LOG] unstable_mockModule factory for "../../../../middleware/securityMiddleware.js" executing');
   return {
-    fileUploadRateLimit: jest.fn((req, res, next) => {
+    fileUploadRateLimit: vi.fn((req, res, next) => {
       console.log('[LOG MOCK] fileUploadRateLimit middleware called - passing through');
       next(); // Just pass through for tests
     }),
@@ -495,12 +495,12 @@ describe('File Upload/Download Routes (Unit)', () => {
 
   // Reset mocks before each test to ensure test isolation
   beforeEach(() => {
-    jest.clearAllMocks(); // Clears all mock call history, etc.
+    vi.clearAllMocks(); // Clears all mock call history, etc.
 
     // Reset parts of the global mocks object to a default state for each test.
     // This is crucial if tests modify these objects (e.g. snapshot.exists).
     mocks.firestoreDocSnapshotInstance.exists = true; // Default to true for most tests
-    mocks.firestoreDocSnapshotInstance.data = jest.fn(() => ({
+    mocks.firestoreDocSnapshotInstance.data = vi.fn(() => ({
         dealId: testDealId, // Sensible default
         participants: [testUserId, 'otherUser'], // Default participants
         filename: 'default-test.jpg',
@@ -592,7 +592,7 @@ describe('File Upload/Download Routes (Unit)', () => {
 
       // Ensure the deal document exists for this test
       mocks.firestoreDocSnapshotInstance.exists = true;
-      mocks.firestoreDocSnapshotInstance.data = jest.fn(() => ({
+      mocks.firestoreDocSnapshotInstance.data = vi.fn(() => ({
         participants: [testUserId, 'anotherUser'], // User is a participant
       }));
       // mocks.firestoreDocInstance.get is already configured in beforeEach to return this snapshot
@@ -722,7 +722,7 @@ describe('File Upload/Download Routes (Unit)', () => {
         });
 
         mocks.firestoreDocSnapshotInstance.exists = true; // Deal exists
-        mocks.firestoreDocSnapshotInstance.data = jest.fn()
+        mocks.firestoreDocSnapshotInstance.data = vi.fn()
             .mockReturnValueOnce({ participants: [testUserId, 'otherUser'] }) // For deal check
             .mockReturnValueOnce({ // For file metadata check
                 dealId: testDealId,
@@ -752,7 +752,7 @@ describe('File Upload/Download Routes (Unit)', () => {
       const genericError = new Error('Simulated Firestore add error');
 
       // Spy on console.error
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       mocks.multerMiddlewareHandler.mockImplementationOnce((req, res, next) => {
         req.file = {
@@ -766,7 +766,7 @@ describe('File Upload/Download Routes (Unit)', () => {
       });
 
       mocks.firestoreDocSnapshotInstance.exists = true;
-      mocks.firestoreDocSnapshotInstance.data = jest.fn(() => ({
+      mocks.firestoreDocSnapshotInstance.data = vi.fn(() => ({
         participants: [testUserId, 'anotherUser'],
       }));
 
@@ -796,7 +796,7 @@ describe('File Upload/Download Routes (Unit)', () => {
       // Create a buffer with proper PDF signature
       const mockFileBuffer = Buffer.from([0x25, 0x50, 0x44, 0x46, ...Buffer.from('fake pdf data')]);
       const mockFileName = 'test-no-dealid.pdf';
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       mocks.multerMiddlewareHandler.mockImplementationOnce((req, res, next) => {
         req.file = {
@@ -829,7 +829,7 @@ describe('File Upload/Download Routes (Unit)', () => {
       // Create a buffer with proper PDF signature
       const mockFileBuffer = Buffer.from([0x25, 0x50, 0x44, 0x46, ...Buffer.from('fake pdf data')]);
       const mockFileName = 'test-no-userid.pdf';
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       // Override authenticateToken for this test to simulate req.userId not being set
       // This requires a bit more advanced mocking if the middleware is applied globally vs. route-specific.
@@ -889,7 +889,7 @@ describe('File Upload/Download Routes (Unit)', () => {
         // Configure mocks for this specific test case
         // 1. Deal document for auth check
         mocks.firestoreDocSnapshotInstance.exists = true; // Both deal and file doc will use this sequentially
-        mocks.firestoreDocSnapshotInstance.data = jest.fn()
+        mocks.firestoreDocSnapshotInstance.data = vi.fn()
             .mockReturnValueOnce({ participants: [testUserId, 'otherUser'] }) // For deal check
             .mockReturnValueOnce({ // For file metadata check
                 dealId: testDealId,
@@ -1065,7 +1065,7 @@ describe('File Upload/Download Routes (Unit)', () => {
       const genericError = new Error('Simulated Firestore get error for file metadata');
 
       // Spy on console.error
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       // Deal check is fine
       mocks.firestoreDocInstance.get
@@ -1090,8 +1090,8 @@ describe('File Upload/Download Routes (Unit)', () => {
 
     it('should handle stream error after headers sent and destroy response', async () => {
       console.log('[LOG TEST] GET /download: stream error after headers sent');
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-      const mockResDestroy = jest.fn(); // Spy on res.destroy()
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const mockResDestroy = vi.fn(); // Spy on res.destroy()
 
       // Setup mocks: Deal and File metadata exist, user is authorized
       mocks.firestoreDocInstance.get
@@ -1164,7 +1164,7 @@ describe('File Upload/Download Routes (Unit)', () => {
 
     it('should handle generic error after headers sent in download try block and destroy response', async () => {
       console.log('[LOG TEST] GET /download: generic error after headers sent');
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const errorAfterHeaders = new Error('Simulated generic error after headers sent');
 
       // Mock successful deal and file metadata retrieval

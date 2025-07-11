@@ -1,10 +1,11 @@
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { jest, describe, it, expect, beforeEach, beforeAll, afterAll } from '@jest/globals';
 
 // Mock the 'ethers' module using unstable mocking for ESM
-const mockIsAddress = jest.fn();
-const mockGetAddress = jest.fn();
+const mockIsAddress = vi.fn();
+const mockGetAddress = vi.fn();
 
-jest.unstable_mockModule('ethers', () => ({
+vi.mock('ethers', () => ({
     __esModule: true,
     isAddress: mockIsAddress,
     getAddress: mockGetAddress,
@@ -15,13 +16,13 @@ jest.unstable_mockModule('ethers', () => ({
 }));
 
 // Mock cross-chain service
-jest.unstable_mockModule('../../../../../services/crossChainService.js', () => ({
-    areNetworksEVMCompatible: jest.fn(),
-    getBridgeInfo: jest.fn(),
-    estimateTransactionFees: jest.fn(),
-    prepareCrossChainTransaction: jest.fn(),
-    executeCrossChainStep: jest.fn(),
-    getCrossChainTransactionStatus: jest.fn()
+vi.mock('../../../../../services/crossChainService.js', () => ({
+    areNetworksEVMCompatible: vi.fn(),
+    getBridgeInfo: vi.fn(),
+    estimateTransactionFees: vi.fn(),
+    prepareCrossChainTransaction: vi.fn(),
+    executeCrossChainStep: vi.fn(),
+    getCrossChainTransactionStatus: vi.fn()
 }));
 
 // Now import everything else after setting up the mock
@@ -87,7 +88,7 @@ afterAll(async () => {
             console.warn('[TEST TEARDOWN] Could not delete admin app:', e.message);
         }
     }
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
 }, 60000);
 
 beforeEach(async () => {

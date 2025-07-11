@@ -1,3 +1,4 @@
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 // basicFlow.e2e.test.js
 import {
   startTestServer,

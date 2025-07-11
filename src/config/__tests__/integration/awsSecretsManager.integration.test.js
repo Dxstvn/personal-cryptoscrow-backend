@@ -1,3 +1,4 @@
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { jest, describe, it, expect, beforeEach, afterEach, beforeAll } from '@jest/globals';
 
 // Note: This is an integration test that uses real AWS SDK behavior but with mocked responses
@@ -15,7 +16,7 @@ describe('AWS Secrets Manager Integration Tests', () => {
 
   beforeAll(() => {
     // Set up console spy to capture log outputs
-    consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   beforeEach(async () => {
@@ -23,7 +24,7 @@ describe('AWS Secrets Manager Integration Tests', () => {
     process.env = { ...originalEnv };
     
     // Clear all mocks and reset modules
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     jest.resetModules();
 
     // Import the real AWS Secrets Manager module (will be using mocked AWS SDK)
@@ -56,7 +57,7 @@ describe('AWS Secrets Manager Integration Tests', () => {
       };
 
       // Mock the AWS SDK send method
-      jest.spyOn(mockSecretsManager, 'send').mockResolvedValue({
+      vi.spyOn(mockSecretsManager, 'send').mockResolvedValue({
         SecretString: JSON.stringify(mockSecret)
       });
 
@@ -70,7 +71,7 @@ describe('AWS Secrets Manager Integration Tests', () => {
       const awsError = new Error('ResourceNotFoundException: Secrets Manager can\'t find the specified secret.');
       awsError.name = 'ResourceNotFoundException';
       
-      jest.spyOn(mockSecretsManager, 'send').mockRejectedValue(awsError);
+      vi.spyOn(mockSecretsManager, 'send').mockRejectedValue(awsError);
 
       await expect(awsSecretsManager.getSecret('nonexistent-secret'))
         .rejects.toThrow('AWS Secrets Manager error: ResourceNotFoundException: Secrets Manager can\'t find the specified secret.');
@@ -80,7 +81,7 @@ describe('AWS Secrets Manager Integration Tests', () => {
       const networkError = new Error('Network timeout');
       networkError.code = 'NetworkingError';
       
-      jest.spyOn(mockSecretsManager, 'send').mockRejectedValue(networkError);
+      vi.spyOn(mockSecretsManager, 'send').mockRejectedValue(networkError);
 
       await expect(awsSecretsManager.getSecret('timeout-secret'))
         .rejects.toThrow('AWS Secrets Manager error: Network timeout');
@@ -102,7 +103,7 @@ describe('AWS Secrets Manager Integration Tests', () => {
           FRONTEND_URL: 'https://staging.clearhold.app'
         };
 
-        jest.spyOn(mockSecretsManager, 'send').mockResolvedValue({
+        vi.spyOn(mockSecretsManager, 'send').mockResolvedValue({
           SecretString: JSON.stringify(stagingAppSecrets)
         });
 
@@ -121,7 +122,7 @@ describe('AWS Secrets Manager Integration Tests', () => {
           CHAIN_ID: '11155111'
         };
 
-        jest.spyOn(mockSecretsManager, 'send').mockResolvedValue({
+        vi.spyOn(mockSecretsManager, 'send').mockResolvedValue({
           SecretString: JSON.stringify(stagingBlockchainSecrets)
         });
 
@@ -146,7 +147,7 @@ describe('AWS Secrets Manager Integration Tests', () => {
           client_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs/firebase-adminsdk%40escrowstaging.iam.gserviceaccount.com'
         };
 
-        jest.spyOn(mockSecretsManager, 'send').mockResolvedValue({
+        vi.spyOn(mockSecretsManager, 'send').mockResolvedValue({
           SecretString: JSON.stringify(stagingFirebaseSecret)
         });
 
@@ -177,7 +178,7 @@ describe('AWS Secrets Manager Integration Tests', () => {
           client_email: 'firebase-adminsdk@ethescrow-377c6.iam.gserviceaccount.com'
         };
 
-        jest.spyOn(mockSecretsManager, 'send').mockResolvedValue({
+        vi.spyOn(mockSecretsManager, 'send').mockResolvedValue({
           SecretString: JSON.stringify(productionFirebaseSecret)
         });
 
@@ -196,7 +197,7 @@ describe('AWS Secrets Manager Integration Tests', () => {
     it('should properly cache secrets across multiple requests', async () => {
       const secretData = { cached: 'value', timestamp: Date.now() };
       
-      jest.spyOn(mockSecretsManager, 'send').mockResolvedValue({
+      vi.spyOn(mockSecretsManager, 'send').mockResolvedValue({
         SecretString: JSON.stringify(secretData)
       });
 
@@ -222,7 +223,7 @@ describe('AWS Secrets Manager Integration Tests', () => {
       const originalTimeout = awsSecretsManager.cacheTimeout;
       awsSecretsManager.cacheTimeout = 50; // 50ms
 
-      jest.spyOn(mockSecretsManager, 'send')
+      vi.spyOn(mockSecretsManager, 'send')
         .mockResolvedValueOnce({
           SecretString: JSON.stringify(secretData1)
         })
@@ -276,14 +277,14 @@ describe('AWS Secrets Manager Integration Tests', () => {
       const temporaryError = new Error('Service Unavailable');
       temporaryError.name = 'ServiceUnavailableException';
       
-      jest.spyOn(mockSecretsManager, 'send').mockRejectedValue(temporaryError);
+      vi.spyOn(mockSecretsManager, 'send').mockRejectedValue(temporaryError);
 
       await expect(awsSecretsManager.getSecret('unavailable-secret'))
         .rejects.toThrow('AWS Secrets Manager error: Service Unavailable');
     });
 
     it('should handle invalid JSON in secret response', async () => {
-      jest.spyOn(mockSecretsManager, 'send').mockResolvedValue({
+      vi.spyOn(mockSecretsManager, 'send').mockResolvedValue({
         SecretString: 'invalid json {'
       });
 
@@ -292,7 +293,7 @@ describe('AWS Secrets Manager Integration Tests', () => {
     });
 
     it('should handle missing SecretString in response', async () => {
-      jest.spyOn(mockSecretsManager, 'send').mockResolvedValue({
+      vi.spyOn(mockSecretsManager, 'send').mockResolvedValue({
         // Missing SecretString
       });
 
@@ -307,7 +308,7 @@ describe('AWS Secrets Manager Integration Tests', () => {
       process.env.NODE_ENV = 'staging';
       
       const stagingSecret = { env: 'staging' };
-      jest.spyOn(mockSecretsManager, 'send').mockResolvedValue({
+      vi.spyOn(mockSecretsManager, 'send').mockResolvedValue({
         SecretString: JSON.stringify(stagingSecret)
       });
 
@@ -319,11 +320,11 @@ describe('AWS Secrets Manager Integration Tests', () => {
 
       // Clear cache and switch to production
       awsSecretsManager.clearCache();
-      jest.clearAllMocks();
+      vi.clearAllMocks();
       process.env.NODE_ENV = 'production';
       
       const productionSecret = { env: 'production' };
-      jest.spyOn(mockSecretsManager, 'send').mockResolvedValue({
+      vi.spyOn(mockSecretsManager, 'send').mockResolvedValue({
         SecretString: JSON.stringify(productionSecret)
       });
 

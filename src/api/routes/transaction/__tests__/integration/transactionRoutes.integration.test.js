@@ -1,3 +1,4 @@
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 // src/api/routes/transaction/__tests__/integration/transactionRoutes.integration.test.js
 import { jest, describe, it, expect, beforeEach, beforeAll, afterAll } from '@jest/globals';
 

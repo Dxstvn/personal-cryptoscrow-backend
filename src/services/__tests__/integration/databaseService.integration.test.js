@@ -1,3 +1,4 @@
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 // src/services/__tests__/databaseService.test.js
 import { jest, describe, it, expect, beforeEach, afterAll, beforeAll } from '@jest/globals';
 import { Timestamp } from 'firebase-admin/firestore';
@@ -181,7 +182,7 @@ describe('Database Service Tests', () => {
     });
 
     it('should not throw if dealId is invalid but log an error (or handle as per implementation)', async () => {
-      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       await updateDealStatusInDB(null, { 
         status: 'COMPLETED', 
         timelineEventMessage: 'Test event' 
@@ -645,7 +646,7 @@ describe('Database Service Tests', () => {
       });
 
       it('should not update if dealId does not exist', async () => {
-        const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         
         // This should not throw but should log an error
         await updateCrossChainDealStatus('non-existent-deal', {

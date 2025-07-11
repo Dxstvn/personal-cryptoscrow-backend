@@ -1,14 +1,15 @@
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 
 // Mock AWS SDK
-const mockSend = jest.fn();
-const mockSecretsManagerClient = jest.fn(() => ({
+const mockSend = vi.fn();
+const mockSecretsManagerClient = vi.fn(() => ({
   send: mockSend
 }));
 
-const mockGetSecretValueCommand = jest.fn();
+const mockGetSecretValueCommand = vi.fn();
 
-jest.unstable_mockModule('@aws-sdk/client-secrets-manager', () => ({
+vi.mock('@aws-sdk/client-secrets-manager', () => ({
   SecretsManagerClient: mockSecretsManagerClient,
   GetSecretValueCommand: mockGetSecretValueCommand
 }));
@@ -24,7 +25,7 @@ describe('AWS Secrets Manager Unit Tests', () => {
     process.env = { ...originalEnv };
     
     // Clear all mocks
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     jest.resetModules();
     
     // Set up default mock implementations

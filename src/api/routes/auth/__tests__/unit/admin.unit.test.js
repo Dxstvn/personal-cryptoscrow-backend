@@ -1,27 +1,28 @@
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { jest, describe, it, expect, beforeEach, afterEach, afterAll } from '@jest/globals';
 
 // Mock dependencies before importing
 const mockSecretsManagerClient = {
-  send: jest.fn()
+  send: vi.fn()
 };
 
-const mockGetSecretValueCommand = jest.fn();
+const mockGetSecretValueCommand = vi.fn();
 
 // Mock AWS SDK
-jest.unstable_mockModule('@aws-sdk/client-secrets-manager', () => ({
-  SecretsManagerClient: jest.fn(() => mockSecretsManagerClient),
+vi.mock('@aws-sdk/client-secrets-manager', () => ({
+  SecretsManagerClient: vi.fn(() => mockSecretsManagerClient),
   GetSecretValueCommand: mockGetSecretValueCommand
 }));
 
 // Mock Firebase Admin SDK
-const mockInitializeApp = jest.fn();
-const mockGetApp = jest.fn();
-const mockGetApps = jest.fn();
-const mockDeleteApp = jest.fn();
-const mockCert = jest.fn();
-const mockGetAuth = jest.fn();
+const mockInitializeApp = vi.fn();
+const mockGetApp = vi.fn();
+const mockGetApps = vi.fn();
+const mockDeleteApp = vi.fn();
+const mockCert = vi.fn();
+const mockGetAuth = vi.fn();
 
-jest.unstable_mockModule('firebase-admin/app', () => ({
+vi.mock('firebase-admin/app', () => ({
   initializeApp: mockInitializeApp,
   getApp: mockGetApp,
   getApps: mockGetApps,
@@ -29,17 +30,17 @@ jest.unstable_mockModule('firebase-admin/app', () => ({
   cert: mockCert
 }));
 
-jest.unstable_mockModule('firebase-admin/auth', () => ({
+vi.mock('firebase-admin/auth', () => ({
   getAuth: mockGetAuth
 }));
 
 // Mock file system - using proper ES module syntax
 const mockFs = {
-  existsSync: jest.fn(),
-  readFileSync: jest.fn()
+  existsSync: vi.fn(),
+  readFileSync: vi.fn()
 };
 
-jest.unstable_mockModule('fs', () => mockFs);
+vi.mock('fs', () => mockFs);
 
 describe('Admin SDK Unit Tests', () => {
   let admin;
@@ -54,7 +55,7 @@ describe('Admin SDK Unit Tests', () => {
     process.env = { ...originalEnv };
     
     // Clear all mocks
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     jest.resetModules();
     
     // Set up default mock implementations

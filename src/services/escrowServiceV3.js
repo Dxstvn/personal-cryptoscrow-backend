@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs/promises';
 import mockQuoter from './mockEndpointQuoter.js';
+import config from '../config/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,13 +21,23 @@ export class EscrowServiceV3 {
     this.wallets = new Map(); // chainId -> wallet
     this.abi = null;
     this.deploymentInfo = null;
+    this.chainConfigs = null; // Will be initialized after config loads
+  }
+
+  async initializeChainConfigs() {
+    if (this.chainConfigs) return; // Already initialized
+    
+    // Ensure config is initialized
+    if (!config.isInitialized) {
+      await config.initialize();
+    }
     
     // Chain configurations
     this.chainConfigs = {
       // Arbitrum Sepolia
       421614: {
         name: 'arbitrum-sepolia',
-        rpcUrl: process.env.ARBITRUM_SEPOLIA_RPC_URL,
+        rpcUrl: config.get('ARBITRUM_SEPOLIA_RPC_URL') || config.get('RPC_URL'),
         contractAddress: process.env.ARBITRUM_SEPOLIA_V3_DISPUTES_CONTRACT || 
                         '0x56b2C2F53497B5b8E179521De50e29F78C943B57',
         layerZeroEndpointId: 40231,
@@ -42,7 +53,7 @@ export class EscrowServiceV3 {
       // Sepolia
       11155111: {
         name: 'sepolia',
-        rpcUrl: process.env.SEPOLIA_RPC_URL,
+        rpcUrl: config.get('RPC_URL'),
         contractAddress: process.env.SEPOLIA_V3_DISPUTES_CONTRACT || 
                         '0x607672971D94C336746bB6d1DC39E535631C9DDa',
         layerZeroEndpointId: 40161,
@@ -58,7 +69,7 @@ export class EscrowServiceV3 {
       // Polygon Amoy
       80002: {
         name: 'polygon-amoy',
-        rpcUrl: process.env.POLYGON_AMOY_RPC_URL,
+        rpcUrl: config.get('POLYGON_AMOY_RPC_URL') || config.get('RPC_URL'),
         contractAddress: '0x52e89b515E2636aA7bBe456e546878D0903E85f1',
         layerZeroEndpointId: 40267,
         oftAdapter: '0x746EF3c4C9c3f779Bc3558A5FF55C3f34ae20725',
@@ -74,7 +85,10 @@ export class EscrowServiceV3 {
    * Initialize the service with contract ABI
    */
   async initialize() {
-    if (this.abi) return; // Already initialized
+    if (this.abi && this.chainConfigs) return; // Already initialized
+    
+    // Initialize chain configs first
+    await this.initializeChainConfigs();
     
     try {
       // Try to load DisputesStargateOnly version first (production contract)
@@ -164,7 +178,12 @@ export class EscrowServiceV3 {
    * Get or create wallet for a specific chain
    */
   async getWallet(chainId, privateKey = null) {
-    const key = privateKey || process.env.BACKEND_WALLET_PRIVATE_KEY;
+    // Ensure config is initialized
+    if (!config.isInitialized) {
+      await config.initialize();
+    }
+    
+    const key = privateKey || config.get('BACKEND_WALLET_PRIVATE_KEY');
     if (!key) {
       throw new Error('No private key provided');
     }

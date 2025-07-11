@@ -1,3 +1,4 @@
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 // FORCE TEST ENVIRONMENT VARIABLES BEFORE ANY IMPORTS
 process.env.NODE_ENV = 'test';
 process.env.FIREBASE_PROJECT_ID = 'demo-test';

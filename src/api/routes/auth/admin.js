@@ -1,4 +1,4 @@
-import '../../../config/env.js';
+import config from '../../../config/index.js';
 
 // Set emulator configuration BEFORE any Firebase imports
 const isTest = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test';
@@ -21,7 +21,7 @@ if (isTest) {
 import { initializeApp, cert, getApp, getApps, deleteApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import fs from 'fs';
-import awsSecretsManager from '../../../config/awsSecretsManager.js';
+import awsSecretsManager from '../../../services/awsSecretsManager.js';
 
 const appName = "adminApp";
 

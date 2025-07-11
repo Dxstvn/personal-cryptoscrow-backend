@@ -1,3 +1,4 @@
+import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import express from 'express';
 import request from 'supertest';
@@ -5,15 +6,15 @@ import request from 'supertest';
 // console.log('[TEST FILE SCOPE V5] Top of test file.');
 
 let effectiveMockGetAdminAuth;
-const effectiveMockVerifyIdToken = jest.fn();
+const effectiveMockVerifyIdToken = vi.fn();
 // console.log('[TEST FILE SCOPE V5] effectiveMockVerifyIdToken created.');
 
-const mockTimestampNowFn = jest.fn();
-const mockTimestampFromDateFn = jest.fn();
+const mockTimestampNowFn = vi.fn();
+const mockTimestampFromDateFn = vi.fn();
 
-jest.unstable_mockModule('firebase-admin/auth', () => {
+vi.mock('firebase-admin/auth', () => {
   // console.log('[MOCK FACTORY V5] jest.unstable_mockModule for "firebase-admin/auth" - FACTORY EXECUTED.');
-  const mockGetAdminAuthInFactory = jest.fn();
+  const mockGetAdminAuthInFactory = vi.fn();
   effectiveMockGetAdminAuth = mockGetAdminAuthInFactory;
   // console.log('[MOCK FACTORY V5] effectiveMockGetAdminAuth INSTANCE ASSIGNED via factory.');
   return {
@@ -27,27 +28,27 @@ jest.unstable_mockModule('firebase-admin/auth', () => {
 });
 // console.log('[TEST FILE SCOPE V5] jest.unstable_mockModule for "firebase-admin/auth" REGISTERED.');
 
-const mockCollection = jest.fn();
-const mockDoc = jest.fn();
-const mockGet = jest.fn();
-const mockSet = jest.fn();
-const mockUpdate = jest.fn();
-const mockAdd = jest.fn();
-const mockWhere = jest.fn();
-const mockRunTransaction = jest.fn();
-const mockOrderBy = jest.fn(); // Specific mock for orderBy
-const mockLimit = jest.fn();   // Specific mock for limit
-const mockTransactionGet = jest.fn(); // For use within runTransaction
+const mockCollection = vi.fn();
+const mockDoc = vi.fn();
+const mockGet = vi.fn();
+const mockSet = vi.fn();
+const mockUpdate = vi.fn();
+const mockAdd = vi.fn();
+const mockWhere = vi.fn();
+const mockRunTransaction = vi.fn();
+const mockOrderBy = vi.fn(); // Specific mock for orderBy
+const mockLimit = vi.fn();   // Specific mock for limit
+const mockTransactionGet = vi.fn(); // For use within runTransaction
 
 // Updated FieldValue mocks
-const mockArrayUnion = jest.fn((...args) => ({ _fieldName: 'FieldValue.arrayUnion', _elements: args }));
-const mockArrayRemove = jest.fn((...args) => ({ _fieldName: 'FieldValue.arrayRemove', _elements: args }));
-const mockDeleteFieldValue = jest.fn().mockReturnValue('---mocked delete output---');
+const mockArrayUnion = vi.fn((...args) => ({ _fieldName: 'FieldValue.arrayUnion', _elements: args }));
+const mockArrayRemove = vi.fn((...args) => ({ _fieldName: 'FieldValue.arrayRemove', _elements: args }));
+const mockDeleteFieldValue = vi.fn().mockReturnValue('---mocked delete output---');
 
-jest.unstable_mockModule('firebase-admin/firestore', () => {
+vi.mock('firebase-admin/firestore', () => {
   // console.log('[MOCK FACTORY V5] jest.unstable_mockModule for "firebase-admin/firestore" - FACTORY EXECUTED.');
   return {
-    getFirestore: jest.fn().mockReturnValue({
+    getFirestore: vi.fn().mockReturnValue({
       collection: mockCollection,
       doc: mockDoc,
       runTransaction: mockRunTransaction,
@@ -67,24 +68,24 @@ jest.unstable_mockModule('firebase-admin/firestore', () => {
 // console.log('[TEST FILE SCOPE V5] jest.unstable_mockModule for "firebase-admin/firestore" REGISTERED.');
 
 const mockAdminApp = { name: 'mockAdminApp' };
-jest.unstable_mockModule('../../../auth/admin.js', () => {
+vi.mock('../../../auth/admin.js', () => {
   // console.log('[MOCK FACTORY V5] jest.unstable_mockModule for "../../../auth/admin.js" - FACTORY EXECUTED.');
   return { 
     adminApp: mockAdminApp,
-    getAdminApp: jest.fn().mockResolvedValue(mockAdminApp),
+    getAdminApp: vi.fn().mockResolvedValue(mockAdminApp),
   };
 });
 // console.log('[TEST FILE SCOPE V5] jest.unstable_mockModule for "../../../auth/admin.js" REGISTERED.');
 
-const mockIsAddress = jest.fn();
-const mockGetAddress = jest.fn(addr => addr);
-const mockParseUnits = jest.fn();
-const mockWallet = jest.fn().mockImplementation((privateKey) => ({
+const mockIsAddress = vi.fn();
+const mockGetAddress = vi.fn(addr => addr);
+const mockParseUnits = vi.fn();
+const mockWallet = vi.fn().mockImplementation((privateKey) => ({
   address: '0x' + 'a'.repeat(40), // Mock wallet address
   privateKey: privateKey
 }));
 
-jest.unstable_mockModule('ethers', () => {
+vi.mock('ethers', () => {
   // console.log('[MOCK FACTORY V5] jest.unstable_mockModule for "ethers" - FACTORY EXECUTED.');
   return {
     isAddress: mockIsAddress,
@@ -95,8 +96,8 @@ jest.unstable_mockModule('ethers', () => {
 });
 // console.log('[TEST FILE SCOPE V5] jest.unstable_mockModule for "ethers" REGISTERED.');
 
-const mockDeployPropertyEscrowContract = jest.fn();
-jest.unstable_mockModule('../../../../../services/contractDeployer.js', () => {
+const mockDeployPropertyEscrowContract = vi.fn();
+vi.mock('../../../../../services/contractDeployer.js', () => {
   // console.log('[MOCK FACTORY V5] jest.unstable_mockModule for contractDeployer REGISTERED.');
   return {
     deployPropertyEscrowContract: mockDeployPropertyEscrowContract,
@@ -105,19 +106,19 @@ jest.unstable_mockModule('../../../../../services/contractDeployer.js', () => {
 // console.log('[TEST FILE SCOPE V5] jest.unstable_mockModule for contractDeployer REGISTERED.');
 
 // ✅ REFACTORED: Updated cross-chain service mocks to match new architecture
-const mockAreNetworksEVMCompatible = jest.fn();
-const mockGetBridgeInfo = jest.fn();
-const mockEstimateTransactionFees = jest.fn();
-const mockPrepareCrossChainTransaction = jest.fn();
-const mockExecuteCrossChainStep = jest.fn();
-const mockGetCrossChainTransactionStatus = jest.fn();
+const mockAreNetworksEVMCompatible = vi.fn();
+const mockGetBridgeInfo = vi.fn();
+const mockEstimateTransactionFees = vi.fn();
+const mockPrepareCrossChainTransaction = vi.fn();
+const mockExecuteCrossChainStep = vi.fn();
+const mockGetCrossChainTransactionStatus = vi.fn();
 // ✅ NEW: Additional cross-chain service mocks for refactored functionality
-const mockTriggerCrossChainReleaseAfterApprovalSimple = jest.fn();
-const mockTriggerCrossChainCancelAfterDisputeDeadline = jest.fn();
-const mockIsCrossChainDealReady = jest.fn();
-const mockAutoCompleteCrossChainSteps = jest.fn();
+const mockTriggerCrossChainReleaseAfterApprovalSimple = vi.fn();
+const mockTriggerCrossChainCancelAfterDisputeDeadline = vi.fn();
+const mockIsCrossChainDealReady = vi.fn();
+const mockAutoCompleteCrossChainSteps = vi.fn();
 
-jest.unstable_mockModule('../../../../../services/crossChainService.js', () => {
+vi.mock('../../../../../services/crossChainService.js', () => {
   return {
     areNetworksEVMCompatible: mockAreNetworksEVMCompatible,
     getBridgeInfo: mockGetBridgeInfo,
@@ -134,10 +135,10 @@ jest.unstable_mockModule('../../../../../services/crossChainService.js', () => {
 });
 
 // ✅ REFACTORED: Keep SmartContractBridgeService mock only for getContractInfo
-const mockGetContractInfo = jest.fn();
-jest.unstable_mockModule('../../../../../services/smartContractBridgeService.js', () => {
+const mockGetContractInfo = vi.fn();
+vi.mock('../../../../../services/smartContractBridgeService.js', () => {
   return {
-    default: jest.fn().mockImplementation(() => ({
+    default: vi.fn().mockImplementation(() => ({
       getContractInfo: mockGetContractInfo,
     })),
   };
@@ -177,9 +178,9 @@ const matchSpecificTimestampObject = (date) => expect.objectContaining({
 describe('Unit Tests for transactionRoutes.js', () => {
   beforeEach(async () => {
     // console.log('[TEST beforeEach V5] Clearing all mocks, resetting modules.');
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     jest.resetModules();
-    jest.useFakeTimers().setSystemTime(fixedDate);
+    vi.useFakeTimers().setSystemTime(fixedDate);
 
     mockTimestampNowFn.mockReturnValue(expectedFixedTimestampObject);
     mockTimestampFromDateFn.mockImplementation((dateInput) => {
@@ -199,7 +200,7 @@ describe('Unit Tests for transactionRoutes.js', () => {
 
     effectiveMockGetAdminAuth.mockReturnValue({
       verifyIdToken: effectiveMockVerifyIdToken,
-      getUserByEmail: jest.fn().mockImplementation(email => {
+      getUserByEmail: vi.fn().mockImplementation(email => {
         if (email === mockDecodedToken.email) return Promise.resolve({ uid: mockDecodedToken.uid, email: mockDecodedToken.email });
         if (email === otherUserDecodedToken.email) return Promise.resolve({ uid: otherUserDecodedToken.uid, email: otherUserDecodedToken.email });
         if (email === 'nonexistent@example.com') {
@@ -226,8 +227,8 @@ describe('Unit Tests for transactionRoutes.js', () => {
         get: mockGet,                          // Final method in the chain (general mockGet)
     };
 
-    const specificUserQueryGet = jest.fn(); // Specific mock for users collection queries
-    const mockUserDocGet = jest.fn(); // Specific mock for individual user document gets
+    const specificUserQueryGet = vi.fn(); // Specific mock for users collection queries
+    const mockUserDocGet = vi.fn(); // Specific mock for individual user document gets
 
     mockCollection.mockImplementation(collectionName => {
       if (collectionName === 'users') {
@@ -258,7 +259,7 @@ describe('Unit Tests for transactionRoutes.js', () => {
             };
           }),
           // Mock for individual user document get
-          doc: jest.fn().mockImplementation(docId => ({
+          doc: vi.fn().mockImplementation(docId => ({
             get: mockUserDocGet.mockImplementation(() => {
               // Default mock for getting user profile - should return the current user's profile
               if (docId === mockDecodedToken.uid) {
@@ -433,7 +434,7 @@ describe('Unit Tests for transactionRoutes.js', () => {
   });
 
   afterEach(() => {
-    jest.useRealTimers();
+    vi.useRealTimers();
     // console.log('[TEST afterEach V5] Real timers restored.');
   });
 
@@ -465,7 +466,7 @@ describe('Unit Tests for transactionRoutes.js', () => {
 
     beforeEach(() => {
       // Reset user document get mock for each test in this describe block
-      const mockUserDocGet = jest.fn();
+      const mockUserDocGet = vi.fn();
       mockUserDocGet.mockImplementation(() => {
         return Promise.resolve({
           exists: true,
@@ -478,7 +479,7 @@ describe('Unit Tests for transactionRoutes.js', () => {
         if (collectionName === 'users') {
           return {
             where: mockWhere.mockImplementation((field, op, emailValue) => {
-              const specificUserQueryGet = jest.fn();
+              const specificUserQueryGet = vi.fn();
               if (emailValue === otherUserDecodedToken.email) {
                 specificUserQueryGet.mockResolvedValueOnce({
                   empty: false,
@@ -502,7 +503,7 @@ describe('Unit Tests for transactionRoutes.js', () => {
                 get: specificUserQueryGet,
               };
             }),
-            doc: jest.fn().mockImplementation(docId => ({
+            doc: vi.fn().mockImplementation(docId => ({
               get: mockUserDocGet
             }))
           };

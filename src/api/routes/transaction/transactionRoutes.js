@@ -4,6 +4,7 @@ import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { getAdminApp } from '../auth/admin.js';
 import { isAddress, getAddress, parseUnits, JsonRpcProvider, formatEther, parseEther } from 'ethers';
 import { Wallet } from 'ethers';
+import config from '../../../config/index.js';
 
 // Import the new V3 escrow service
 import { EscrowServiceV3 } from '../../../services/escrowServiceV3.js';
@@ -12,6 +13,15 @@ import { EscrowServiceV3 } from '../../../services/escrowServiceV3.js';
 const escrowService = new EscrowServiceV3();
 
 const router = express.Router();
+
+// Ensure config is initialized
+let configInitialized = false;
+async function ensureConfig() {
+  if (!configInitialized) {
+    await config.initialize();
+    configInitialized = true;
+  }
+}
 
 // Helper function to get Firebase services
 async function getFirebaseServices() {
@@ -96,6 +106,7 @@ router.get('/api/v3/quote', async (req, res) => {
 // Create Deal endpoint - updated to use V3 contracts
 router.post('/api/createDeal', async (req, res) => {
     try {
+        await ensureConfig();
         console.log('[ROUTE LOG] Deal creation request received:', { ...req.body, authHeader: req.headers.authorization ? 'present' : 'missing' });
 
         const idToken = req.headers.authorization?.split('Bearer ')[1];
@@ -216,7 +227,7 @@ router.post('/api/createDeal', async (req, res) => {
                 amount: amount,
                 targetToken: newTransactionData.targetToken,
                 targetChainId: sellerChainId,
-                signerPrivateKey: process.env.DEPLOYER_PRIVATE_KEY
+                signerPrivateKey: config.get('BACKEND_WALLET_PRIVATE_KEY')
             });
 
             newTransactionData.smartContractAddress = escrowResult.contractAddress;
@@ -281,6 +292,7 @@ router.post('/api/createDeal', async (req, res) => {
 // Update deal conditions
 router.post('/api/updateCondition', async (req, res) => {
     try {
+        await ensureConfig();
         const { dealId, conditionIndex, status } = req.body;
         
         if (!dealId || conditionIndex === undefined || !status) {
@@ -328,7 +340,7 @@ router.post('/api/updateCondition', async (req, res) => {
                     dealData.buyerChainId,
                     dealData.escrowId,
                     allConditionsMet,
-                    process.env.BACKEND_WALLET_PRIVATE_KEY
+                    config.get('BACKEND_WALLET_PRIVATE_KEY')
                 );
                 
                 // If using V3Disputes contract, update with dispute window tracking
@@ -378,6 +390,7 @@ router.post('/api/updateCondition', async (req, res) => {
 // Release escrow
 router.post('/api/releaseEscrow', async (req, res) => {
     try {
+        await ensureConfig();
         const { dealId, crossChainFee } = req.body;
         
         if (!dealId) {
@@ -451,7 +464,7 @@ router.post('/api/releaseEscrow', async (req, res) => {
             dealData.buyerChainId,
             dealData.escrowId,
             value,
-            process.env.BACKEND_WALLET_PRIVATE_KEY
+            config.get('BACKEND_WALLET_PRIVATE_KEY')
         );
 
         // Update database
@@ -487,6 +500,7 @@ router.post('/api/releaseEscrow', async (req, res) => {
 // Raise dispute
 router.post('/api/raiseDispute', async (req, res) => {
     try {
+        await ensureConfig();
         const { dealId, reason } = req.body;
         
         if (!dealId || !reason) {
@@ -523,7 +537,7 @@ router.post('/api/raiseDispute', async (req, res) => {
             {
                 chainId: dealData.buyerChainId,
                 contractAddress: dealData.smartContractAddress,
-                signerPrivateKey: process.env.BACKEND_WALLET_PRIVATE_KEY
+                signerPrivateKey: config.get('BACKEND_WALLET_PRIVATE_KEY')
             }
         );
 
@@ -557,6 +571,7 @@ router.post('/api/raiseDispute', async (req, res) => {
 // Resolve dispute
 router.post('/api/resolveDispute', async (req, res) => {
     try {
+        await ensureConfig();
         const { dealId, releaseFunds } = req.body;
         
         if (!dealId || releaseFunds === undefined) {
@@ -593,7 +608,7 @@ router.post('/api/resolveDispute', async (req, res) => {
             {
                 chainId: dealData.buyerChainId,
                 contractAddress: dealData.smartContractAddress,
-                signerPrivateKey: process.env.BACKEND_WALLET_PRIVATE_KEY
+                signerPrivateKey: config.get('BACKEND_WALLET_PRIVATE_KEY')
             }
         );
 
