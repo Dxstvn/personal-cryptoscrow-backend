@@ -1,12 +1,71 @@
 // src/services/__tests__/escrowServiceV3.test.js
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { EscrowServiceV3 } from '../escrowServiceV3.js';
 import { parseEther, formatEther } from 'ethers';
+
+// Mock config module
+vi.mock('../../config/index.js', () => ({
+  default: {
+    isInitialized: true,
+    initialize: vi.fn().mockResolvedValue(undefined),
+    get: vi.fn((key) => {
+      const configs = {
+        'RPC_URL': 'https://sepolia.infura.io/v3/test',
+        'ARBITRUM_SEPOLIA_RPC_URL': 'https://arbitrum-sepolia.infura.io/v3/test',
+        'POLYGON_AMOY_RPC_URL': 'https://polygon-amoy.infura.io/v3/test'
+      };
+      return configs[key] || null;
+    })
+  }
+}));
+
+// Mock mockEndpointQuoter module
+vi.mock('../mockEndpointQuoter.js', () => ({
+  default: {
+    getQuoteOFT: vi.fn().mockResolvedValue({
+      nativeFee: parseEther('0.001').toString(),
+      lzTokenFee: '0'
+    })
+  }
+}));
+
+// Mock fs/promises for ABI loading
+vi.mock('fs/promises', () => ({
+  default: {
+    readFile: vi.fn().mockImplementation((path) => {
+      if (path.includes('UniversalEscrowServiceV3DisputesStargateOnly.json')) {
+        // Return mock DisputesStargateOnly ABI
+        return Promise.resolve(JSON.stringify({
+          abi: [
+            { name: 'createEscrow', type: 'function' },
+            { name: 'updateCondition', type: 'function' },
+            { name: 'releaseEscrow', type: 'function' },
+            { name: 'getEscrowDetails', type: 'function' },
+            { name: 'estimateTotalFees', type: 'function' }
+          ]
+        }));
+      } else if (path.includes('UniversalEscrowServiceV3Test.json')) {
+        // Return mock Test ABI
+        return Promise.resolve(JSON.stringify({
+          abi: [
+            { name: 'createEscrow', type: 'function' },
+            { name: 'updateCondition', type: 'function' },
+            { name: 'releaseEscrow', type: 'function' },
+            { name: 'getEscrowDetails', type: 'function' },
+            { name: 'estimateTotalFees', type: 'function' }
+          ]
+        }));
+      }
+      return Promise.reject(new Error('File not found'));
+    })
+  }
+}));
+
+import { EscrowServiceV3 } from '../escrowServiceV3.js';
 
 describe('EscrowServiceV3', () => {
   let service;
   
-  beforeAll(() => {
+  beforeAll(async () => {
     // Mock environment variables
     process.env.SEPOLIA_RPC_URL = 'https://sepolia.infura.io/v3/test';
     process.env.ARBITRUM_SEPOLIA_RPC_URL = 'https://arbitrum-sepolia.infura.io/v3/test';
@@ -14,6 +73,7 @@ describe('EscrowServiceV3', () => {
     process.env.BACKEND_WALLET_PRIVATE_KEY = '0x' + '1'.repeat(64);
     
     service = new EscrowServiceV3();
+    await service.initialize();
   });
 
   afterAll(() => {
@@ -59,7 +119,7 @@ describe('EscrowServiceV3', () => {
       const config = service.getChainConfig(11155111);
       expect(config).toBeDefined();
       expect(config.name).toBe('sepolia');
-      expect(config.contractAddress).toBe('0xBA10d8d3A09439eA5984F545C925d61958fa14E9');
+      expect(config.contractAddress).toBe('0x607672971D94C336746bB6d1DC39E535631C9DDa');
     });
 
     it('should return null for invalid chain', () => {
@@ -69,7 +129,7 @@ describe('EscrowServiceV3', () => {
 
     it('should get OFT adapter address', () => {
       const adapter = service.getOFTAdapter(11155111);
-      expect(adapter).toBe('0xb3dd252bfc2c3d822f7F0f550Df576a9CC928Bf4');
+      expect(adapter).toBe('0x5277270f4F4F7e03439F2eCdb6d6632ED921bfF6');
     });
 
     it('should get composer address', () => {
@@ -145,15 +205,22 @@ describe('EscrowServiceV3', () => {
     });
 
     it('should throw error for missing RPC URL', async () => {
-      // Temporarily remove RPC URL
-      const originalUrl = process.env.SEPOLIA_RPC_URL;
-      delete process.env.SEPOLIA_RPC_URL;
+      // Create a new service instance with missing RPC config
+      const { default: config } = await import('../../config/index.js');
+      const originalGet = config.get;
+      
+      // Mock config to return null for RPC_URL
+      config.get = vi.fn((key) => {
+        if (key === 'RPC_URL') return null;
+        return originalGet(key);
+      });
       
       const newService = new EscrowServiceV3();
+      await newService.initialize();
       await expect(newService.getProvider(11155111)).rejects.toThrow('RPC URL not configured for chain 11155111');
       
       // Restore
-      process.env.SEPOLIA_RPC_URL = originalUrl;
+      config.get = originalGet;
     });
 
     it('should throw error for missing private key', async () => {
@@ -220,7 +287,9 @@ describe('EscrowServiceV3', () => {
         serviceFee: '2.0',
         crossChainFee: '0.003',
         gasEstimate: '0.003',
-        total: '2.006000'
+        total: '2.006000',
+        method: 'LayerZero',
+        isEnhanced: false
       });
     });
   });
@@ -238,7 +307,9 @@ describe('EscrowServiceV3', () => {
         serviceFee: '1.0',
         crossChainFee: '0',
         gasEstimate: '0.001',
-        total: '1.001000'
+        total: '1.001000',
+        method: 'direct',
+        isEnhanced: false
       });
     });
 

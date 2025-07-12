@@ -33,9 +33,41 @@ vi.mock('../../admin.js', () => ({
   getAdminApp: vi.fn().mockResolvedValue(mockAdminApp),
 }));
 
+// Mock Firebase client auth
+const mockUserCredential = {
+  user: {
+    getIdToken: vi.fn().mockResolvedValue('mock-id-token')
+  }
+};
+
+vi.mock('firebase/auth', () => ({
+  getAuth: vi.fn(() => ({})),
+  signInWithCustomToken: vi.fn().mockResolvedValue(mockUserCredential)
+}));
+
+// Mock config
+vi.mock('../../../../config/index.js', () => ({
+  default: {
+    initialize: vi.fn().mockResolvedValue(undefined),
+    get: vi.fn((key) => {
+      if (key === 'ALLOWED_EMAILS') {
+        return 'jasmindustin@gmail.com,dustin.jasmin@jaspire.co,andyrowe00@gmail.com,testuser.a@example.com';
+      }
+      return null;
+    }),
+    isInitialized: true
+  }
+}));
+
+// Mock authIndex.js
+vi.mock('../../authIndex.js', () => ({
+  ethEscrowApp: { name: 'mockEthEscrowApp' }
+}));
+
 // Mock Firestore operations
 const mockFirestoreDoc = {
   set: vi.fn().mockResolvedValue({}),
+  get: vi.fn().mockResolvedValue({ exists: true, data: () => ({}) }),
 };
 
 const mockFirestoreCollection = {
@@ -74,24 +106,24 @@ describe('Unit Tests for loginSignUp.js Router', () => {
     // Configure default mock return values for successful scenarios
     mockFirebaseAdminAuth.createUser.mockResolvedValue({
       uid: 'mockUserId',
-      email: 'test@example.com'
+      email: 'jasmindustin@gmail.com'
     });
     
     mockFirebaseAdminAuth.getUserByEmail.mockResolvedValue({
       uid: 'mockUserId',
-      email: 'test@example.com',
+      email: 'jasmindustin@gmail.com',
       customClaims: { admin: true }
     });
     
     mockFirebaseAdminAuth.getUser.mockResolvedValue({
       uid: 'mockUserId',
-      email: 'test@example.com',
+      email: 'jasmindustin@gmail.com',
       customClaims: { admin: true }
     });
     
     mockFirebaseAdminAuth.verifyIdToken.mockResolvedValue({
       uid: 'mockUserId',
-      email: 'test@example.com'
+      email: 'jasmindustin@gmail.com'
     });
     
     mockFirebaseAdminAuth.setCustomUserClaims.mockResolvedValue();
@@ -109,11 +141,11 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
     it('should create a user successfully (non-test env)', async () => {
       process.env.NODE_ENV = 'development';
-      const mockUserPayload = { uid: 'testUid', email: 'test@example.com' };
+      const mockUserPayload = { uid: 'testUid', email: 'jasmindustin@gmail.com' };
       mockFirebaseAdminAuth.createUser.mockResolvedValue(mockUserPayload);
       mockFirebaseAdminAuth.setCustomUserClaims.mockResolvedValue({});
 
-      const req = mockRequest({ email: 'test@example.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
+      const req = mockRequest({ email: 'jasmindustin@gmail.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
       const next = vi.fn();
       await router(req, res, next);
@@ -122,7 +154,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       await new Promise(resolve => setImmediate(resolve));
 
       expect(mockFirebaseAdminAuth.createUser).toHaveBeenCalledWith({
-        email: 'test@example.com',
+        email: 'jasmindustin@gmail.com',
         password: 'password123',
         emailVerified: false
       });
@@ -130,13 +162,16 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       expect(mockFirebaseAdminFirestore.collection).toHaveBeenCalledWith('users');
       expect(mockFirestoreCollection.doc).toHaveBeenCalledWith(mockUserPayload.uid);
       expect(mockFirestoreDoc.set).toHaveBeenCalledWith(expect.objectContaining({
-        email: 'test@example.com',
+        email: 'jasmindustin@gmail.com',
         uid: mockUserPayload.uid,
         wallets: []
       }));
-      expect(res.status).toHaveBeenCalledWith(201);
+      expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith({
         message: 'User created successfully',
+        token: expect.any(String),
+        tokenType: 'id',
+        userId: mockUserPayload.uid,
         user: { uid: mockUserPayload.uid, email: mockUserPayload.email }
       });
     });
@@ -159,9 +194,12 @@ describe('Unit Tests for loginSignUp.js Router', () => {
         emailVerified: false
       });
       expect(mockFirebaseAdminAuth.setCustomUserClaims).not.toHaveBeenCalled();
-      expect(res.status).toHaveBeenCalledWith(201);
+      expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith({
         message: 'User created successfully',
+        token: expect.any(String),
+        tokenType: 'id',
+        userId: mockUserPayload.uid,
         user: { uid: mockUserPayload.uid, email: mockUserPayload.email }
       });
     });
@@ -222,25 +260,27 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       process.env.NODE_ENV = 'test';
       const mockUserRecord = {
         uid: 'testUid',
-        email: 'test@example.com',
+        email: 'jasmindustin@gmail.com',
         customClaims: { admin: true }
       };
       mockFirebaseAdminAuth.getUserByEmail.mockResolvedValue(mockUserRecord);
       mockFirebaseAdminAuth.createCustomToken.mockResolvedValue('mock-custom-token');
 
-      const req = mockRequest({ email: 'test@example.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
+      const req = mockRequest({ email: 'jasmindustin@gmail.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
       const next = vi.fn();
       await router(req, res, next);
 
       await new Promise(resolve => setImmediate(resolve));
 
-      expect(mockFirebaseAdminAuth.getUserByEmail).toHaveBeenCalledWith('test@example.com');
+      expect(mockFirebaseAdminAuth.getUserByEmail).toHaveBeenCalledWith('jasmindustin@gmail.com');
       expect(mockFirebaseAdminAuth.createCustomToken).toHaveBeenCalledWith(mockUserRecord.uid);
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith({
         message: 'User signed in successfully',
-        token: 'mock-custom-token',
+        token: 'mock-id-token',
+        tokenType: 'id',
+        userId: mockUserRecord.uid,
         user: { uid: mockUserRecord.uid, email: mockUserRecord.email }
       });
     });
@@ -249,25 +289,27 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       process.env.NODE_ENV = 'development';
       const mockUserRecord = {
         uid: 'testUid',
-        email: 'admin@example.com',
+        email: 'jasmindustin@gmail.com',
         customClaims: { admin: true }
       };
       mockFirebaseAdminAuth.getUserByEmail.mockResolvedValue(mockUserRecord);
       mockFirebaseAdminAuth.createCustomToken.mockResolvedValue('mock-admin-token');
 
-      const req = mockRequest({ email: 'admin@example.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
+      const req = mockRequest({ email: 'jasmindustin@gmail.com', password: 'password123' }, {}, {}, routeMethod, routeUrl);
       const res = mockResponse();
       const next = vi.fn();
       await router(req, res, next);
 
       await new Promise(resolve => setImmediate(resolve));
 
-      expect(mockFirebaseAdminAuth.getUserByEmail).toHaveBeenCalledWith('admin@example.com');
+      expect(mockFirebaseAdminAuth.getUserByEmail).toHaveBeenCalledWith('jasmindustin@gmail.com');
       expect(mockFirebaseAdminAuth.createCustomToken).toHaveBeenCalledWith(mockUserRecord.uid);
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith({
         message: 'User signed in successfully',
-        token: 'mock-admin-token',
+        token: 'mock-id-token',
+        tokenType: 'id',
+        userId: mockUserRecord.uid,
         user: { uid: mockUserRecord.uid, email: mockUserRecord.email }
       });
     });
@@ -289,8 +331,8 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       await new Promise(resolve => setImmediate(resolve));
 
       expect(mockFirebaseAdminAuth.getUserByEmail).toHaveBeenCalledWith('user@example.com');
-      expect(res.status).toHaveBeenCalledWith(401);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Unauthorized user' });
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({ error: 'Access denied' });
     });
 
     it('should return 400 if email or password is missing for sign in', async () => {
@@ -353,7 +395,7 @@ describe('Unit Tests for loginSignUp.js Router', () => {
       await new Promise(resolve => setImmediate(resolve));
 
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Missing ID token' });
+      expect(res.json).toHaveBeenCalledWith({ error: 'ID token is required' });
       expect(mockFirebaseAdminAuth.verifyIdToken).not.toHaveBeenCalled();
     });
 
@@ -362,7 +404,9 @@ describe('Unit Tests for loginSignUp.js Router', () => {
         process.env.NODE_ENV = 'test';
       });
 
-      it('should return 401 for literal "invalid-token" in test mode', async () => {
+      it('should return 401 for invalid token in test mode', async () => {
+        mockFirebaseAdminAuth.verifyIdToken.mockRejectedValue(new Error('Invalid token'));
+        
         const req = mockRequest({ idToken: 'invalid-token' }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
         const next = vi.fn();
@@ -371,65 +415,39 @@ describe('Unit Tests for loginSignUp.js Router', () => {
         await new Promise(resolve => setImmediate(resolve));
 
         expect(res.status).toHaveBeenCalledWith(401);
-        expect(res.json).toHaveBeenCalledWith({ error: 'Invalid ID token' });
+        expect(res.json).toHaveBeenCalledWith({ error: 'Invalid Google ID token' });
       });
 
-      it('should authenticate admin user with UID as token in test mode', async () => {
+      it('should authenticate user with valid token in test mode', async () => {
         const adminUid = 'adminUid123';
-        mockFirebaseAdminAuth.getUser.mockResolvedValue({ 
+        const adminEmail = 'jasmindustin@gmail.com';
+        mockFirebaseAdminAuth.verifyIdToken.mockResolvedValue({ 
           uid: adminUid, 
-          customClaims: { admin: true } 
+          email: adminEmail 
         });
+        mockFirebaseAdminFirestore.collection.mockReturnValue(mockFirestoreCollection);
+        mockFirestoreCollection.doc.mockReturnValue(mockFirestoreDoc);
+        mockFirestoreDoc.get.mockResolvedValue({ exists: true, data: () => ({ email: adminEmail }) });
         
-        const req = mockRequest({ idToken: adminUid }, {}, {}, routeMethod, routeUrl);
+        const req = mockRequest({ idToken: 'valid-token' }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
         const next = vi.fn();
         await router(req, res, next);
 
         await new Promise(resolve => setImmediate(resolve));
 
-        expect(mockFirebaseAdminAuth.getUser).toHaveBeenCalledWith(adminUid);
+        expect(mockFirebaseAdminAuth.verifyIdToken).toHaveBeenCalledWith('valid-token');
         expect(res.status).toHaveBeenCalledWith(200);
         expect(res.json).toHaveBeenCalledWith({ 
-          message: 'User authenticated (test)', 
-          uid: adminUid, 
-          isAdmin: true 
+          message: 'User signed in successfully via Google', 
+          token: 'valid-token',
+          tokenType: 'id',
+          userId: adminUid,
+          user: { uid: adminUid, email: adminEmail }
         });
       });
 
-      it('should return 401 if non-admin user (UID as token) in test mode and admin required', async () => {
-        const userUid = 'userUid456';
-        mockFirebaseAdminAuth.getUser.mockResolvedValue({ 
-          uid: userUid, 
-          customClaims: { admin: false } 
-        });
-        
-        const req = mockRequest({ idToken: userUid }, {}, {}, routeMethod, routeUrl);
-        const res = mockResponse();
-        const next = vi.fn();
-        await router(req, res, next);
-
-        await new Promise(resolve => setImmediate(resolve));
-
-        expect(mockFirebaseAdminAuth.getUser).toHaveBeenCalledWith(userUid);
-        expect(res.status).toHaveBeenCalledWith(401);
-        expect(res.json).toHaveBeenCalledWith({ error: 'Unauthorized user (test mode - admin required)' });
-      });
-
-      it('should return 401 if getUser fails (e.g., UID not found) in test mode', async () => {
-        mockFirebaseAdminAuth.getUser.mockRejectedValue(new Error('User not found by UID'));
-        
-        const req = mockRequest({ idToken: 'unknownUid' }, {}, {}, routeMethod, routeUrl);
-        const res = mockResponse();
-        const next = vi.fn();
-        await router(req, res, next);
-
-        await new Promise(resolve => setImmediate(resolve));
-
-        expect(mockFirebaseAdminAuth.getUser).toHaveBeenCalledWith('unknownUid');
-        expect(res.status).toHaveBeenCalledWith(401);
-        expect(res.json).toHaveBeenCalledWith({ error: 'Invalid user UID provided as token (test mode)' });
-      });
+      // In test mode, authentication works the same way - no special UID handling
     });
 
     describe('Production Mode (NODE_ENV=development)', () => {
@@ -441,7 +459,11 @@ describe('Unit Tests for loginSignUp.js Router', () => {
         const adminEmail = 'jasmindustin@gmail.com';
         const uid = 'prodAdminUid';
         mockFirebaseAdminAuth.verifyIdToken.mockResolvedValue({ uid, email: adminEmail });
-        mockFirebaseAdminAuth.getUser.mockResolvedValue({ uid, email: adminEmail });
+        mockFirebaseAdminAuth.getUser.mockResolvedValue({ uid, email: adminEmail, customClaims: {} });
+        mockFirebaseAdminAuth.setCustomUserClaims.mockResolvedValue({});
+        mockFirebaseAdminFirestore.collection.mockReturnValue(mockFirestoreCollection);
+        mockFirestoreCollection.doc.mockReturnValue(mockFirestoreDoc);
+        mockFirestoreDoc.get.mockResolvedValue({ exists: true, data: () => ({ email: adminEmail }) });
 
         const req = mockRequest({ idToken: 'validGoogleToken' }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
@@ -450,17 +472,27 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
         await new Promise(resolve => setImmediate(resolve));
 
-        expect(mockFirebaseAdminAuth.verifyIdToken).toHaveBeenCalledWith('validGoogleToken', true);
-        expect(mockFirebaseAdminAuth.getUser).toHaveBeenCalledWith(uid);
+        expect(mockFirebaseAdminAuth.verifyIdToken).toHaveBeenCalledWith('validGoogleToken');
+        expect(mockFirebaseAdminAuth.setCustomUserClaims).toHaveBeenCalledWith(uid, { admin: true });
         expect(res.status).toHaveBeenCalledWith(200);
-        expect(res.json).toHaveBeenCalledWith({ message: 'User authenticated', uid, isAdmin: true });
+        expect(res.json).toHaveBeenCalledWith({ 
+          message: 'User signed in successfully via Google',
+          token: 'validGoogleToken',
+          tokenType: 'id',
+          userId: uid,
+          user: { uid, email: adminEmail }
+        });
       });
 
       it('should authenticate non-admin user from allowed list in production mode', async () => {
         const userEmail = 'andyrowe00@gmail.com';
         const uid = 'prodUserUid';
         mockFirebaseAdminAuth.verifyIdToken.mockResolvedValue({ uid, email: userEmail });
-        mockFirebaseAdminAuth.getUser.mockResolvedValue({ uid, email: userEmail });
+        mockFirebaseAdminAuth.getUser.mockResolvedValue({ uid, email: userEmail, customClaims: {} });
+        mockFirebaseAdminAuth.setCustomUserClaims.mockResolvedValue({});
+        mockFirebaseAdminFirestore.collection.mockReturnValue(mockFirestoreCollection);
+        mockFirestoreCollection.doc.mockReturnValue(mockFirestoreDoc);
+        mockFirestoreDoc.get.mockResolvedValue({ exists: true, data: () => ({ email: userEmail }) });
 
         const req = mockRequest({ idToken: 'validGoogleTokenUser' }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
@@ -469,16 +501,24 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
         await new Promise(resolve => setImmediate(resolve));
 
-        expect(mockFirebaseAdminAuth.verifyIdToken).toHaveBeenCalledWith('validGoogleTokenUser', true);
-        expect(mockFirebaseAdminAuth.getUser).toHaveBeenCalledWith(uid);
+        expect(mockFirebaseAdminAuth.verifyIdToken).toHaveBeenCalledWith('validGoogleTokenUser');
+        expect(mockFirebaseAdminAuth.setCustomUserClaims).toHaveBeenCalledWith(uid, { admin: true });
         expect(res.status).toHaveBeenCalledWith(200);
-        expect(res.json).toHaveBeenCalledWith({ message: 'User authenticated', uid, isAdmin: false });
+        expect(res.json).toHaveBeenCalledWith({ 
+          message: 'User signed in successfully via Google',
+          token: 'validGoogleTokenUser',
+          tokenType: 'id',
+          userId: uid,
+          user: { uid, email: userEmail }
+        });
       });
 
       it('should return 403 if email not in allowed list in production mode', async () => {
         const uid = 'unauthorizedUid';
         mockFirebaseAdminAuth.verifyIdToken.mockResolvedValue({ uid, email: 'unauthorized@example.com' });
-        mockFirebaseAdminAuth.getUser.mockResolvedValue({ uid, email: 'unauthorized@example.com' });
+        mockFirebaseAdminFirestore.collection.mockReturnValue(mockFirestoreCollection);
+        mockFirestoreCollection.doc.mockReturnValue(mockFirestoreDoc);
+        mockFirestoreDoc.get.mockResolvedValue({ exists: true, data: () => ({ email: 'unauthorized@example.com' }) });
 
         const req = mockRequest({ idToken: 'validGoogleTokenUnauthorized' }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
@@ -487,10 +527,9 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
         await new Promise(resolve => setImmediate(resolve));
 
-        expect(mockFirebaseAdminAuth.verifyIdToken).toHaveBeenCalledWith('validGoogleTokenUnauthorized', true);
-        expect(mockFirebaseAdminAuth.getUser).toHaveBeenCalledWith(uid);
+        expect(mockFirebaseAdminAuth.verifyIdToken).toHaveBeenCalledWith('validGoogleTokenUnauthorized');
         expect(res.status).toHaveBeenCalledWith(403);
-        expect(res.json).toHaveBeenCalledWith({ error: 'Access denied. This email address is not authorized.' });
+        expect(res.json).toHaveBeenCalledWith({ error: 'Access denied' });
       });
 
       it('should return 401 for expired ID token in production mode', async () => {
@@ -505,9 +544,9 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
         await new Promise(resolve => setImmediate(resolve));
 
-        expect(mockFirebaseAdminAuth.verifyIdToken).toHaveBeenCalledWith('expiredToken', true);
+        expect(mockFirebaseAdminAuth.verifyIdToken).toHaveBeenCalledWith('expiredToken');
         expect(res.status).toHaveBeenCalledWith(401);
-        expect(res.json).toHaveBeenCalledWith({ error: 'Login session expired, please sign in again.' });
+        expect(res.json).toHaveBeenCalledWith({ error: 'Invalid Google ID token' });
       });
 
       it('should return 401 for invalid signature in production mode', async () => {
@@ -522,31 +561,44 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
         await new Promise(resolve => setImmediate(resolve));
 
-        expect(mockFirebaseAdminAuth.verifyIdToken).toHaveBeenCalledWith('invalidSigToken', true);
+        expect(mockFirebaseAdminAuth.verifyIdToken).toHaveBeenCalledWith('invalidSigToken');
         expect(res.status).toHaveBeenCalledWith(401);
-        expect(res.json).toHaveBeenCalledWith({ 
-          error: 'Invalid authentication token signature. Please ensure the frontend and backend are using the same Firebase project.' 
-        });
+        expect(res.json).toHaveBeenCalledWith({ error: 'Invalid Google ID token' });
       });
 
-      it('should return 404 if user not found after token verification in production mode', async () => {
-        const uid = 'verifiedButNotFoundUid';
-        mockFirebaseAdminAuth.verifyIdToken.mockResolvedValue({ uid, email: 'jasmindustin@gmail.com' });
-        const error = new Error('User not found');
-        error.code = 'auth/user-not-found';
-        mockFirebaseAdminAuth.getUser.mockRejectedValue(error);
+      it('should create new user profile on first Google sign-in', async () => {
+        const uid = 'newGoogleUser';
+        const email = 'jasmindustin@gmail.com';
+        mockFirebaseAdminAuth.verifyIdToken.mockResolvedValue({ uid, email, name: 'Jasmin Dustin' });
+        mockFirebaseAdminAuth.getUser.mockResolvedValue({ uid, email, customClaims: {} });
+        mockFirebaseAdminAuth.setCustomUserClaims.mockResolvedValue({});
+        mockFirebaseAdminFirestore.collection.mockReturnValue(mockFirestoreCollection);
+        mockFirestoreCollection.doc.mockReturnValue(mockFirestoreDoc);
+        mockFirestoreDoc.get.mockResolvedValue({ exists: false }); // New user
+        mockFirestoreDoc.set.mockResolvedValue({});
 
-        const req = mockRequest({ idToken: 'tokenForNotFoundUser' }, {}, {}, routeMethod, routeUrl);
+        const req = mockRequest({ idToken: 'tokenForNewUser' }, {}, {}, routeMethod, routeUrl);
         const res = mockResponse();
         const next = vi.fn();
         await router(req, res, next);
 
         await new Promise(resolve => setImmediate(resolve));
 
-        expect(mockFirebaseAdminAuth.verifyIdToken).toHaveBeenCalledWith('tokenForNotFoundUser', true);
-        expect(mockFirebaseAdminAuth.getUser).toHaveBeenCalledWith(uid);
-        expect(res.status).toHaveBeenCalledWith(404);
-        expect(res.json).toHaveBeenCalledWith({ error: 'Authenticated user profile not found.' });
+        expect(mockFirebaseAdminAuth.verifyIdToken).toHaveBeenCalledWith('tokenForNewUser');
+        expect(mockFirestoreDoc.set).toHaveBeenCalledWith(expect.objectContaining({
+          email: email,
+          first_name: 'Jasmin',
+          last_name: 'Dustin',
+          uid: uid
+        }));
+        expect(res.status).toHaveBeenCalledWith(200);
+        expect(res.json).toHaveBeenCalledWith({ 
+          message: 'User signed in successfully via Google',
+          token: 'tokenForNewUser',
+          tokenType: 'id',
+          userId: uid,
+          user: { uid, email }
+        });
       });
 
       it('should return 500 for other internal errors during Google sign-in in production mode', async () => {
@@ -560,9 +612,9 @@ describe('Unit Tests for loginSignUp.js Router', () => {
 
         await new Promise(resolve => setImmediate(resolve));
 
-        expect(mockFirebaseAdminAuth.verifyIdToken).toHaveBeenCalledWith('tokenCausingInternalError', true);
-        expect(res.status).toHaveBeenCalledWith(500);
-        expect(res.json).toHaveBeenCalledWith({ error: 'An internal error occurred during authentication.' });
+        expect(mockFirebaseAdminAuth.verifyIdToken).toHaveBeenCalledWith('tokenCausingInternalError');
+        expect(res.status).toHaveBeenCalledWith(401);
+        expect(res.json).toHaveBeenCalledWith({ error: 'Invalid Google ID token' });
       });
     });
   });

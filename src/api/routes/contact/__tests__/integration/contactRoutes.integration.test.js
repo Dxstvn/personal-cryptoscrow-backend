@@ -2,10 +2,49 @@ import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } 
 import request from 'supertest';
 import express from 'express';
 import contactRouter from '../../contactRoutes.js'; // Adjust path relative to test file
-import { adminFirestore }  from '../../../../../../jest.emulator.setup.js'; // Use test setup
-import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import { deleteAdminApp } from '../../../auth/admin.js'; // Import the delete function
+import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { getAdminApp, deleteAdminApp } from '../../../auth/admin.js'; // Import the delete function
 import {createTestUser, cleanUp } from '../../../../../helperFunctions.js';
+import { spawn } from 'child_process';
+
+// Firebase emulator variables
+let adminFirestore;
+let emulatorProcess = null;
+
+// Simple emulator setup functions
+async function startEmulators() {
+  // Set environment variables for emulators
+  process.env.NODE_ENV = 'test';
+  process.env.FIREBASE_PROJECT_ID = 'demo-test';
+  process.env.FIREBASE_STORAGE_BUCKET = 'demo-test.appspot.com';
+  process.env.FIRESTORE_EMULATOR_HOST = 'localhost:5004';
+  process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9099';
+  process.env.FIREBASE_STORAGE_EMULATOR_HOST = 'localhost:9199';
+
+  console.log('🚀 Starting Firebase emulators...');
+  
+  // Start emulators in background
+  emulatorProcess = spawn('firebase', ['emulators:start', '--only', 'auth,firestore,storage', '--project', 'demo-test'], {
+    detached: true,
+    stdio: 'ignore'
+  });
+
+  // Wait for emulators to start
+  await new Promise(resolve => setTimeout(resolve, 10000));
+  console.log('✅ Firebase emulators started');
+  
+  // Initialize Firebase Admin for tests
+  const adminApp = await getAdminApp();
+  adminFirestore = getFirestore(adminApp);
+}
+
+function stopEmulators() {
+  if (emulatorProcess) {
+    console.log('🛑 Stopping Firebase emulators...');
+    emulatorProcess.kill();
+    emulatorProcess = null;
+  }
+}
 
 // --- Test Setup ---
 const app = express();
@@ -20,12 +59,23 @@ describe('Contact Routes API (/api/contacts)', () => {
     let user1, user2, user3; // To store test user data
 
     beforeAll(async () => {
-        // Optional: Ping emulators
-    });
+        try {
+            // Set up Firebase emulators first
+            await startEmulators();
+        } catch (error) {
+            console.error('BeforeAll setup failed:', error);
+            throw error;
+        }
+    }, 90000); // Increased timeout for emulator startup
 
     afterAll(async () => {
-        await cleanUp();
-        await deleteAdminApp(); // Cleanup admin app used by routes
+        try {
+            await cleanUp();
+            await deleteAdminApp(); // Cleanup admin app used by routes
+            stopEmulators();
+        } catch (error) {
+            console.error('AfterAll cleanup failed:', error);
+        }
     });
 
     beforeEach(async () => {

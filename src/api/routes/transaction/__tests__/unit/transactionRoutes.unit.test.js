@@ -1,16 +1,57 @@
 import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
-import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import express from 'express';
 import request from 'supertest';
 
 // console.log('[TEST FILE SCOPE V5] Top of test file.');
 
+// Declare all mock functions before vi.mock calls
+const mockTimestampNowFn = vi.fn();
+const mockTimestampFromDateFn = vi.fn();
+const mockCollection = vi.fn();
+const mockDoc = vi.fn();
+const mockGet = vi.fn();
+const mockSet = vi.fn();
+const mockUpdate = vi.fn();
+const mockAdd = vi.fn();
+const mockWhere = vi.fn();
+const mockRunTransaction = vi.fn();
+const mockOrderBy = vi.fn();
+const mockLimit = vi.fn();
+const mockTransactionGet = vi.fn();
+const mockArrayUnion = vi.fn((...args) => ({ _fieldName: 'FieldValue.arrayUnion', _elements: args }));
+const mockArrayRemove = vi.fn((...args) => ({ _fieldName: 'FieldValue.arrayRemove', _elements: args }));
+const mockDeleteFieldValue = vi.fn().mockReturnValue('---mocked delete output---');
+// These will be configured later
+let mockWallet;
+let mockContract;
+let mockJsonRpcProvider;
+const mockDeployPropertyEscrowContract = vi.fn();
+
 let effectiveMockGetAdminAuth;
 const effectiveMockVerifyIdToken = vi.fn();
 // console.log('[TEST FILE SCOPE V5] effectiveMockVerifyIdToken created.');
 
-const mockTimestampNowFn = vi.fn();
-const mockTimestampFromDateFn = vi.fn();
+// Mock config to prevent initialization issues
+vi.mock('../../../config/index.js', () => ({
+  default: {
+    initialize: vi.fn().mockResolvedValue(undefined),
+    get: vi.fn(),
+    isInitialized: true
+  }
+}));
+
+// Mock EscrowServiceV3 to prevent initialization issues
+vi.mock('../../../services/escrowServiceV3.js', () => {
+  return {
+    EscrowServiceV3: vi.fn().mockImplementation(() => ({
+      initialize: vi.fn().mockResolvedValue(undefined),
+      getChainConfig: vi.fn(),
+      getContract: vi.fn(),
+      calculateServiceFee: vi.fn(),
+      estimateTotalFees: vi.fn()
+    }))
+  };
+});
 
 vi.mock('firebase-admin/auth', () => {
   // console.log('[MOCK FACTORY V5] jest.unstable_mockModule for "firebase-admin/auth" - FACTORY EXECUTED.');
@@ -27,23 +68,6 @@ vi.mock('firebase-admin/auth', () => {
   };
 });
 // console.log('[TEST FILE SCOPE V5] jest.unstable_mockModule for "firebase-admin/auth" REGISTERED.');
-
-const mockCollection = vi.fn();
-const mockDoc = vi.fn();
-const mockGet = vi.fn();
-const mockSet = vi.fn();
-const mockUpdate = vi.fn();
-const mockAdd = vi.fn();
-const mockWhere = vi.fn();
-const mockRunTransaction = vi.fn();
-const mockOrderBy = vi.fn(); // Specific mock for orderBy
-const mockLimit = vi.fn();   // Specific mock for limit
-const mockTransactionGet = vi.fn(); // For use within runTransaction
-
-// Updated FieldValue mocks
-const mockArrayUnion = vi.fn((...args) => ({ _fieldName: 'FieldValue.arrayUnion', _elements: args }));
-const mockArrayRemove = vi.fn((...args) => ({ _fieldName: 'FieldValue.arrayRemove', _elements: args }));
-const mockDeleteFieldValue = vi.fn().mockReturnValue('---mocked delete output---');
 
 vi.mock('firebase-admin/firestore', () => {
   // console.log('[MOCK FACTORY V5] jest.unstable_mockModule for "firebase-admin/firestore" - FACTORY EXECUTED.');
@@ -80,10 +104,17 @@ vi.mock('../../../auth/admin.js', () => {
 const mockIsAddress = vi.fn();
 const mockGetAddress = vi.fn(addr => addr);
 const mockParseUnits = vi.fn();
-const mockWallet = vi.fn().mockImplementation((privateKey) => ({
+const mockParseEther = vi.fn();
+const mockFormatEther = vi.fn();
+
+// Configure mockWallet
+mockWallet = vi.fn().mockImplementation((privateKey) => ({
   address: '0x' + 'a'.repeat(40), // Mock wallet address
   privateKey: privateKey
 }));
+
+// Configure JsonRpcProvider mock
+mockJsonRpcProvider = vi.fn().mockImplementation(() => ({}));
 
 vi.mock('ethers', () => {
   // console.log('[MOCK FACTORY V5] jest.unstable_mockModule for "ethers" - FACTORY EXECUTED.');
@@ -91,18 +122,20 @@ vi.mock('ethers', () => {
     isAddress: mockIsAddress,
     getAddress: mockGetAddress,
     parseUnits: mockParseUnits,
+    parseEther: mockParseEther,
+    formatEther: mockFormatEther,
     Wallet: mockWallet,
+    JsonRpcProvider: mockJsonRpcProvider,
   };
 });
 // console.log('[TEST FILE SCOPE V5] jest.unstable_mockModule for "ethers" REGISTERED.');
-
-const mockDeployPropertyEscrowContract = vi.fn();
-vi.mock('../../../../../services/contractDeployer.js', () => {
-  // console.log('[MOCK FACTORY V5] jest.unstable_mockModule for contractDeployer REGISTERED.');
-  return {
-    deployPropertyEscrowContract: mockDeployPropertyEscrowContract,
-  };
-});
+// Commented out - service doesn't exist
+// vi.mock('../../../services/contractDeployer.js', () => {
+//   // console.log('[MOCK FACTORY V5] jest.unstable_mockModule for contractDeployer REGISTERED.');
+//   return {
+//     deployPropertyEscrowContract: mockDeployPropertyEscrowContract,
+//   };
+// });
 // console.log('[TEST FILE SCOPE V5] jest.unstable_mockModule for contractDeployer REGISTERED.');
 
 // ✅ REFACTORED: Updated cross-chain service mocks to match new architecture
@@ -118,34 +151,41 @@ const mockTriggerCrossChainCancelAfterDisputeDeadline = vi.fn();
 const mockIsCrossChainDealReady = vi.fn();
 const mockAutoCompleteCrossChainSteps = vi.fn();
 
-vi.mock('../../../../../services/crossChainService.js', () => {
-  return {
-    areNetworksEVMCompatible: mockAreNetworksEVMCompatible,
-    getBridgeInfo: mockGetBridgeInfo,
-    estimateTransactionFees: mockEstimateTransactionFees,
-    prepareCrossChainTransaction: mockPrepareCrossChainTransaction,
-    executeCrossChainStep: mockExecuteCrossChainStep,
-    getCrossChainTransactionStatus: mockGetCrossChainTransactionStatus,
-    // ✅ NEW: Export the additional functions
-    triggerCrossChainReleaseAfterApprovalSimple: mockTriggerCrossChainReleaseAfterApprovalSimple,
-    triggerCrossChainCancelAfterDisputeDeadline: mockTriggerCrossChainCancelAfterDisputeDeadline,
-    isCrossChainDealReady: mockIsCrossChainDealReady,
-    autoCompleteCrossChainSteps: mockAutoCompleteCrossChainSteps,
-  };
-});
+// Commented out - service doesn't exist
+// vi.mock('../../../services/crossChainService.js', () => {
+//   return {
+//     areNetworksEVMCompatible: mockAreNetworksEVMCompatible,
+//     getBridgeInfo: mockGetBridgeInfo,
+//     estimateTransactionFees: mockEstimateTransactionFees,
+//     prepareCrossChainTransaction: mockPrepareCrossChainTransaction,
+//     executeCrossChainStep: mockExecuteCrossChainStep,
+//     getCrossChainTransactionStatus: mockGetCrossChainTransactionStatus,
+//     // ✅ NEW: Export the additional functions
+//     triggerCrossChainReleaseAfterApprovalSimple: mockTriggerCrossChainReleaseAfterApprovalSimple,
+//     triggerCrossChainCancelAfterDisputeDeadline: mockTriggerCrossChainCancelAfterDisputeDeadline,
+//     isCrossChainDealReady: mockIsCrossChainDealReady,
+//     autoCompleteCrossChainSteps: mockAutoCompleteCrossChainSteps,
+//   };
+// });
 
 // ✅ REFACTORED: Keep SmartContractBridgeService mock only for getContractInfo
 const mockGetContractInfo = vi.fn();
-vi.mock('../../../../../services/smartContractBridgeService.js', () => {
-  return {
-    default: vi.fn().mockImplementation(() => ({
-      getContractInfo: mockGetContractInfo,
-    })),
-  };
-});
+// Commented out - service doesn't exist
+// vi.mock('../../../services/smartContractBridgeService.js', () => {
+//   return {
+//     default: vi.fn().mockImplementation(() => ({
+//       getContractInfo: mockGetContractInfo,
+//     })),
+//   };
+// });
 
 let testAgent;
 let transactionRoutes;
+
+// Import the router module once after all mocks are set up
+import transactionRoutesModule from '../../transactionRoutes.js';
+transactionRoutes = transactionRoutesModule;
+
 const mockDecodedToken = { uid: 'testUserId', email: 'user@example.com' };
 const otherUserDecodedToken = { uid: 'otherUserId', email: 'otherparty@example.com' };
 
@@ -179,7 +219,7 @@ describe('Unit Tests for transactionRoutes.js', () => {
   beforeEach(async () => {
     // console.log('[TEST beforeEach V5] Clearing all mocks, resetting modules.');
     vi.clearAllMocks();
-    jest.resetModules();
+    // vi.resetModules(); // Commenting out - this might be causing issues with mocks
     vi.useFakeTimers().setSystemTime(fixedDate);
 
     mockTimestampNowFn.mockReturnValue(expectedFixedTimestampObject);
@@ -188,9 +228,8 @@ describe('Unit Tests for transactionRoutes.js', () => {
         return createFirestoreTimestamp(date);
     });
 
-    const routerModule = await import('../../transactionRoutes.js');
-    transactionRoutes = routerModule.default;
-    // console.log('[TEST beforeEach V5] Router dynamically imported.');
+    // Router already imported at top level
+    // console.log('[TEST beforeEach V5] Router already imported.');
 
     const app = express();
     app.use(express.json());
@@ -1327,10 +1366,19 @@ describe('Unit Tests for transactionRoutes.js', () => {
     describe('POST /cross-chain/:dealId/release-to-seller', () => {
       const releaseDealId = 'releaseDeal123';
       const mockReleaseDealData = {
-        ...mockCrossChainDealData,
         id: releaseDealId,
+        participants: [mockDecodedToken.uid, 'otherUserId'],
+        isCrossChain: true,
+        crossChainTransactionId: 'cross-chain-tx-123',
+        buyerNetwork: 'bitcoin',
+        sellerNetwork: 'ethereum',
+        smartContractAddress: '0xMockCrossChainContract',
+        crossChainInfo: { bridge: 'Wrapped Bitcoin', fee: '0.0005', estimatedTime: '30 minutes' },
         status: 'READY_FOR_FINAL_APPROVAL',
-        conditions: mockCrossChainDealData.conditions.map(c => ({ ...c, status: 'FULFILLED_BY_BUYER' }))
+        conditions: [
+          { id: 'cross_chain_network_validation', type: 'CROSS_CHAIN', description: 'Network validation', status: 'FULFILLED_BY_BUYER' },
+          { id: 'cross_chain_bridge_setup', type: 'CROSS_CHAIN', description: 'Bridge setup', status: 'FULFILLED_BY_BUYER' }
+        ]
       };
 
       it('should initiate cross-chain release successfully', async () => {
@@ -1385,10 +1433,19 @@ describe('Unit Tests for transactionRoutes.js', () => {
     describe('POST /cross-chain/:dealId/bridge-completed', () => {
       const bridgeDealId = 'bridgeDeal123';
       const mockBridgeDealData = {
-        ...mockCrossChainDealData,
         id: bridgeDealId,
+        participants: [mockDecodedToken.uid, 'otherUserId'],
+        isCrossChain: true,
+        crossChainTransactionId: 'cross-chain-tx-bridge-123',
+        buyerNetwork: 'bitcoin',
+        sellerNetwork: 'ethereum',
+        smartContractAddress: '0xMockCrossChainContract',
+        crossChainInfo: { bridge: 'Wrapped Bitcoin', fee: '0.0005', estimatedTime: '30 minutes' },
         status: 'AWAITING_BRIDGE_COMPLETION',
-        crossChainTransactionId: 'cross-chain-tx-bridge-123'
+        conditions: [
+          { id: 'cross_chain_network_validation', type: 'CROSS_CHAIN', description: 'Network validation', status: 'PENDING_BUYER_ACTION' },
+          { id: 'cross_chain_bridge_setup', type: 'CROSS_CHAIN', description: 'Bridge setup', status: 'PENDING_BUYER_ACTION' }
+        ]
       };
 
       it('should process bridge completion with cross-chain service', async () => {

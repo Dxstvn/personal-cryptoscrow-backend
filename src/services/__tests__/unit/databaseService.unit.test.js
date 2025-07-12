@@ -543,6 +543,7 @@ describe('Database Service - Unit Tests', () => {
 
       it('should update cross-chain deal status with transaction details', async () => {
         mockUpdate.mockResolvedValue();
+        mockGet.mockResolvedValue({ exists: true }); // Mock document exists
 
         await updateCrossChainDealStatus(dealId, {
           status: newStatus,
@@ -562,6 +563,7 @@ describe('Database Service - Unit Tests', () => {
             event: eventMessage,
             timestamp: mockTimestampNow(),
             systemTriggered: true,
+            crossChainEvent: true,
             transactionHash: crossChainTxHash,
             crossChainDetails: {
               sourceNetwork: 'ethereum',
@@ -576,6 +578,7 @@ describe('Database Service - Unit Tests', () => {
 
       it('should update cross-chain deal status with bridge information', async () => {
         mockUpdate.mockResolvedValue();
+        mockGet.mockResolvedValue({ exists: true }); // Mock document exists
 
         await updateCrossChainDealStatus(dealId, {
           status: newStatus,
@@ -594,6 +597,7 @@ describe('Database Service - Unit Tests', () => {
 
       it('should handle updates without transaction hash', async () => {
         mockUpdate.mockResolvedValue();
+        mockGet.mockResolvedValue({ exists: true }); // Mock document exists
 
         await updateCrossChainDealStatus(dealId, {
           status: newStatus,
@@ -612,9 +616,8 @@ describe('Database Service - Unit Tests', () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         
         await updateCrossChainDealStatus(dealId, {
-          status: newStatus,
-          timelineEventMessage: eventMessage
-          // Missing sourceNetwork and targetNetwork
+          status: newStatus
+          // Missing timelineEventMessage - required parameter
         });
 
         expect(consoleErrorSpy).toHaveBeenCalledWith(
@@ -649,6 +652,7 @@ describe('Database Service - Unit Tests', () => {
       it('should handle Firestore update failures', async () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const firestoreError = new Error('Cross-chain update failed');
+        mockGet.mockResolvedValue({ exists: true }); // Mock document exists
         mockUpdate.mockRejectedValue(firestoreError);
 
         await updateCrossChainDealStatus(dealId, {

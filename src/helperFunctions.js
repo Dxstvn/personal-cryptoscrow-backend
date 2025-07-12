@@ -1,11 +1,25 @@
-import { adminAuth, adminFirestore, PROJECT_ID } from '../jest.emulator.setup.js'; // Use test setup
+import { getAuth } from 'firebase-admin/auth';
+import { getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { getAdminApp } from './api/routes/auth/admin.js';
+
 // Use built-in fetch (Node.js 18+) or fallback to node-fetch
 const fetchFn = globalThis.fetch || (await import('node-fetch')).default;
-import { Timestamp } from 'firebase-admin/firestore'; // Import Timestamp
 
 const AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
 const DUMMY_API_KEY = 'demo-api-key'; // Standard for emulators
-const TEST_PROJECT_ID = PROJECT_ID || 'demo-test'; // Use project ID from test setup
+const TEST_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'demo-test';
+
+// Initialize admin services
+let adminAuth, adminFirestore;
+
+async function initializeAdminServices() {
+  if (!adminAuth || !adminFirestore) {
+    const adminApp = await getAdminApp();
+    adminAuth = getAuth(adminApp);
+    adminFirestore = getFirestore(adminApp);
+  }
+  return { adminAuth, adminFirestore };
+}
 
 // Helper to generate a syntactically valid, but mock, Ethereum address
 const generateMockAddress = (prefix = '00') => {
@@ -18,9 +32,12 @@ const generateMockAddress = (prefix = '00') => {
 
 // Reusable createTestUser helper
 export async function createTestUser(email, profileData = {}) {
+    // Initialize admin services if not already done
+    const { adminAuth: auth, adminFirestore: firestore } = await initializeAdminServices();
+    
     let userRecord;
     try {
-        userRecord = await adminAuth.createUser({
+        userRecord = await auth.createUser({
             email,
             password: 'testpass',
             emailVerified: true
@@ -35,7 +52,7 @@ export async function createTestUser(email, profileData = {}) {
         : [generateMockAddress(email.substring(0, 2))]; // Generate a unique-ish mock address
 
     try {
-        await adminFirestore.collection('users').doc(userRecord.uid).set({
+        await firestore.collection('users').doc(userRecord.uid).set({
             email: email.toLowerCase(),
             first_name: profileData.first_name || 'Test',
             last_name: profileData.last_name || 'User',
@@ -45,13 +62,13 @@ export async function createTestUser(email, profileData = {}) {
         });
     } catch (error) {
         console.error(`HELPER: Failed to create Firestore profile for ${email}:`, error);
-        await adminAuth.deleteUser(userRecord.uid).catch(delErr => console.error('HELPER: Failed to clean up auth user after Firestore error', delErr));
+        await auth.deleteUser(userRecord.uid).catch(delErr => console.error('HELPER: Failed to clean up auth user after Firestore error', delErr));
         throw error;
     }
 
     try {
         // Use Admin SDK to create a custom token
-        const customToken = await adminAuth.createCustomToken(userRecord.uid);
+        const customToken = await auth.createCustomToken(userRecord.uid);
         
         // Exchange custom token for ID token using the Firebase Auth REST API
         const signInUrl = `http://${AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${DUMMY_API_KEY}`;
@@ -79,18 +96,21 @@ export async function createTestUser(email, profileData = {}) {
         };
     } catch (error) {
         console.error(`HELPER: Error creating token for user ${email}:`, error);
-        await adminAuth.deleteUser(userRecord.uid).catch(delErr => console.error('HELPER: Failed to clean up auth user after token error', delErr));
-        await adminFirestore.collection('users').doc(userRecord.uid).delete().catch(delErr => console.error('HELPER: Failed to clean up Firestore profile after token error', delErr));
+        await auth.deleteUser(userRecord.uid).catch(delErr => console.error('HELPER: Failed to clean up auth user after token error', delErr));
+        await firestore.collection('users').doc(userRecord.uid).delete().catch(delErr => console.error('HELPER: Failed to clean up Firestore profile after token error', delErr));
         throw error;
     }
 }
 
 // Updated Cleanup Helper
 export async function cleanUp() {
+    // Initialize admin services if not already done
+    const { adminAuth: auth, adminFirestore: firestore } = await initializeAdminServices();
+    
     try {
-        const listUsersResult = await adminAuth.listUsers(1000);
+        const listUsersResult = await auth.listUsers(1000);
         if (listUsersResult.users.length > 0) {
-            const deleteUserPromises = listUsersResult.users.map(user => adminAuth.deleteUser(user.uid));
+            const deleteUserPromises = listUsersResult.users.map(user => auth.deleteUser(user.uid));
             await Promise.all(deleteUserPromises);
         }
     } catch (error) {
@@ -101,10 +121,10 @@ export async function cleanUp() {
     const collectionsToClear = ['users', 'contactInvitations', 'deals'];
     for (const collectionName of collectionsToClear) {
         try {
-            const snapshot = await adminFirestore.collection(collectionName).limit(500).get();
+            const snapshot = await firestore.collection(collectionName).limit(500).get();
             if (snapshot.empty) continue;
 
-            const batch = adminFirestore.batch();
+            const batch = firestore.batch();
             snapshot.docs.forEach(doc => {
                 batch.delete(doc.ref);
             });

@@ -26,7 +26,10 @@ export default defineConfig({
         '*.config.ts'
       ]
     },
-    setupFiles: ['./vitest.setup.js'],
+    setupFiles: [
+      './vitest.setup.js',
+      './vitest.emulator.setup.js'
+    ],
     testTimeout: 30000,
     hookTimeout: 30000,
     teardownTimeout: 10000,

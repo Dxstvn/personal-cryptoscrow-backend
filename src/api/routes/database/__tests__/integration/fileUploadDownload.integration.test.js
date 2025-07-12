@@ -11,12 +11,51 @@ process.env.FIREBASE_APP_ID = '1:123456789:web:abcdef';
 import request from 'supertest';
 import express from 'express';
 import fileUploadRouter from '../../fileUploadDownload.js'; // Adjust path as necessary
-// Make sure PROJECT_ID is imported or defined if needed outside the setup file
-import { adminAuth, adminFirestore, adminApp as testAdminApp, PROJECT_ID } from '../../../../../../jest.emulator.setup.js'; // Renamed imported adminApp to avoid conflict
-import { deleteAdminApp } from '../../../auth/admin.js'; // Import the delete function
+import { deleteAdminApp, getAdminApp } from '../../../auth/admin.js';
 import { getStorage } from 'firebase-admin/storage';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
-import { getAdminApp } from '../../../auth/admin.js';
+import { getFirestore } from 'firebase-admin/firestore';
+import { spawn } from 'child_process';
+
+// Firebase emulator variables
+let adminAuth, adminFirestore, testAdminApp;
+let emulatorProcess = null;
+
+// Simple emulator setup functions
+async function startEmulators() {
+  // Set environment variables for emulators
+  process.env.NODE_ENV = 'test';
+  process.env.FIREBASE_PROJECT_ID = 'demo-test';
+  process.env.FIREBASE_STORAGE_BUCKET = 'demo-test.appspot.com';
+  process.env.FIRESTORE_EMULATOR_HOST = 'localhost:5004';
+  process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9099';
+  process.env.FIREBASE_STORAGE_EMULATOR_HOST = 'localhost:9199';
+
+  console.log('🚀 Starting Firebase emulators...');
+  
+  // Start emulators in background
+  emulatorProcess = spawn('firebase', ['emulators:start', '--only', 'auth,firestore,storage', '--project', 'demo-test'], {
+    detached: true,
+    stdio: 'ignore'
+  });
+
+  // Wait for emulators to start
+  await new Promise(resolve => setTimeout(resolve, 10000));
+  console.log('✅ Firebase emulators started');
+  
+  // Initialize Firebase Admin for tests
+  testAdminApp = await getAdminApp();
+  adminAuth = getAdminAuth(testAdminApp);
+  adminFirestore = getFirestore(testAdminApp);
+}
+
+function stopEmulators() {
+  if (emulatorProcess) {
+    console.log('🛑 Stopping Firebase emulators...');
+    emulatorProcess.kill();
+    emulatorProcess = null;
+  }
+}
 
 // Set up the Express app
 const app = express();
@@ -26,6 +65,7 @@ app.use('/files', fileUploadRouter); // Router uses its own adminApp instance vi
 // Configuration (Consider centralizing these if used elsewhere)
 const AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
 const DUMMY_API_KEY = 'demo-api-key'; // Use the same key as in your setup
+const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'demo-test';
 const TEST_STORAGE_BUCKET = `${PROJECT_ID}.appspot.com`; // Define bucket name for clarity
 
 // Simplified helper function to create a test user and get a token
@@ -130,14 +170,24 @@ async function cleanUp() {
 
 describe('File Upload and Download Routes', () => {
   beforeAll(async () => {
-    console.log(`Using Auth Emulator at: ${AUTH_EMULATOR_HOST}`);
-    // Optional: Add a check here to ping emulator endpoints if needed
-  });
+    try {
+      console.log(`Using Auth Emulator at: ${AUTH_EMULATOR_HOST}`);
+      // Set up Firebase emulators first
+      await startEmulators();
+    } catch (error) {
+      console.error('BeforeAll setup failed:', error);
+      throw error;
+    }
+  }, 90000); // Increased timeout for emulator startup
 
   afterAll(async () => {
-    await cleanUp();
-    // Attempt to delete the admin app used by the routes
-    await deleteAdminApp();
+    try {
+      await cleanUp();
+      await deleteAdminApp();
+      stopEmulators();
+    } catch (error) {
+      console.error('AfterAll cleanup failed:', error);
+    }
   });
 
   beforeEach(async () => {

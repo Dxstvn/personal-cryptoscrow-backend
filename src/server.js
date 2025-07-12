@@ -1,3 +1,13 @@
+// CRITICAL: Environment validation - must be FIRST before any other imports
+import { validateProductionEnvironment, validateStagingEnvironment } from './utils/environmentValidator.js';
+
+// Validate environment before any other setup
+if (process.env.NODE_ENV === 'production') {
+  validateProductionEnvironment();
+} else if (process.env.NODE_ENV === 'staging') {
+  validateStagingEnvironment();
+}
+
 // Test mode configuration - must be set before any other imports
 if (process.env.NODE_ENV === 'test') {
   console.log('🧪 Setting up TEST MODE configuration...');

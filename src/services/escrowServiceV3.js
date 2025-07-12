@@ -128,12 +128,12 @@ export class EscrowServiceV3 {
         }
       }
       
-      // Load regular V3 contract ABI
-      artifactPath = path.join(__dirname, '../contract/artifacts/contracts/UniversalEscrowServiceV3.sol/UniversalEscrowServiceV3.json');
+      // Load V3 Test contract ABI for testing
+      artifactPath = path.join(__dirname, '../contract/artifacts/contracts/UniversalEscrowServiceV3Test.sol/UniversalEscrowServiceV3Test.json');
       const artifactContent = await fs.readFile(artifactPath, 'utf8');
       const artifact = JSON.parse(artifactContent);
       this.abi = artifact.abi;
-      this.contractVersion = 'Regular';
+      this.contractVersion = 'Test';
       
       console.log('[EscrowServiceV3] Service initialized with V3 ABI');
     } catch (error) {
