@@ -43,14 +43,14 @@ This is a comprehensive **CryptoEscrow Backend** built with Node.js/Express that
 
 ### 🚨 **Critical Timing Mechanisms**
 - **48-Hour Window**: After ALL conditions are met, there's a 48-hour period where disputes can be raised
-- **7-Day Resolution**: Once a dispute is raised, there's a 7-day period for resolution
-- **Auto-Resolution**: If disputes aren't manually resolved within 7 days, funds automatically return to buyer
+- **Customizable Resolution**: Once a dispute is raised, there's a customizable period (1-30 days, default 7) for resolution
+- **Auto-Resolution**: If disputes aren't manually resolved within the custom period, funds automatically return to buyer
 - **Event-Driven**: The system uses `setTimeout` and event emission for precise timing, NOT polling
 
 ### 🧪 **Testing Architecture**
 - **Unit Tests**: Mock all dependencies, test route logic only
 - **Integration Tests**: Use REAL services (Firebase emulators + EscrowServiceV3)
-- **Real Integration Test**: `transactionRoutes.realIntegration.test.js` with 21 comprehensive tests
+- **Real Integration Test**: `transactionRoutes.realIntegration.test.js` with 22 comprehensive tests
 - **Test Coverage**: Authentication, authorization, escrow lifecycle, disputes, cross-chain, performance
 
 ### 📊 **Database Schema (Firestore)**
@@ -63,7 +63,7 @@ This is a comprehensive **CryptoEscrow Backend** built with Node.js/Express that
 - **Firebase Authentication** - JWT token-based API security
 - **Deal-Level Authorization** - Only participants can access specific deals
 - **Wallet Validation** - Multi-network address validation
-- **Input Sanitization** - Comprehensive validation on all endpoints
+- **Input Sanitization** - Comprehensive validation including dispute period validation (1-30 days)
 
 ### 🌐 **Multi-Network Support**
 - **EVM Chains**: Ethereum, Arbitrum, Polygon (full support)

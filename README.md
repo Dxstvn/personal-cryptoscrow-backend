@@ -22,7 +22,7 @@ CryptoEscrow is a comprehensive Node.js backend system designed to power a secur
 ### 🤝 **Advanced Escrow Management**
 - **EscrowServiceV3** - Event-driven architecture with real-time sync
 - **Condition Tracking** - Dynamic condition management with blockchain sync
-- **Dispute Resolution** - 48-hour dispute window + 7-day resolution period
+- **Dispute Resolution** - 48-hour dispute window + customizable resolution period (1-30 days)
 - **Cross-Chain Escrow** - LayerZero integration for multi-chain deals
 - **Automated Release** - Smart contract enforced timing and validation
 

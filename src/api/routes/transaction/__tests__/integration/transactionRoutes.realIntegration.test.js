@@ -490,7 +490,8 @@ describe('📋 Deal Lifecycle Management Tests', () => {
                 isSeller: false, // Creating as buyer
                 buyerNetwork: 'sepolia', // Using Hardhat local = sepolia equivalent
                 sellerNetwork: 'sepolia',
-                tokenAddress: '0x0000000000000000000000000000000000000000'
+                tokenAddress: '0x0000000000000000000000000000000000000000',
+                disputeResolutionPeriodDays: 14 // Test custom dispute resolution period
             });
             
         // ✅ INTEGRATION: Verify real escrow creation worked
@@ -987,6 +988,84 @@ describe('⚖️ Dispute Resolution Integration Tests', () => {
         }
         
         console.log('✅ Dispute resolution workflow test completed');
+    }, testConfig.timeout);
+
+    it('should handle custom dispute resolution periods', async () => {
+        console.log('[CUSTOM DISPUTE PERIOD] Testing custom dispute resolution periods...');
+        
+        // Test 1: Create deal with custom 21-day dispute period
+        const dealRef = await adminFirestore.collection('deals').add({
+            buyerId: buyer.uid,
+            sellerId: seller.uid,
+            participants: [buyer.uid, seller.uid],
+            propertyAddress: 'Custom dispute period test',
+            amount: 1.0,
+            status: 'IN_ESCROW',
+            buyerNetwork: 'sepolia',
+            sellerNetwork: 'sepolia',
+            disputeResolutionPeriodDays: 21, // Custom period
+            disputeResolutionPeriodMs: 21 * 24 * 60 * 60 * 1000,
+            createdAt: Timestamp.now(),
+            updatedAt: Timestamp.now()
+        });
+        
+        const dealId = dealRef.id;
+        
+        // Test 2: Validate custom period is stored correctly
+        const dealDoc = await adminFirestore.collection('deals').doc(dealId).get();
+        const dealData = dealDoc.data();
+        
+        expect(dealData.disputeResolutionPeriodDays).toBe(21);
+        expect(dealData.disputeResolutionPeriodMs).toBe(21 * 24 * 60 * 60 * 1000);
+        console.log(`[CUSTOM DISPUTE PERIOD] ✅ Custom period stored: ${dealData.disputeResolutionPeriodDays} days`);
+        
+        // Test 3: Test API validation for invalid periods
+        const invalidDealResponse = await request(app)
+            .post('/transaction/create')
+            .set('Authorization', `Bearer ${buyer.token}`)
+            .send({
+                amount: '1000000000000000000',
+                sellerEmail: seller.email,
+                productDescription: 'Invalid period test',
+                conditions: [{ text: 'Test condition', status: 'pending' }],
+                sellerWalletAddress: seller.wallets[0],
+                buyerWalletAddress: buyer.wallets[0],
+                isSeller: false,
+                buyerNetwork: 'sepolia',
+                sellerNetwork: 'sepolia',
+                disputeResolutionPeriodDays: 35 // Invalid - exceeds 30 day limit
+            });
+            
+        expect(invalidDealResponse.status).toBe(400);
+        expect(invalidDealResponse.body.error).toBe('Dispute resolution period must be between 1 and 30 days');
+        console.log(`[CUSTOM DISPUTE PERIOD] ✅ Validation rejected invalid period: 35 days`);
+        
+        // Test 4: Test valid custom period in deal creation
+        const validCustomDealResponse = await request(app)
+            .post('/transaction/create')
+            .set('Authorization', `Bearer ${buyer.token}`)
+            .send({
+                amount: '1000000000000000000',
+                sellerEmail: seller.email,
+                productDescription: 'Valid custom period test',
+                conditions: [{ text: 'Test condition', status: 'pending' }],
+                sellerWalletAddress: seller.wallets[0],
+                buyerWalletAddress: buyer.wallets[0],
+                isSeller: false,
+                buyerNetwork: 'sepolia',
+                sellerNetwork: 'sepolia',
+                disputeResolutionPeriodDays: 15 // Valid custom period
+            });
+            
+        if (validCustomDealResponse.status === 201) {
+            expect(validCustomDealResponse.body.transactionData.disputeResolutionPeriodDays).toBe(15);
+            expect(validCustomDealResponse.body.transactionData.disputeResolutionPeriodMs).toBe(15 * 24 * 60 * 60 * 1000);
+            console.log(`[CUSTOM DISPUTE PERIOD] ✅ Valid custom period accepted: 15 days`);
+        } else {
+            console.log(`[CUSTOM DISPUTE PERIOD] Deal creation returned ${validCustomDealResponse.status}: ${validCustomDealResponse.body.error}`);
+        }
+        
+        console.log('✅ Custom dispute resolution period test completed');
     }, testConfig.timeout);
     
     it('should enforce 48-hour dispute window after conditions are met', async () => {

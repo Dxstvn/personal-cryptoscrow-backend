@@ -370,7 +370,11 @@ class ContractConditionSync extends EventEmitter {
             const disputeInfo = await contract.disputes(dispute.escrowId);
             
             const now = Math.floor(Date.now() / 1000);
-            const resolutionDeadline = disputeInfo.disputeRaisedTimestamp + (7 * 24 * 60 * 60); // 7 days
+            
+            // Use custom dispute resolution period from deal data, fallback to 7 days
+            const customPeriodMs = dispute.disputeResolutionPeriodMs || (7 * 24 * 60 * 60 * 1000);
+            const customPeriodSeconds = Math.floor(customPeriodMs / 1000);
+            const resolutionDeadline = disputeInfo.disputeRaisedTimestamp + customPeriodSeconds;
             
             if (now > resolutionDeadline && !disputeInfo.disputeResolved) {
                 // Dispute timeout - return funds to buyer

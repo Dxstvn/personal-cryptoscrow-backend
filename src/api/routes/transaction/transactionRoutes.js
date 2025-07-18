@@ -142,8 +142,18 @@ router.post('/create', async (req, res) => {
             sellerNetwork,
             tokenAddress,
             depositToken,
-            targetToken
+            targetToken,
+            disputeResolutionPeriodDays
         } = req.body;
+
+        // Validate dispute resolution period (default to 7 days if not provided)
+        const disputePeriodDays = disputeResolutionPeriodDays !== undefined ? disputeResolutionPeriodDays : 7;
+        if (disputePeriodDays < 1 || disputePeriodDays > 30) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Dispute resolution period must be between 1 and 30 days' 
+            });
+        }
 
         // Input validation
         if (!amount || !sellerEmail || !productDescription || !conditions || 
@@ -220,6 +230,9 @@ router.post('/create', async (req, res) => {
             productCategory: productCategory || 'general',
             depositToken: depositToken || '0x0000000000000000000000000000000000000000',
             targetToken: targetToken || depositToken || '0x0000000000000000000000000000000000000000',
+            // Custom dispute resolution period
+            disputeResolutionPeriodDays: disputePeriodDays,
+            disputeResolutionPeriodMs: disputePeriodDays * 24 * 60 * 60 * 1000,
             // Add participants array for file upload authorization
             participants: [initiatorId]
         };
@@ -568,14 +581,18 @@ router.post('/raiseDispute', async (req, res) => {
             })
         });
         
-        // Raise dispute with event emission for automatic resolution after 7 days
+        // Get custom dispute resolution period from deal data
+        const customDisputePeriodMs = dealData.disputeResolutionPeriodMs || (7 * 24 * 60 * 60 * 1000); // Default to 7 days
+        
+        // Raise dispute with event emission for automatic resolution after custom period
         await raiseDealDispute(dealId, {
             escrowId: dealData.escrowId,
             chainId: dealData.buyerChainId,
             contractAddress: dealData.smartContractAddress,
             reason,
             raisedBy: 'user', // Could be from req.user if auth is available
-            txHash: disputeResult.txHash
+            txHash: disputeResult.txHash,
+            customDisputeResolutionPeriodMs: customDisputePeriodMs
         });
 
         res.json({

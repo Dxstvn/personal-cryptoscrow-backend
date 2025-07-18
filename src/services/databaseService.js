@@ -398,10 +398,16 @@ export async function raiseDealDispute(dealId, disputeData) {
     }
     const dealData = doc.data();
     
+    // Calculate dispute resolution deadline using custom period
+    const customPeriodMs = disputeData.customDisputeResolutionPeriodMs || (7 * 24 * 60 * 60 * 1000); // Default 7 days
+    const disputeDeadline = Date.now() + customPeriodMs;
+    
     // Update deal with dispute information
     const updateData = {
       disputeRaised: true,
       disputeTimestamp: Date.now(),
+      disputeDeadline: disputeDeadline,
+      disputeResolutionPeriodMs: customPeriodMs,
       disputeReason: disputeData.reason,
       disputeRaisedBy: disputeData.raisedBy,
       ...disputeData,
@@ -417,6 +423,8 @@ export async function raiseDealDispute(dealId, disputeData) {
       chainId: dealData.buyerChainId || disputeData.chainId,
       contractAddress: dealData.smartContractAddress || disputeData.contractAddress,
       disputeTimestamp: Date.now(),
+      disputeDeadline: disputeDeadline,
+      customDisputeResolutionPeriodMs: customPeriodMs,
       ...disputeData
     });
     

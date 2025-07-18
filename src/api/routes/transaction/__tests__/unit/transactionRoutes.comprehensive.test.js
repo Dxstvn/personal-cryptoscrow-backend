@@ -302,7 +302,8 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
       isSeller: true,
       buyerNetwork: 'sepolia',
       sellerNetwork: 'arbitrum-sepolia',
-      tokenAddress: '0x0000000000000000000000000000000000000000'
+      tokenAddress: '0x0000000000000000000000000000000000000000',
+      disputeResolutionPeriodDays: 7 // Test default value
     };
 
     it('should create deal successfully with valid data', async () => {
@@ -371,6 +372,74 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
         success: false,
         error: 'Missing required fields'
       });
+    });
+
+    it('should validate dispute resolution period - too low', async () => {
+      const invalidDealData = {
+        ...validDealData,
+        disputeResolutionPeriodDays: 0 // Below minimum of 1
+      };
+
+      const response = await request(app)
+        .post('/transaction/create')
+        .set('Authorization', 'Bearer valid-token')
+        .send(invalidDealData)
+        .expect(400);
+
+      expect(response.body).toEqual({
+        success: false,
+        error: 'Dispute resolution period must be between 1 and 30 days'
+      });
+    });
+
+    it('should validate dispute resolution period - too high', async () => {
+      const invalidDealData = {
+        ...validDealData,
+        disputeResolutionPeriodDays: 31 // Above maximum of 30
+      };
+
+      const response = await request(app)
+        .post('/transaction/create')
+        .set('Authorization', 'Bearer valid-token')
+        .send(invalidDealData)
+        .expect(400);
+
+      expect(response.body).toEqual({
+        success: false,
+        error: 'Dispute resolution period must be between 1 and 30 days'
+      });
+    });
+
+    it('should accept valid custom dispute resolution period', async () => {
+      const customDealData = {
+        ...validDealData,
+        disputeResolutionPeriodDays: 14 // Valid custom period
+      };
+
+      const response = await request(app)
+        .post('/transaction/create')
+        .set('Authorization', 'Bearer valid-token')
+        .send(customDealData)
+        .expect(201);
+
+      expect(response.body.success).toBe(true);
+      expect(response.body.transactionData.disputeResolutionPeriodDays).toBe(14);
+      expect(response.body.transactionData.disputeResolutionPeriodMs).toBe(14 * 24 * 60 * 60 * 1000);
+    });
+
+    it('should default to 7 days when dispute resolution period not specified', async () => {
+      const dealDataWithoutPeriod = { ...validDealData };
+      delete dealDataWithoutPeriod.disputeResolutionPeriodDays;
+
+      const response = await request(app)
+        .post('/transaction/create')
+        .set('Authorization', 'Bearer valid-token')
+        .send(dealDataWithoutPeriod)
+        .expect(201);
+
+      expect(response.body.success).toBe(true);
+      expect(response.body.transactionData.disputeResolutionPeriodDays).toBe(7);
+      expect(response.body.transactionData.disputeResolutionPeriodMs).toBe(7 * 24 * 60 * 60 * 1000);
     });
   });
 

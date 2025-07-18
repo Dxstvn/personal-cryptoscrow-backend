@@ -70,10 +70,10 @@ class DisputeEventHandler extends EventEmitter {
         console.log(`[DisputeEventHandler] Dispute raised for deal ${dealId}`);
         
         try {
-            // Calculate time until auto-resolution (7 days from dispute timestamp)
+            // Calculate time until auto-resolution using custom period
             const disputeTimestamp = disputeData.disputeTimestamp || Date.now();
-            const sevenDaysInMs = 7 * 24 * 60 * 60 * 1000;
-            const timeUntilResolution = sevenDaysInMs - (Date.now() - disputeTimestamp);
+            const customPeriodMs = disputeData.customDisputeResolutionPeriodMs || (7 * 24 * 60 * 60 * 1000); // Default to 7 days
+            const timeUntilResolution = customPeriodMs - (Date.now() - disputeTimestamp);
 
             if (timeUntilResolution <= 0) {
                 // Dispute already past deadline, resolve immediately
@@ -81,7 +81,9 @@ class DisputeEventHandler extends EventEmitter {
                 await this.autoResolveDispute(dealId, disputeData);
             } else {
                 // Set timer for auto-resolution
-                console.log(`[DisputeEventHandler] Setting timer for ${dealId} - auto-resolve in ${Math.floor(timeUntilResolution / 1000 / 60 / 60)} hours`);
+                const hoursUntilResolution = Math.floor(timeUntilResolution / 1000 / 60 / 60);
+                const daysUntilResolution = Math.floor(customPeriodMs / 1000 / 60 / 60 / 24);
+                console.log(`[DisputeEventHandler] Setting timer for ${dealId} - auto-resolve in ${hoursUntilResolution} hours (${daysUntilResolution} day period)`);
                 
                 const timeoutId = setTimeout(() => {
                     this.autoResolveDispute(dealId, disputeData);

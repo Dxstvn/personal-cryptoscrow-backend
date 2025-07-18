@@ -35,7 +35,8 @@ Creates a new escrow deal with automatic smart contract deployment.
   "sellerNetwork": "arbitrum",
   "tokenAddress": "0x...", // Optional: specific token
   "depositToken": "0x...", // Optional: token buyer deposits
-  "targetToken": "0x..." // Optional: token seller receives
+  "targetToken": "0x...", // Optional: token seller receives
+  "disputeResolutionPeriodDays": 7 // Optional: 1-30 days, defaults to 7
 }
 ```
 
@@ -155,7 +156,7 @@ Allows buyer to raise a dispute during the dispute window.
 
 **Notes**:
 - Only available during 48-hour window after conditions met
-- Starts 7-day resolution period
+- Starts custom resolution period (1-30 days, default 7 days)
 - Prevents automatic fund release
 
 ### 5. Resolve Dispute
@@ -345,7 +346,7 @@ Lists deals requiring manual intervention (admin only).
 
 ### Automated Transitions
 1. **48-Hour Dispute Window**: After all conditions met
-2. **7-Day Dispute Resolution**: Auto-refund if not resolved
+2. **Custom Dispute Resolution**: Auto-refund after custom period (1-30 days, default 7)
 3. **Cross-Chain Confirmations**: Status updates on confirmations
 
 ## Frontend Integration Guide
@@ -464,6 +465,7 @@ async function getQuoteForCrossChain(fromNetwork, toNetwork, amount) {
 - Amount must be positive number
 - Networks must be supported
 - Conditions cannot be empty
+- Dispute resolution period must be between 1-30 days (defaults to 7 if not specified)
 
 ### Smart Contract Security
 - V3 contracts are audited and battle-tested
@@ -490,10 +492,14 @@ async function getQuoteForCrossChain(fromNetwork, toNetwork, amount) {
 
 ## Testing Support
 
-The module includes special handling for test environments:
-- Uses blockchain test networks (Sepolia, Mumbai)
-- Mock gas estimation for faster tests
-- Flexible authentication in test mode
+The module includes comprehensive test coverage:
+- **Unit Tests**: 28 test cases with mocked dependencies for isolated logic testing
+- **Integration Tests**: 22 test cases with real Firebase emulators and Hardhat blockchain
+- **Custom Dispute Resolution**: Dedicated test cases for validation (1-30 day range)
+- **Cross-Chain Testing**: Real blockchain interactions with EscrowServiceV3
+- **Test Networks**: Uses Hardhat local node, Sepolia, Arbitrum Sepolia, Polygon Amoy
+- **Real-Time Sync**: Event-driven architecture testing with actual database operations
+- **Authentication**: Firebase Auth emulator integration with real JWT tokens
 
 ## Performance Tips
 
