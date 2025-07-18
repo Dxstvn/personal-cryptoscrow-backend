@@ -1,23 +1,19 @@
-# Authentication Routes (`src/api/routes/auth`)
+# Authentication Routes (`/auth`)
 
 ## Overview
 
-This directory contains the authentication API routes for the CryptoEscrow platform. These endpoints handle user registration, login, and authentication token management using Firebase Authentication as the backend service. The authentication system supports both email/password and Google Sign-In authentication methods.
+This directory contains the authentication API routes for the CryptoEscrow platform. The system uses Firebase Authentication with both email/password and Google Sign-In methods. All endpoints return Firebase ID tokens that must be included in subsequent API requests.
 
-**Frontend Relevance**: Critical for building user registration flows, login interfaces, and session management. These endpoints work in conjunction with Firebase Client SDK for comprehensive authentication experiences.
-
-## File: `loginSignUp.js`
-
-**Base Path**: `/auth` (mounted at `/auth` in server.js)
-**Authentication**: Public endpoints (no authentication required for these routes)
-**Key Integrations**: Firebase Authentication, Firestore user profiles, wallet management
+**Base Path**: `/auth`  
+**Authentication**: Public endpoints (no authentication required)  
+**Response Format**: JSON with ID tokens for authenticated requests
 
 ## Core Endpoints
 
-### **Email/Password Authentication**
+### 1. Email/Password Sign Up
+**POST** `/auth/signUpEmailPass`
 
-#### `POST /auth/signUpEmailPass`
-**Purpose**: Creates a new user account using email and password credentials.
+Creates a new user account with email and password.
 
 **Request Body**:
 ```json
@@ -28,110 +24,67 @@ This directory contains the authentication API routes for the CryptoEscrow platf
 }
 ```
 
-**Success Response (201 Created)**:
+**Success Response** (200 OK):
 ```json
 {
   "message": "User created successfully",
+  "token": "eyJhbGciOiJSUzI1NiIs...", // Firebase ID token
+  "tokenType": "id",
+  "userId": "firebase-user-uid",
   "user": {
-    "uid": "firebase-user-id",
-    "email": "user@example.com",
-    "emailVerified": false,
-    "createdAt": "2023-10-26T10:00:00.000Z"
-  },
-  "token": "firebase-id-token",
-  "profile": {
-    "walletAddress": "0x1234567890123456789012345678901234567890",
-    "isNewUser": true,
-    "registrationMethod": "email"
+    "uid": "firebase-user-uid",
+    "email": "user@example.com"
   }
 }
 ```
 
 **Error Responses**:
-```json
-// Email already exists (400)
-{
-  "error": "The email address is already in use by another account."
-}
+- `400 Bad Request`: Missing email/password, weak password, or invalid email format
+- `409 Conflict`: Email already exists
 
-// Weak password (400)
-{
-  "error": "Password should be at least 6 characters"
-}
+**Backend Actions**:
+1. Creates Firebase Authentication user
+2. Generates Firestore user profile document
+3. Adds wallet to profile if provided
+4. Sets admin claims for allowed emails (production only)
+5. Returns ID token for immediate use
 
-// Invalid email format (400)
-{
-  "error": "The email address is badly formatted."
-}
-```
+### 2. Email/Password Sign In
+**POST** `/auth/signInEmailPass`
 
-**Frontend Actions**:
-- Build registration form with email/password validation
-- Handle password strength requirements
-- Store returned token for authenticated requests
-- Set up user profile with optional wallet address
-- Implement email verification flow if required
-
-#### `POST /auth/signInEmailPass`
-**Purpose**: Authenticates existing user with email and password credentials.
+Authenticates existing user with email and password.
 
 **Request Body**:
 ```json
 {
-  "email": "user@example.com", 
+  "email": "user@example.com",
   "password": "SecurePassword123!"
 }
 ```
 
-**Success Response (200 OK)**:
+**Success Response** (200 OK):
 ```json
 {
   "message": "User signed in successfully",
+  "token": "eyJhbGciOiJSUzI1NiIs...", // Firebase ID token
+  "tokenType": "id",
+  "userId": "firebase-user-uid",
   "user": {
-    "uid": "firebase-user-id",
-    "email": "user@example.com",
-    "emailVerified": true,
-    "lastSignInTime": "2023-10-26T10:00:00.000Z",
-    "creationTime": "2023-10-20T09:00:00.000Z"
-  },
-  "token": "firebase-id-token",
-  "profile": {
-    "walletAddress": "0x1234567890123456789012345678901234567890",
-    "isNewUser": false,
-    "hasCompletedOnboarding": true
+    "uid": "firebase-user-uid",
+    "email": "user@example.com"
   }
 }
 ```
 
 **Error Responses**:
-```json
-// Invalid credentials (401)
-{
-  "error": "The password is invalid or the user does not have a password."
-}
+- `400 Bad Request`: Missing email/password
+- `401 Unauthorized`: Invalid credentials
+- `403 Forbidden`: Email not in allowed list (production only)
 
-// User not found (401)
-{
-  "error": "There is no user record corresponding to this identifier."
-}
+### 3. Google Sign In
+**POST** `/auth/signInGoogle`
 
-// User disabled (401)
-{
-  "error": "The user account has been disabled by an administrator."
-}
-```
-
-**Frontend Actions**:
-- Build login form with email/password input
-- Store authentication token in secure storage
-- Handle "remember me" functionality
-- Redirect to dashboard or onboarding flow
-- Implement password reset flow
-
-### **Google Sign-In Authentication**
-
-#### `POST /auth/signInGoogle`
-**Purpose**: Authenticates user using Google Sign-In ID token from frontend.
+Authenticates user using Google ID token from Firebase Client SDK.
 
 **Request Body**:
 ```json
@@ -140,394 +93,243 @@ This directory contains the authentication API routes for the CryptoEscrow platf
 }
 ```
 
-**Success Response (200 OK)**:
+**Success Response** (200 OK):
 ```json
 {
-  "message": "User signed in successfully with Google",
+  "message": "User signed in successfully via Google",
+  "token": "eyJhbGciOiJSUzI1NiIs...", // Same ID token passed in
+  "tokenType": "id",
+  "userId": "firebase-user-uid",
   "user": {
-    "uid": "firebase-user-id",
-    "email": "user@gmail.com",
-    "displayName": "John Doe",
-    "photoURL": "https://lh3.googleusercontent.com/...",
-    "emailVerified": true,
-    "providerData": [
-      {
-        "providerId": "google.com",
-        "uid": "google-user-id",
-        "email": "user@gmail.com"
-      }
-    ]
-  },
-  "token": "firebase-id-token",
-  "profile": {
-    "displayName": "John Doe",
-    "photoURL": "https://lh3.googleusercontent.com/...",
-    "isNewUser": false,
-    "registrationMethod": "google"
+    "uid": "firebase-user-uid",
+    "email": "user@gmail.com"
   }
 }
 ```
 
 **Error Responses**:
-```json
-// Invalid ID token (401)
-{
-  "error": "Invalid ID token"
-}
+- `400 Bad Request`: Missing ID token
+- `401 Unauthorized`: Invalid Google ID token
+- `403 Forbidden`: Email not in allowed list (production only)
 
-// Token verification failed (401) 
-{
-  "error": "Firebase ID token has invalid signature"
-}
+**Backend Actions**:
+1. Verifies Google ID token
+2. Creates user profile if first sign-in
+3. Sets admin claims for allowed emails
+4. Returns the same ID token for consistency
 
-// Expired token (401)
-{
-  "error": "Firebase ID token has expired"
-}
-```
+### 4. Token Refresh (Not Implemented)
+**POST** `/auth/refreshToken`
 
-**Frontend Actions**:
-- Implement Google Sign-In button using Firebase SDK
-- Handle Google authentication flow
-- Send ID token to backend for verification
-- Store returned Firebase token for API authentication
-- Update UI with user profile information
+Currently returns 501 Not Implemented. Use Firebase Client SDK for token refresh.
 
-## Authentication Flow Integration
+## User Profile Structure
 
-### **Frontend Authentication Architecture**
+When users sign up or first sign in with Google, a Firestore document is created:
 
 ```javascript
-// Example: Complete authentication flow
-class AuthService {
-  constructor() {
-    this.currentUser = null;
-    this.token = localStorage.getItem('authToken');
-  }
-
-  // Email/Password Registration
-  async signUpWithEmail(email, password, walletAddress) {
-    try {
-      const response = await api.post('/auth/signUpEmailPass', {
-        email,
-        password,
-        walletAddress
-      });
-
-      this.handleAuthSuccess(response.data);
-      return response.data;
-    } catch (error) {
-      this.handleAuthError(error);
-      throw error;
-    }
-  }
-
-  // Email/Password Login
-  async signInWithEmail(email, password) {
-    try {
-      const response = await api.post('/auth/signInEmailPass', {
-        email,
-        password
-      });
-
-      this.handleAuthSuccess(response.data);
-      return response.data;
-    } catch (error) {
-      this.handleAuthError(error);
-      throw error;
-    }
-  }
-
-  // Google Sign-In
-  async signInWithGoogle() {
-    try {
-      // Get Google ID token from Firebase Client SDK
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
-      const idToken = await result.user.getIdToken();
-
-      // Send to backend for verification
-      const response = await api.post('/auth/signInGoogle', {
-        idToken
-      });
-
-      this.handleAuthSuccess(response.data);
-      return response.data;
-    } catch (error) {
-      this.handleAuthError(error);
-      throw error;
-    }
-  }
-
-  // Handle successful authentication
-  handleAuthSuccess(authData) {
-    this.currentUser = authData.user;
-    this.token = authData.token;
-    localStorage.setItem('authToken', authData.token);
-    
-    // Set up API client with token
-    api.defaults.headers.common['Authorization'] = `Bearer ${authData.token}`;
-    
-    // Set up Firestore listeners with authenticated user
-    this.setupFirestoreListeners(authData.user.uid);
-  }
-
-  // Handle authentication errors
-  handleAuthError(error) {
-    console.error('Authentication error:', error);
-    
-    // Clear any existing auth data
-    this.signOut();
-    
-    // Show user-friendly error message
-    this.showAuthError(error.response?.data?.error || 'Authentication failed');
-  }
-
-  // Sign out user
-  signOut() {
-    this.currentUser = null;
-    this.token = null;
-    localStorage.removeItem('authToken');
-    delete api.defaults.headers.common['Authorization'];
-  }
-}
-```
-
-### **Token Management & Storage**
-
-```javascript
-// Example: Secure token management
-class TokenManager {
-  static setToken(token) {
-    // Store in secure storage (consider HttpOnly cookies for production)
-    localStorage.setItem('authToken', token);
-    
-    // Set up automatic token refresh
-    this.setupTokenRefresh(token);
-  }
-
-  static getToken() {
-    return localStorage.getItem('authToken');
-  }
-
-  static removeToken() {
-    localStorage.removeItem('authToken');
-    this.clearTokenRefresh();
-  }
-
-  static setupTokenRefresh(token) {
-    // Parse token to get expiry
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    const expiryTime = payload.exp * 1000;
-    const refreshTime = expiryTime - (5 * 60 * 1000); // Refresh 5 minutes before expiry
-
-    setTimeout(() => {
-      this.refreshToken();
-    }, refreshTime - Date.now());
-  }
-
-  static async refreshToken() {
-    try {
-      // Get fresh token from Firebase
-      const user = auth.currentUser;
-      if (user) {
-        const newToken = await user.getIdToken(true);
-        this.setToken(newToken);
-      }
-    } catch (error) {
-      console.error('Token refresh failed:', error);
-      // Redirect to login
-      window.location.href = '/login';
-    }
-  }
-}
-```
-
-## User Profile Integration
-
-### **Profile Data Structure**
-
-The authentication endpoints also create/update user profile documents in Firestore:
-
-```javascript
-// User profile document structure
 {
-  uid: "firebase-user-id",
+  uid: "firebase-user-uid",
   email: "user@example.com",
-  displayName: "John Doe", // From Google or manually set
-  photoURL: "https://...", // From Google profile
-  walletAddress: "0x...", // Primary wallet address
-  registrationMethod: "email", // "email" or "google"
-  createdAt: timestamp,
-  lastLoginAt: timestamp,
-  preferences: {
-    notifications: true,
-    defaultNetwork: "ethereum",
-    theme: "dark"
-  },
-  onboardingCompleted: false,
-  emailVerified: true
+  first_name: "", // From Google profile or empty
+  last_name: "",  // From Google profile or empty
+  phone_number: "",
+  wallets: [
+    {
+      address: "0x...",
+      name: "Primary Wallet",
+      network: "ethereum",
+      isPrimary: true,
+      addedAt: Date
+    }
+  ],
+  createdAt: Date
 }
 ```
 
-### **Profile Setup Flow**
+## Frontend Integration Guide
 
+### 1. Initial Setup
 ```javascript
-// Example: Post-authentication profile setup
-const completeUserOnboarding = async (authData) => {
-  const { user, profile } = authData;
+// Initialize Firebase
+import { initializeApp } from 'firebase/app';
+import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
-  // Check if onboarding is needed
-  if (profile.isNewUser || !profile.hasCompletedOnboarding) {
-    // Redirect to onboarding flow
-    router.push('/onboarding');
-  } else {
-    // Proceed to dashboard
-    router.push('/dashboard');
-  }
-
-  // Set up wallet connections if wallet address exists
-  if (profile.walletAddress) {
-    await connectUserWallet(profile.walletAddress);
-  }
+const firebaseConfig = {
+  // Your Firebase config
 };
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+```
+
+### 2. Email/Password Registration
+```javascript
+async function signUp(email, password, walletAddress) {
+  const response = await fetch('/auth/signUpEmailPass', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, walletAddress })
+  });
+  
+  const data = await response.json();
+  if (response.ok) {
+    // Store token for authenticated requests
+    localStorage.setItem('authToken', data.token);
+    return data;
+  }
+  throw new Error(data.error);
+}
+```
+
+### 3. Google Sign-In Flow
+```javascript
+async function signInWithGoogle() {
+  // Step 1: Get Google ID token using Firebase Client SDK
+  const provider = new GoogleAuthProvider();
+  const result = await signInWithPopup(auth, provider);
+  const idToken = await result.user.getIdToken();
+  
+  // Step 2: Send to backend for verification
+  const response = await fetch('/auth/signInGoogle', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ idToken })
+  });
+  
+  const data = await response.json();
+  if (response.ok) {
+    localStorage.setItem('authToken', data.token);
+    return data;
+  }
+  throw new Error(data.error);
+}
+```
+
+### 4. Using Tokens in API Requests
+```javascript
+// Set up authenticated requests
+const authenticatedFetch = (url, options = {}) => {
+  const token = localStorage.getItem('authToken');
+  return fetch(url, {
+    ...options,
+    headers: {
+      ...options.headers,
+      'Authorization': `Bearer ${token}`
+    }
+  });
+};
+
+// Example: Fetch user's deals
+const deals = await authenticatedFetch('/transaction/deals');
+```
+
+### 5. Token Refresh Strategy
+```javascript
+// Use Firebase Client SDK for token refresh
+auth.onIdTokenChanged(async (user) => {
+  if (user) {
+    const token = await user.getIdToken();
+    localStorage.setItem('authToken', token);
+  } else {
+    localStorage.removeItem('authToken');
+  }
+});
+
+// Force refresh when needed
+async function refreshToken() {
+  const user = auth.currentUser;
+  if (user) {
+    const token = await user.getIdToken(true);
+    localStorage.setItem('authToken', token);
+    return token;
+  }
+  throw new Error('No authenticated user');
+}
 ```
 
 ## Security Considerations
 
-### **Frontend Security Best Practices**
+### Authentication Flow
+1. **Email/Password**: Backend creates custom token, converts to ID token
+2. **Google Sign-In**: Frontend gets ID token, backend verifies and returns it
+3. **Token Storage**: Store securely (consider HttpOnly cookies for production)
+4. **Token Expiry**: Firebase ID tokens expire after 1 hour
+5. **Auto-Refresh**: Use Firebase Client SDK's built-in refresh mechanism
 
-1. **Token Storage**: Use secure storage mechanisms (consider HttpOnly cookies for production)
-2. **Token Validation**: Always validate tokens before making API calls
-3. **Automatic Refresh**: Implement automatic token refresh before expiry
-4. **HTTPS Only**: Ensure all authentication flows use HTTPS
-5. **Input Validation**: Validate email format and password strength client-side
-6. **Error Handling**: Don't expose sensitive error details to users
+### Production Environment
+- **Allowed Emails**: Set `ALLOWED_EMAILS` environment variable for access control
+- **Admin Claims**: Automatically set for allowed emails
+- **HTTPS Only**: Ensure all authentication requests use HTTPS
+- **Rate Limiting**: Authentication endpoints are rate-limited (5 attempts/15 minutes)
 
-### **Password Requirements**
-
-The backend enforces minimum password requirements:
-- Minimum 6 characters (Firebase default)
-- Recommend stronger requirements in frontend:
-  - 8+ characters
-  - Mix of uppercase, lowercase, numbers
-  - Special characters
-
-### **Rate Limiting**
-
-Authentication endpoints are protected by rate limiting:
-- 5 attempts per 15 minutes per IP for authentication endpoints
-- Implement client-side rate limiting feedback
-
-## Error Handling Patterns
-
-### **User-Friendly Error Messages**
-
+### Error Handling
 ```javascript
-const getAuthErrorMessage = (errorCode) => {
+const handleAuthError = (error) => {
   const errorMessages = {
-    'auth/email-already-in-use': 'This email is already registered. Try signing in instead.',
-    'auth/weak-password': 'Password should be at least 6 characters long.',
-    'auth/invalid-email': 'Please enter a valid email address.',
-    'auth/user-not-found': 'No account found with this email address.',
-    'auth/wrong-password': 'Incorrect password. Please try again.',
-    'auth/user-disabled': 'This account has been disabled. Contact support.',
-    'auth/too-many-requests': 'Too many failed attempts. Please try again later.',
-    'auth/network-request-failed': 'Network error. Please check your connection.'
+    'Email already in use': 'This email is already registered',
+    'Password is too weak': 'Please use a stronger password',
+    'Invalid credentials': 'Incorrect email or password',
+    'Access denied': 'Your email is not authorized to access this system'
   };
-
-  return errorMessages[errorCode] || 'Authentication failed. Please try again.';
+  
+  return errorMessages[error.message] || 'Authentication failed';
 };
 ```
 
-### **Validation Helpers**
+## Testing Authentication
 
+### Mock Authentication Service
 ```javascript
-// Example: Client-side validation
-const validateAuthInput = (email, password) => {
-  const errors = {};
-
-  // Email validation
-  if (!email) {
-    errors.email = 'Email is required';
-  } else if (!/\S+@\S+\.\S+/.test(email)) {
-    errors.email = 'Please enter a valid email address';
-  }
-
-  // Password validation
-  if (!password) {
-    errors.password = 'Password is required';
-  } else if (password.length < 6) {
-    errors.password = 'Password must be at least 6 characters';
-  }
-
-  return {
-    isValid: Object.keys(errors).length === 0,
-    errors
-  };
-};
-```
-
-## Testing Integration
-
-### **Authentication Testing Patterns**
-
-```javascript
-// Mock authentication for testing
+// For testing without backend
 const mockAuth = {
-  signUp: jest.fn().mockResolvedValue({
-    user: { uid: 'test-uid', email: 'test@example.com' },
-    token: 'mock-token'
+  signUp: async (email, password) => ({
+    token: 'mock-token',
+    userId: 'mock-user-id',
+    user: { uid: 'mock-user-id', email }
   }),
   
-  signIn: jest.fn().mockResolvedValue({
-    user: { uid: 'test-uid', email: 'test@example.com' },
-    token: 'mock-token'
-  }),
-  
-  signOut: jest.fn().mockResolvedValue(true)
+  signIn: async (email, password) => ({
+    token: 'mock-token',
+    userId: 'mock-user-id',
+    user: { uid: 'mock-user-id', email }
+  })
 };
-
-// Test authentication flow
-test('should handle successful login', async () => {
-  const authService = new AuthService();
-  const result = await authService.signInWithEmail('test@example.com', 'password123');
-  
-  expect(result.user.email).toBe('test@example.com');
-  expect(localStorage.getItem('authToken')).toBe('mock-token');
-});
 ```
 
-## Environment Configuration
-
-### **Firebase Configuration**
-
+### Integration Testing
 ```javascript
-// Firebase config for frontend
-const firebaseConfig = {
-  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
-  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
-  // ... other config
+// Test with Firebase Emulators
+const testAuth = async () => {
+  // Connect to emulators
+  connectAuthEmulator(auth, 'http://localhost:9099');
+  
+  // Test sign up
+  const result = await signUp('test@example.com', 'password123');
+  expect(result.token).toBeDefined();
+  expect(result.user.email).toBe('test@example.com');
 };
-
-// Initialize Firebase
-import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-
-const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
 ```
 
----
+## Common Issues & Solutions
 
-**Critical Frontend Integration Notes**:
+### Issue: "Email not in allowed list"
+**Solution**: In production, add email to `ALLOWED_EMAILS` environment variable
 
-1. **Use Firebase Client SDK** for initial authentication and token generation
-2. **Send tokens to backend** for verification and profile creation
-3. **Store tokens securely** with automatic refresh mechanisms
-4. **Handle all error states** with user-friendly messages
-5. **Implement proper validation** for email and password requirements
-6. **Set up Firestore listeners** after successful authentication
-7. **Test authentication flows** thoroughly across all platforms
-8. **Monitor authentication metrics** for security and user experience 
+### Issue: Token expired errors
+**Solution**: Implement automatic token refresh using Firebase Client SDK
+
+### Issue: CORS errors
+**Solution**: Ensure frontend URL is in backend CORS configuration
+
+### Issue: Custom token to ID token conversion fails
+**Solution**: Check Firebase project configuration and service account permissions
+
+## Next Steps for Frontend
+
+1. **Implement Authentication UI**: Login/signup forms with validation
+2. **Set Up Token Management**: Automatic refresh and secure storage
+3. **Handle Authentication States**: Loading, authenticated, unauthenticated
+4. **Add Social Login**: Extend Google Sign-In with other providers
+5. **Implement Profile Management**: Allow users to update their information
+6. **Add Wallet Connection**: Link crypto wallets after authentication

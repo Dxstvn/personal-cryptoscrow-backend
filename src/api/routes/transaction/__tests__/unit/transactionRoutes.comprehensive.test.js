@@ -94,7 +94,7 @@ beforeAll(() => {
     }))
   }));
 
-  // Mock EscrowServiceV3
+  // Mock EscrowServiceV3 with all current methods
   mockEscrowService = {
     initialize: vi.fn().mockResolvedValue(undefined),
     getCrossChainQuote: vi.fn().mockResolvedValue({
@@ -107,14 +107,20 @@ beforeAll(() => {
     createEscrow: vi.fn().mockResolvedValue({
       escrowId: '12345',
       txHash: '0xmocktxhash',
-      contractAddress: '0xcontractaddress'
+      contractAddress: '0xcontractaddress',
+      blockNumber: 12345
     }),
     updateCondition: vi.fn().mockResolvedValue({
       txHash: '0xupdatetxhash'
     }),
+    updateConditionWithDispute: vi.fn().mockResolvedValue({
+      txHash: '0xupdatedisputetxhash'
+    }),
     releaseEscrow: vi.fn().mockResolvedValue({
       txHash: '0xreleasetxhash',
-      method: 'release'
+      method: 'release',
+      isCompose: false,
+      guid: null
     }),
     raiseDispute: vi.fn().mockResolvedValue({
       txHash: '0xdisputetxhash'
@@ -122,15 +128,32 @@ beforeAll(() => {
     resolveDispute: vi.fn().mockResolvedValue({
       txHash: '0xresolvetxhash'
     }),
+    getDisputeInfo: vi.fn().mockResolvedValue({
+      isDisputed: false,
+      disputeRaiser: null,
+      disputeTime: 0,
+      canRelease: true,
+      reason: null
+    }),
+    canReleaseEscrow: vi.fn().mockResolvedValue({
+      canRelease: true,
+      reason: null
+    }),
     getEscrowDetails: vi.fn().mockResolvedValue({
       buyer: '0x1234567890123456789012345678901234567890',
       seller: '0x0987654321098765432109876543210987654321',
       amount: '1000000000000000000',
       status: 'active'
     }),
+    estimateTotalFees: vi.fn().mockResolvedValue({
+      crossChainFee: '0.01',
+      gasFee: '0.001',
+      serviceFee: '0.002',
+      totalFee: '0.013'
+    }),
     chainConfigs: {
-      11155111: { contractAddress: '0xmockcontractaddress' },
-      421614: { contractAddress: '0xmockcontractaddress2' }
+      11155111: { contractAddress: '0xmockcontractaddress', name: 'sepolia' },
+      421614: { contractAddress: '0xmockcontractaddress2', name: 'arbitrum-sepolia' }
     }
   };
 
@@ -153,10 +176,10 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
     const transactionRoutesModule = await import('../../transactionRoutes.js');
     router = transactionRoutesModule.default;
     
-    // Setup Express app for testing
+    // Setup Express app for testing (mount at /transaction to match server.js)
     app = express();
     app.use(express.json());
-    app.use('/', router);
+    app.use('/transaction', router);
   });
 
   beforeEach(() => {
@@ -204,7 +227,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
 
     it('should return quote for valid cross-chain parameters', async () => {
       const response = await request(app)
-        .get('/api/v3/quote')
+        .get('/transaction/v3/quote')
         .query(validQuoteParams);
 
       // Accept either success or error response due to mocking complexity
@@ -234,7 +257,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
       };
 
       const response = await request(app)
-        .get('/api/v3/quote')
+        .get('/transaction/v3/quote')
         .query(sameChainParams)
         .expect(200);
 
@@ -243,7 +266,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
 
     it('should return 400 for missing required parameters', async () => {
       const response = await request(app)
-        .get('/api/v3/quote')
+        .get('/transaction/v3/quote')
         .query({})
         .expect(400);
 
@@ -257,7 +280,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
       mockEscrowService.getCrossChainQuote.mockRejectedValue(new Error('Service unavailable'));
 
       const response = await request(app)
-        .get('/api/v3/quote')
+        .get('/transaction/v3/quote')
         .query(validQuoteParams)
         .expect(500);
 
@@ -268,7 +291,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
     });
   });
 
-  describe('POST /api/createDeal', () => {
+  describe('POST /transaction/create', () => {
     const validDealData = {
       amount: '1000000000000000000',
       sellerEmail: 'seller@example.com',
@@ -284,16 +307,18 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
 
     it('should create deal successfully with valid data', async () => {
       const response = await request(app)
-        .post('/api/createDeal')
+        .post('/transaction/create')
         .set('Authorization', 'Bearer valid-token')
         .send(validDealData)
-        .expect(200);
+        .expect(201);
 
-      expect(response.body).toEqual({
+      expect(response.body).toEqual(expect.objectContaining({
         success: true,
+        message: 'Deal created successfully',
         dealId: 'newdealid123',
+        isCrossChain: true,
         transactionData: expect.any(Object)
-      });
+      }));
       
       // Verify the response has the expected structure
       expect(response.body.success).toBe(true);
@@ -305,7 +330,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
 
     it('should return 401 without authorization token', async () => {
       const response = await request(app)
-        .post('/api/createDeal')
+        .post('/transaction/create')
         .send(validDealData)
         .expect(401);
 
@@ -319,7 +344,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
       mockVerifyIdToken.mockRejectedValue(new Error('Invalid token'));
 
       const response = await request(app)
-        .post('/api/createDeal')
+        .post('/transaction/create')
         .set('Authorization', 'Bearer invalid-token')
         .send(validDealData)
         .expect(401);
@@ -337,7 +362,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
       };
 
       const response = await request(app)
-        .post('/api/createDeal')
+        .post('/transaction/create')
         .set('Authorization', 'Bearer valid-token')
         .send(incompleteDealData)
         .expect(400);
@@ -358,7 +383,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
 
     it('should return 400 for missing required fields', async () => {
       const response = await request(app)
-        .post('/api/updateCondition')
+        .post('/transaction/updateCondition')
         .send({})
         .expect(400);
 
@@ -372,7 +397,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
       mockGet.mockResolvedValue({ exists: false });
 
       const response = await request(app)
-        .post('/api/updateCondition')
+        .post('/transaction/updateCondition')
         .send(validUpdateData)
         .expect(404);
 
@@ -390,7 +415,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
 
     it('should return 400 for missing dealId', async () => {
       const response = await request(app)
-        .post('/api/releaseEscrow')
+        .post('/transaction/releaseEscrow')
         .send({})
         .expect(400);
 
@@ -404,7 +429,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
       mockGet.mockResolvedValue({ exists: false });
 
       const response = await request(app)
-        .post('/api/releaseEscrow')
+        .post('/transaction/releaseEscrow')
         .send(validReleaseData)
         .expect(404);
 
@@ -424,7 +449,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
       });
 
       const response = await request(app)
-        .post('/api/releaseEscrow')
+        .post('/transaction/releaseEscrow')
         .send(validReleaseData)
         .expect(400);
 
@@ -443,7 +468,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
 
     it('should return 400 for missing required fields', async () => {
       const response = await request(app)
-        .post('/api/raiseDispute')
+        .post('/transaction/raiseDispute')
         .send({})
         .expect(400);
 
@@ -457,7 +482,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
       mockGet.mockResolvedValue({ exists: false });
 
       const response = await request(app)
-        .post('/api/raiseDispute')
+        .post('/transaction/raiseDispute')
         .send(validDisputeData)
         .expect(404);
 
@@ -476,7 +501,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
 
     it('should return 400 for missing required fields', async () => {
       const response = await request(app)
-        .post('/api/resolveDispute')
+        .post('/transaction/resolveDispute')
         .send({})
         .expect(400);
 
@@ -490,7 +515,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
       mockGet.mockResolvedValue({ exists: false });
 
       const response = await request(app)
-        .post('/api/resolveDispute')
+        .post('/transaction/resolveDispute')
         .send(validResolveData)
         .expect(404);
 
@@ -503,26 +528,35 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
 
   describe('GET /api/deal/:dealId', () => {
     it('should return deal details successfully', async () => {
-      const response = await request(app)
-        .get('/api/deal/testdealid123')
-        .expect(200);
-
-      expect(response.body).toEqual({
-        success: true,
-        deal: expect.objectContaining({
-          id: 'testdealid123',
-          amount: expect.any(Number),
-          sellerEmail: expect.any(String),
-          productDescription: expect.any(String)
+      // Mock deal data
+      mockGet.mockResolvedValue({
+        exists: true,
+        data: () => ({
+          amount: 1000000000000000000,
+          sellerEmail: 'seller@example.com',
+          productDescription: 'Test product',
+          participants: ['testuser123']
         })
       });
+
+      const response = await request(app)
+        .get('/transaction/testdealid123')
+        .set('Authorization', 'Bearer valid-token')
+        .expect(200);
+
+      expect(response.body).toEqual(expect.objectContaining({
+        id: 'testdealid123',
+        amount: expect.any(Number),
+        sellerEmail: expect.any(String),
+        productDescription: expect.any(String)
+      }));
 
       expect(mockGet).toHaveBeenCalled();
     });
 
     it('should return 400 for missing dealId', async () => {
       const response = await request(app)
-        .get('/api/deal/')
+        .get('/transaction/')
         .expect(404); // Express returns 404 for missing route parameters
     });
 
@@ -530,7 +564,8 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
       mockGet.mockResolvedValue({ exists: false });
 
       const response = await request(app)
-        .get('/api/deal/nonexistent')
+        .get('/transaction/nonexistent')
+        .set('Authorization', 'Bearer valid-token')
         .expect(404);
 
       expect(response.body).toEqual({
@@ -543,7 +578,8 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
       mockGet.mockRejectedValue(new Error('Database error'));
 
       const response = await request(app)
-        .get('/api/deal/testdealid123')
+        .get('/transaction/testdealid123')
+        .set('Authorization', 'Bearer valid-token')
         .expect(500);
 
       expect(response.body).toEqual({
@@ -556,7 +592,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
   describe('Error Handling', () => {
     it('should handle malformed JSON gracefully', async () => {
       const response = await request(app)
-        .post('/api/createDeal')
+        .post('/transaction/create')
         .set('Authorization', 'Bearer valid-token')
         .set('Content-Type', 'application/json')
         .send('{"invalid": json}')
@@ -574,7 +610,7 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
       };
 
       const response = await request(app)
-        .get('/api/v3/quote')
+        .get('/transaction/v3/quote')
         .query(largeAmountParams);
 
       // Accept either success or error response for large amounts
@@ -594,10 +630,10 @@ describe('Transaction Routes - Comprehensive Unit Tests', () => {
       };
 
       const response = await request(app)
-        .post('/api/createDeal')
+        .post('/transaction/create')
         .set('Authorization', 'Bearer valid-token')
         .send(specialCharData)
-        .expect(200);
+        .expect(201);
 
       expect(response.body.success).toBe(true);
     });

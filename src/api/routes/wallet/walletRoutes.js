@@ -229,10 +229,10 @@ router.post('/register', authenticateToken, async (req, res) => {
       currentWallets.push(walletObject);
     }
 
-    // If this is marked as primary, unmark others for the same network
+    // If this is marked as primary, unmark all others (only one primary allowed)
     if (isPrimary) {
       currentWallets.forEach(w => {
-        if (w.network === network && w.address !== address) {
+        if (w.address.toLowerCase() !== address.toLowerCase() || w.network !== network) {
           w.isPrimary = false;
         }
       });
@@ -244,10 +244,9 @@ router.post('/register', authenticateToken, async (req, res) => {
       [`walletAddresses.${network}`]: address // Quick lookup field
     });
 
-    return res.json({
-      success: true,
-      wallet: walletObject,
-      message: existingWalletIndex !== -1 ? 'Wallet updated' : 'Wallet registered'
+    return res.status(201).json({
+      message: 'Wallet registered successfully',
+      wallet: walletObject
     });
     
   } catch (error) {
@@ -272,7 +271,6 @@ router.get('/', authenticateToken, async (req, res) => {
     const wallets = userData.wallets || [];
 
     return res.json({
-      success: true,
       wallets
     });
     
@@ -359,190 +357,186 @@ router.get('/tokens/:chainId', async (req, res) => {
   }
 });
 
-// Estimate transaction fees - POST /api/wallets/estimate-fees
-router.post('/estimate-fees', authenticateToken, async (req, res) => {
+
+// Set primary wallet - PUT /api/wallets/primary
+router.put('/primary', authenticateToken, async (req, res) => {
   try {
-    const { amount, sourceNetwork, targetNetwork, depositToken, targetToken } = req.body;
+    const { address, network } = req.body;
+    const userId = req.userId;
 
-    if (!amount || !sourceNetwork || !targetNetwork) {
-      return res.status(400).json({ 
-        error: 'Amount, source network, and target network are required' 
-      });
+    if (!address || !network) {
+      return res.status(400).json({ error: 'Address and network are required' });
     }
 
-    const sourceChainId = getChainId(sourceNetwork);
-    const targetChainId = getChainId(targetNetwork);
+    const { db } = await getFirebaseServices();
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
 
-    if (!sourceChainId || !targetChainId) {
-      return res.status(400).json({ 
-        error: 'Unsupported network' 
-      });
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: 'User profile not found' });
     }
 
-    await escrowService.initialize();
+    const userData = userDoc.data();
+    const wallets = userData.wallets || [];
 
-    const fees = await escrowService.estimateTotalFees({
-      amount,
-      sourceChainId,
-      targetChainId,
-      requiresSwap: depositToken !== targetToken
+    // Find the wallet to set as primary
+    const walletIndex = wallets.findIndex(
+      w => w.address.toLowerCase() === address.toLowerCase() && w.network === network
+    );
+
+    if (walletIndex === -1) {
+      return res.status(404).json({ error: 'Wallet not found in user profile' });
+    }
+
+    // Update primary status - only one primary across all networks
+    wallets.forEach((w, index) => {
+      w.isPrimary = (index === walletIndex);
     });
 
-    res.json({
+    await userRef.update({ wallets });
+
+    return res.json({
       success: true,
-      fees: {
-        ...fees,
-        sourceNetwork,
-        targetNetwork,
-        isEnhanced: fees.isEnhanced
-      }
+      message: 'Primary wallet updated successfully'
     });
-
   } catch (error) {
-    console.error("[ESTIMATE FEES] Error:", error);
-    res.status(500).json({ error: 'Failed to estimate fees' });
+    console.error("[SET PRIMARY] Error:", error);
+    return res.status(500).json({ error: 'Failed to set primary wallet' });
   }
 });
 
-// Get cross-chain quote - POST /api/wallets/quote
-router.post('/quote', authenticateToken, async (req, res) => {
+// Update wallet balance - PUT /api/wallets/balance
+router.put('/balance', authenticateToken, async (req, res) => {
   try {
-    const { amount, sourceChainId, targetChainId, tokenAddress } = req.body;
+    const { address, network, balance } = req.body;
+    const userId = req.userId;
 
-    if (!amount || !sourceChainId || !targetChainId) {
-      return res.status(400).json({ 
-        error: 'Amount, source chain ID, and target chain ID are required' 
-      });
+    if (!address || !network) {
+      return res.status(400).json({ error: 'Address and network are required' });
     }
 
-    // Ensure service is initialized before use
-    await escrowService.initialize();
+    if (balance === undefined || balance === null) {
+      return res.status(400).json({ error: 'Address, network, and balance are required' });
+    }
 
-    const quote = await escrowService.getCrossChainQuote({
-      sourceChainId: parseInt(sourceChainId),
-      targetChainId: parseInt(targetChainId),
-      tokenAddress: tokenAddress || '0x0000000000000000000000000000000000000000',
-      amount: amount,
-      contractAddress: escrowService.chainConfigs[parseInt(sourceChainId)]?.contractAddress
-    });
+    const { db } = await getFirebaseServices();
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
 
-    res.json({
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: 'User profile not found' });
+    }
+
+    const userData = userDoc.data();
+    const wallets = userData.wallets || [];
+
+    const walletIndex = wallets.findIndex(
+      w => w.address.toLowerCase() === address.toLowerCase() && w.network === network
+    );
+
+    if (walletIndex === -1) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+
+    wallets[walletIndex].balance = balance;
+    wallets[walletIndex].lastBalanceUpdate = new Date();
+
+    await userRef.update({ wallets });
+
+    return res.json({
       success: true,
-      quote
+      message: 'Wallet balance updated successfully'
     });
-
   } catch (error) {
-    console.error("[GET QUOTE] Error:", error);
-    res.status(500).json({ error: 'Failed to get quote' });
+    console.error("[UPDATE BALANCE] Error:", error);
+    return res.status(500).json({ error: 'Failed to update wallet balance' });
   }
 });
 
-// Get transaction route info - POST /api/wallets/route
-router.post('/route', authenticateToken, async (req, res) => {
+// Get wallet preferences - GET /api/wallets/preferences
+router.get('/preferences', authenticateToken, async (req, res) => {
   try {
-    const { sourceNetwork, targetNetwork, amount, depositToken, targetToken } = req.body;
-
-    if (!sourceNetwork || !targetNetwork || !amount) {
-      return res.status(400).json({ 
-        error: 'Source network, target network, and amount are required' 
-      });
-    }
-
-    const sourceChainId = getChainId(sourceNetwork);
-    const targetChainId = getChainId(targetNetwork);
-
-    if (!sourceChainId || !targetChainId) {
-      return res.status(400).json({ 
-        error: 'Unsupported network' 
-      });
-    }
-
-    await escrowService.initialize();
-
-    const sourceConfig = escrowService.chainConfigs[sourceChainId];
-    const targetConfig = escrowService.chainConfigs[targetChainId];
-
-    if (!sourceConfig || !targetConfig) {
-      return res.status(400).json({ 
-        error: 'Chain configuration not found' 
-      });
-    }
-
-    // Determine the best route
-    const isSameChain = sourceChainId === targetChainId;
-    const requiresSwap = depositToken !== targetToken;
+    const userId = req.userId;
+    const { db } = await getFirebaseServices();
     
-    let route = {
-      type: isSameChain ? 'same-chain' : 'cross-chain',
-      method: 'direct',
-      steps: []
-    };
-
-    if (isSameChain) {
-      if (requiresSwap) {
-        route.method = 'uniswap';
-        route.steps = [
-          { action: 'swap', from: depositToken, to: targetToken, via: 'Uniswap' },
-          { action: 'transfer', to: 'seller' }
-        ];
-      } else {
-        route.steps = [
-          { action: 'transfer', to: 'seller' }
-        ];
-      }
-    } else {
-      // Check available cross-chain methods
-      const hasStargate = sourceConfig.stargateRouter && targetConfig.stargateRouter;
-      const hasLayerZero = sourceConfig.layerZeroEndpointId && targetConfig.layerZeroEndpointId;
-      
-      if (hasStargate) {
-        route.method = 'stargate';
-        route.steps = [
-          { action: 'bridge', from: sourceNetwork, to: targetNetwork, via: 'Stargate' }
-        ];
-        
-        if (requiresSwap) {
-          route.steps.push({ action: 'swap', from: depositToken, to: targetToken, via: 'Uniswap' });
-        }
-        
-        route.steps.push({ action: 'transfer', to: 'seller' });
-      } else if (hasLayerZero) {
-        route.method = 'layerzero';
-        route.steps = [
-          { action: 'bridge', from: sourceNetwork, to: targetNetwork, via: 'LayerZero OFT' }
-        ];
-        
-        if (requiresSwap) {
-          route.steps.push({ action: 'swap', from: depositToken, to: targetToken, via: 'Uniswap' });
-        }
-        
-        route.steps.push({ action: 'transfer', to: 'seller' });
-      } else {
-        route.method = 'unsupported';
-        route.error = 'No cross-chain bridge available for this route';
-      }
+    const userDoc = await db.collection('users').doc(userId).get();
+    
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: 'User profile not found' });
     }
 
-    res.json({
-      success: true,
-      route
-    });
+    const userData = userDoc.data();
+    const wallets = userData.wallets || [];
+    
+    // Get primary wallet
+    const primaryWallet = wallets.find(w => w.isPrimary);
+    const preferredNetworks = [...new Set(wallets.map(w => w.network))];
 
+    return res.json({
+      success: true,
+      preferences: {
+        primaryWallet: primaryWallet ? {
+          address: primaryWallet.address,
+          network: primaryWallet.network
+        } : null,
+        preferredNetworks
+      }
+    });
   } catch (error) {
-    console.error("[GET ROUTE] Error:", error);
-    res.status(500).json({ error: 'Failed to get route info' });
+    console.error("[GET PREFERENCES] Error:", error);
+    return res.status(500).json({ error: 'Failed to get wallet preferences' });
   }
 });
+
+// Process wallet detection - POST /api/wallets/detection
+router.post('/detection', authenticateToken, async (req, res) => {
+  try {
+    const { detectedWallets } = req.body;
+    const userId = req.userId;
+
+    if (!detectedWallets) {
+      return res.status(400).json({ error: 'Detected wallets data is required' });
+    }
+
+    const { db } = await getFirebaseServices();
+    const userRef = db.collection('users').doc(userId);
+    
+    // Store detection data for processing
+    const evmWallets = detectedWallets.evmWallets?.length || 0;
+    const solanaWallets = detectedWallets.solanaWallets?.length || 0;
+    const bitcoinWallets = detectedWallets.bitcoinWallets?.length || 0;
+    const totalDetected = evmWallets + solanaWallets + bitcoinWallets;
+    
+    await userRef.update({
+      lastWalletDetection: {
+        timestamp: new Date(),
+        evmWallets,
+        solanaWallets,
+        bitcoinWallets,
+        totalDetected
+      }
+    });
+
+    return res.json({
+      success: true,
+      message: 'Wallet detection data received successfully'
+    });
+  } catch (error) {
+    console.error("[WALLET DETECTION] Error:", error);
+    return res.status(500).json({ error: 'Failed to process wallet detection' });
+  }
+});
+
 
 // Delete wallet - DELETE /api/wallets/:address
 router.delete('/:address', authenticateToken, async (req, res) => {
   try {
     const { address } = req.params;
-    const { network } = req.query;
+    const { network } = req.body;
     const userId = req.userId;
 
-    if (!network) {
-      return res.status(400).json({ error: 'Network parameter is required' });
+    if (!address || !network) {
+      return res.status(400).json({ error: 'Address and network are required' });
     }
 
     const { db } = await getFirebaseServices();
@@ -557,13 +551,22 @@ router.delete('/:address', authenticateToken, async (req, res) => {
     const userData = userDoc.data();
     const currentWallets = userData.wallets || [];
 
-    // Filter out the wallet to delete
+    // Find and filter out the wallet to delete
+    const walletToDelete = currentWallets.find(
+      w => w.address.toLowerCase() === address.toLowerCase() && w.network === network
+    );
+    
+    if (!walletToDelete) {
+      return res.status(404).json({ error: 'Wallet not found' });
+    }
+    
     const updatedWallets = currentWallets.filter(
       w => !(w.address.toLowerCase() === address.toLowerCase() && w.network === network)
     );
 
-    if (updatedWallets.length === currentWallets.length) {
-      return res.status(404).json({ error: 'Wallet not found' });
+    // If the deleted wallet was primary and there are remaining wallets, set another as primary
+    if (walletToDelete.isPrimary && updatedWallets.length > 0) {
+      updatedWallets[0].isPrimary = true;
     }
 
     // Update user document
@@ -580,7 +583,7 @@ router.delete('/:address', authenticateToken, async (req, res) => {
 
     return res.json({
       success: true,
-      message: 'Wallet deleted successfully'
+      message: 'Wallet removed successfully'
     });
     
   } catch (error) {

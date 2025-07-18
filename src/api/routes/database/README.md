@@ -1,87 +1,382 @@
-# File Management Routes (`src/api/routes/database`)
+# File Management Routes (`/files`)
 
 ## Overview
 
-This module provides API endpoints specifically for managing files associated with escrow deals within the CryptoEscrow application. It handles the uploading of documents to Firebase Storage and the retrieval of file metadata and download links.
+This directory provides secure file management endpoints for the CryptoEscrow platform. Despite the directory name (`database`), this module specifically handles file uploads, downloads, and metadata management for escrow deals using Firebase Storage and Firestore.
 
-**Important Note on Naming**: While the directory is named `database/`, its current primary function as defined in `fileUploadDownload.js` is **file management** (interacting with Firebase Storage and storing file metadata likely in Firestore), not general-purpose database access for all application entities. General database operations for deals, for instance, are more directly handled by services and exposed via `src/api/routes/transaction/`.
+**Base Path**: `/files`  
+**Authentication**: All endpoints require Firebase ID Token (`Authorization: Bearer <TOKEN>`)  
+**Purpose**: Enable secure document management for escrow transactions
 
-**Frontend Relevance**: This module is crucial for any feature where users need to attach or retrieve documents related to a deal (e.g., signed agreements, inspection reports, proof of identity). Frontend developers will use these endpoints to implement file upload UI components and to display lists of associated files with download capabilities.
+## Core Endpoints
 
-## File: `fileUploadDownload.js`
+### 1. Upload File
+**POST** `/files/upload`
 
--   **Purpose**: Defines all Express.js routes for file upload and download operations.
--   **Base Path**: These routes are typically mounted under `/api/files` (confirm with the main router configuration, as the directory name `database` might not directly correspond to the route path for files).
--   **Authentication**: All endpoints require a valid Firebase ID Token (`Authorization: Bearer <TOKEN>`).
--   **Primary Storage**: Firebase Storage is used for the actual file binaries.
--   **Metadata Storage**: File metadata (like filename, storage path, uploader, timestamp, associated deal) is typically stored in Firestore, either in a dedicated `files` collection or embedded/referenced within `deals` documents.
+Uploads a file and associates it with a specific escrow deal.
 
-### Key Endpoints & Frontend Interaction Details:
+**Request Type**: `multipart/form-data`
 
--   **`POST /upload`** (e.g., `/api/files/upload`)
-    -   **Description**: Allows an authenticated user to upload a file and associate it with a specific escrow deal.
-    -   **Request Type**: `multipart/form-data`. This is essential for file uploads.
-    -   **Form Data Fields**:
-        -   `dealId` (string, required): The Firestore ID of the deal to which this file belongs.
-        -   `file` (file object, required): The actual file being uploaded by the user.
-    -   **Backend Logic**: 
-        1.  Validates `dealId` and user permissions for the deal.
-        2.  Validates file type (only allows PDF, JPEG, PNG).
-        3.  Uploads the file binary to a structured path in Firebase Storage (e.g., `deals/<dealId>/<uuid>-<originalFileName>`).
-        4.  Creates a metadata document in Firestore (in a subcollection under the deal) storing: `filename`, `storagePath`, `url`, `contentType`, `size`, `uploadedBy` (user UID), `uploadedAt` (timestamp).
-    -   **Success Response (200 OK)**:
-        ```json
-        {
-          "message": "File uploaded successfully",
-          "fileId": "generatedFileMetadataIdInFirestore",
-          "url": "https://firebasestorage.googleapis.com/..." // Public download URL
+**Form Data Fields**:
+- `file` (required): The file to upload
+- `dealId` (required): The ID of the deal to associate the file with
+
+**Allowed File Types**:
+- PDF: `application/pdf` (.pdf)
+- Images: JPEG (.jpg, .jpeg), PNG (.png), GIF (.gif)
+- Documents: Word (.doc, .docx)
+
+**File Constraints**:
+- Maximum size: 5MB
+- Single file per request
+- File signature validation for security
+
+**Success Response** (200 OK):
+```json
+{
+  "message": "File uploaded successfully",
+  "fileId": "generated-uuid",
+  "url": "https://storage.googleapis.com/..."
+}
+```
+
+**Error Responses**:
+- `400 Bad Request`: Missing file/dealId, invalid file type, file too large
+- `403 Forbidden`: User not authorized for this deal
+- `404 Not Found`: Deal not found
+- `429 Too Many Requests`: Rate limit exceeded (5 uploads per minute)
+
+**Backend Security**:
+1. Validates file MIME type and extension
+2. Checks file signature (magic bytes) 
+3. Sanitizes filenames
+4. Verifies user is participant in deal
+5. Generates secure storage paths with UUIDs
+
+### 2. Get Files for My Deals
+**GET** `/files/my-deals`
+
+Retrieves metadata for all files in deals where the user is a participant.
+
+**Success Response** (200 OK):
+```json
+[
+  {
+    "dealId": "deal-id",
+    "fileId": "file-uuid",
+    "filename": "contract.pdf",
+    "contentType": "application/pdf",
+    "size": 1048576,
+    "uploadedAt": "2023-10-26T10:00:00.000Z",
+    "uploadedBy": "uploader-uid",
+    "downloadPath": "/files/download/deal-id/file-uuid"
+  }
+]
+```
+
+**Notes**:
+- Returns empty array if no deals found
+- Aggregates files from all user's deals
+- Provides download paths for each file
+
+### 3. Download File
+**GET** `/files/download/:dealId/:fileId`
+
+Downloads a specific file from a deal.
+
+**URL Parameters**:
+- `:dealId` - The deal ID
+- `:fileId` - The file ID
+
+**Response**: Binary file stream with appropriate headers
+- `Content-Type`: Original file MIME type
+- `Content-Disposition`: Attachment with original filename
+
+**Error Responses**:
+- `403 Forbidden`: User not authorized for this deal
+- `404 Not Found`: Deal or file not found
+- `500 Internal Server Error`: Storage access error
+
+**Security**:
+- Verifies user is participant in the deal
+- Streams file directly from Firebase Storage
+- No public URLs exposed
+
+## Frontend Integration Guide
+
+### 1. File Upload Implementation
+```javascript
+async function uploadFile(file, dealId) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('dealId', dealId);
+  
+  try {
+    const response = await fetch('/files/upload', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: formData
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error);
+    }
+    
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    // Handle specific errors
+    if (error.message.includes('File too large')) {
+      showNotification('File must be under 5MB', 'error');
+    } else if (error.message.includes('Invalid file type')) {
+      showNotification('Only PDF, images, and Word documents allowed', 'error');
+    }
+    throw error;
+  }
+}
+```
+
+### 2. File Upload UI Component
+```javascript
+function FileUploader({ dealId, onUploadComplete }) {
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  
+  const handleFileSelect = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    // Client-side validation
+    if (file.size > 5 * 1024 * 1024) {
+      showError('File must be under 5MB');
+      return;
+    }
+    
+    const allowedTypes = [
+      'application/pdf',
+      'image/jpeg',
+      'image/png',
+      'image/gif',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ];
+    
+    if (!allowedTypes.includes(file.type)) {
+      showError('Invalid file type');
+      return;
+    }
+    
+    setUploading(true);
+    try {
+      const result = await uploadFile(file, dealId);
+      onUploadComplete(result);
+      showSuccess('File uploaded successfully');
+    } catch (error) {
+      showError('Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+  
+  return (
+    <div>
+      <input
+        type="file"
+        onChange={handleFileSelect}
+        accept=".pdf,.jpg,.jpeg,.png,.gif,.doc,.docx"
+        disabled={uploading}
+      />
+      {uploading && <ProgressBar value={progress} />}
+    </div>
+  );
+}
+```
+
+### 3. File List Display
+```javascript
+function DealFiles({ dealId }) {
+  const [files, setFiles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  
+  useEffect(() => {
+    fetchDealFiles();
+  }, [dealId]);
+  
+  const fetchDealFiles = async () => {
+    try {
+      const response = await authenticatedFetch('/files/my-deals');
+      const allFiles = await response.json();
+      const dealFiles = allFiles.filter(f => f.dealId === dealId);
+      setFiles(dealFiles);
+    } catch (error) {
+      showError('Failed to load files');
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const downloadFile = (downloadPath, filename) => {
+    // Create temporary link for download
+    const link = document.createElement('a');
+    link.href = `${API_BASE_URL}${downloadPath}`;
+    link.download = filename;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    
+    // Add auth header for the request
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      fetch(link.href, {
+        headers: {
+          'Authorization': `Bearer ${authToken}`
         }
-        ```
-    -   **Error Responses**: `400 Bad Request` (missing `dealId` or `file`, invalid file type), `404 Not Found` (deal not found), `401/403` (unauthorized), `500 Internal Server Error` (storage/database issues).
-    -   **Frontend Actions**: 
-        -   Use an `<input type="file">` element for file selection.
-        -   Construct a `FormData` object, appending `dealId` and `file`.
-        -   Make a POST request with `Content-Type: multipart/form-data`.
-        -   Implement upload progress indicators if possible.
-        -   On success, update the UI to show the newly uploaded file in the context of the relevant deal.
+      })
+      .then(res => res.blob())
+      .then(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+    });
+    
+    link.click();
+  };
+  
+  return (
+    <div>
+      {loading ? (
+        <LoadingSpinner />
+      ) : (
+        <FileList 
+          files={files}
+          onDownload={downloadFile}
+          onUploadComplete={fetchDealFiles}
+        />
+      )}
+    </div>
+  );
+}
+```
 
--   **`GET /my-deals`** (e.g., `/api/files/my-deals`)
-    -   **Description**: Retrieves metadata for all files associated with deals the current authenticated user is a participant in.
-    -   **Backend Logic**: Queries deals where the user is a participant, then fetches all file metadata from each deal's files subcollection.
-    -   **Success Response (200 OK)**: An array of file metadata objects.
-        ```json
-        [
-          {
-            "dealId": "associatedDealId1",
-            "fileId": "fileMetadataId1",
-            "filename": "contract.pdf",
-            "contentType": "application/pdf",
-            "size": 1048576, // File size in bytes
-            "uploadedAt": "2023-10-25T10:00:00.000Z", // ISO 8601 timestamp
-            "uploadedBy": "uploaderFirebaseUid",
-            "downloadPath": "/files/download/dealId/fileId" // Path to download endpoint
-          }
-          // ... more files
-        ]
-        ```
-    -   **Frontend Actions**: Display a list of these files, typically grouped by deal. Each file entry should show its name, type, upload date, and provide a download mechanism using the `downloadPath`.
+### 4. Real-time File Updates
+```javascript
+// Listen for new files in a deal
+function useDealFiles(dealId) {
+  const [files, setFiles] = useState([]);
+  
+  useEffect(() => {
+    if (!dealId) return;
+    
+    const filesRef = collection(db, 'deals', dealId, 'files');
+    const unsubscribe = onSnapshot(filesRef, (snapshot) => {
+      const updatedFiles = [];
+      snapshot.forEach((doc) => {
+        updatedFiles.push({
+          id: doc.id,
+          ...doc.data()
+        });
+      });
+      setFiles(updatedFiles);
+    });
+    
+    return unsubscribe;
+  }, [dealId]);
+  
+  return files;
+}
+```
 
--   **`GET /download/:dealId/:fileId`** (e.g., `/api/files/download/:dealId/:fileId`)
-    -   **Description**: Allows an authenticated and authorized user to download a specific file by its ID.
-    -   **URL Parameters**: `:dealId`, `:fileId` (the Firestore ID of the file metadata document).
-    -   **Backend Logic**: 
-        1.  Verifies user has access to the specified `dealId`.
-        2.  Retrieves file metadata from Firestore using `fileId` (verifying it belongs to `dealId`).
-        3.  Gets the `storagePath` from the metadata.
-        4.  Directly streams the file from Firebase Storage to the client with appropriate `Content-Disposition` and `Content-Type` headers.
-    -   **Success Response**: The file binary itself (e.g., `Content-Type: application/pdf`, `Content-Disposition: attachment; filename="..."`). The browser will typically handle this as a download.
-    -   **Error Responses**: `401/403` (unauthorized), `404 Not Found` (deal or file not found), `500 Internal Server Error` (storage error).
-    -   **Frontend Actions**: Provide a download link or button for each file listed. This can be a simple `<a>` tag pointing to this API endpoint, or a JavaScript function that initiates the download.
+## Security Features
 
-## Frontend UI/UX Considerations
+### File Upload Security
+1. **MIME Type Validation**: Checks against allowed types
+2. **Extension Validation**: Verifies file extensions
+3. **File Signature Validation**: Checks magic bytes
+4. **Filename Sanitization**: Removes special characters
+5. **Size Limits**: 5MB per file
+6. **Rate Limiting**: 5 uploads per minute per user
 
--   **File Type Icons**: Display appropriate icons based on `fileType` or actual file extension.
--   **Upload Progress**: For larger files, provide visual feedback on upload progress.
--   **Error Handling**: Clearly indicate failures during upload (e.g., file too large, network error, server error) or download.
--   **Security**: Ensure that download links are not easily guessable if direct URLs from storage are used; signed URLs (if used by backend) mitigate this by being time-limited and specific.
--   **Real-time Updates**: If a list of files for a deal is displayed, using Firestore real-time listeners on the file metadata (if stored in a queryable way per deal) can keep this list automatically updated when new files are added or removed (if a delete endpoint exists). 
+### Access Control
+- Deal participant verification on all operations
+- No public file URLs - all downloads require authentication
+- Secure file paths with UUIDs prevent enumeration
+
+### Storage Security
+- Files stored in structured paths: `deals/{dealId}/{fileId}{extension}`
+- Metadata stored separately in Firestore
+- Signed URLs with expiration (7 days) in production
+
+## Error Handling
+
+### Common Upload Errors
+- **"File too large"**: File exceeds 5MB limit
+- **"Invalid file type"**: File type not in allowed list
+- **"File signature does not match"**: File content doesn't match declared type
+- **"Unauthorized access"**: User not participant in deal
+
+### Network Error Handling
+```javascript
+const uploadWithRetry = async (file, dealId, maxRetries = 3) => {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await uploadFile(file, dealId);
+    } catch (error) {
+      if (i === maxRetries - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i)));
+    }
+  }
+};
+```
+
+## UI/UX Recommendations
+
+### Upload Experience
+1. **Drag & Drop**: Support drag-and-drop file uploads
+2. **Progress Indication**: Show upload progress for large files
+3. **File Preview**: Display thumbnails for images
+4. **Batch Upload**: Queue multiple files (one at a time due to API limit)
+
+### File Display
+1. **File Icons**: Show appropriate icons by file type
+2. **Metadata Display**: Show size, upload date, uploader name
+3. **Quick Actions**: One-click download, preview for images/PDFs
+4. **Search/Filter**: Filter files by type or name
+
+### Error Feedback
+1. **Clear Messages**: User-friendly error descriptions
+2. **Retry Options**: Allow easy retry for failed uploads
+3. **Validation Feedback**: Show why a file was rejected
+
+## Testing Support
+
+The module includes special handling for test environments:
+- Uses Firebase Storage emulator in test mode
+- Generates mock download URLs for emulator
+- Flexible token authentication for testing
+
+## Performance Considerations
+
+### Upload Optimization
+- Client-side validation before upload attempt
+- Compress images before upload if needed
+- Show upload progress for better UX
+
+### Download Optimization
+- Stream files directly from storage
+- Implement client-side caching for frequently accessed files
+- Consider generating preview thumbnails for images
+
+## Next Steps for Frontend
+
+1. **Implement Drag & Drop**: Modern file upload interface
+2. **Add File Preview**: In-browser preview for PDFs and images
+3. **Batch Operations**: Support multiple file uploads/downloads
+4. **File Categories**: Organize files by type (contracts, photos, etc.)
+5. **Version Control**: Track file versions if replacements are needed
+6. **Virus Scanning**: Integrate with virus scanning service for production

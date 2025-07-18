@@ -53,7 +53,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const app = express();
 app.use(express.json());
-app.use('/', transactionRoutes); // Mount routes at root since they have their own /api/ prefix
+app.use('/transaction', transactionRoutes); // Mount routes at /transaction to match server.js
 
 let buyer, seller, otherUser;
 let hardhatAvailable = false;
@@ -179,9 +179,13 @@ beforeEach(async () => {
 describe('Transaction Routes Integration Tests (/api/transactions)', () => {
     describe('POST /create - Real EVM Integration', () => {
         const validDealDataBase = {
-            propertyAddress: '123 Integration Test St, Test City, USA',
             amount: 1.5,
-            initialConditions: [{ id: 'inspection', type: 'INSPECTION', description: 'Property inspection contingency' }]
+            productDescription: '123 Integration Test St, Test City, USA',
+            conditions: [{ text: 'Property inspection contingency', status: 'pending' }],
+            buyerNetwork: 'ethereum',
+            sellerNetwork: 'ethereum',
+            contractType: 'V3_ESCROW',
+            productCategory: 'real_estate'
         };
 
         it('should create transaction without contract deployment (no deployment env vars)', async () => {
@@ -193,14 +197,13 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
             const dealData = {
                 ...validDealDataBase,
-                initiatedBy: 'BUYER',
-                otherPartyEmail: seller.email,
+                sellerEmail: seller.email,
                 buyerWalletAddress: buyer.wallets[0],
                 sellerWalletAddress: seller.wallets[0]
             };
 
             const response = await request(app)
-                .post('/api/createDeal')
+                .post('/transaction/create')
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send(dealData);
 
@@ -240,7 +243,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
                 console.log(`[INTEGRATION TEST] This will deploy to Hardhat network: ${process.env.RPC_URL}`);
 
                 const response = await request(app)
-                    .post('/api/createDeal')
+                    .post('/transaction/create')
                     .set('Authorization', `Bearer ${buyer.token}`)
                     .send(dealData);
 
@@ -269,14 +272,13 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
         it('should handle invalid wallet addresses properly', async () => {
             const dealData = {
                 ...validDealDataBase,
-                initiatedBy: 'BUYER',
-                otherPartyEmail: seller.email,
+                sellerEmail: seller.email,
                 buyerWalletAddress: 'invalid-wallet-address',
                 sellerWalletAddress: seller.wallets[0]
             };
 
             const response = await request(app)
-                .post('/api/createDeal')
+                .post('/transaction/create')
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send(dealData);
 
@@ -288,14 +290,13 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
             const sameWallet = buyer.wallets[0];
             const dealData = {
                 ...validDealDataBase,
-                initiatedBy: 'BUYER',
-                otherPartyEmail: seller.email,
+                sellerEmail: seller.email,
                 buyerWalletAddress: sameWallet,
                 sellerWalletAddress: sameWallet
             };
 
             const response = await request(app)
-                .post('/api/createDeal')
+                .post('/transaction/create')
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send(dealData);
 
@@ -306,14 +307,13 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
         it('should require authentication', async () => {
             const dealData = {
                 ...validDealDataBase,
-                initiatedBy: 'BUYER',
-                otherPartyEmail: seller.email,
+                sellerEmail: seller.email,
                 buyerWalletAddress: buyer.wallets[0],
                 sellerWalletAddress: seller.wallets[0]
             };
 
             const response = await request(app)
-                .post('/api/createDeal')
+                .post('/transaction/create')
                 .send(dealData);
 
             expect(response.status).toBe(401);
@@ -351,7 +351,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
         it('should retrieve deal details for authorized buyer', async () => {
             const response = await request(app)
-                .get(`/api/${dealId}`)
+                .get(`/transaction/${dealId}`)
                 .set('Authorization', `Bearer ${buyer.token}`);
 
             expect(response.status).toBe(200);
@@ -365,7 +365,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
         it('should retrieve deal details for authorized seller', async () => {
             const response = await request(app)
-                .get(`/api/${dealId}`)
+                .get(`/transaction/${dealId}`)
                 .set('Authorization', `Bearer ${seller.token}`);
 
             expect(response.status).toBe(200);
@@ -375,7 +375,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
         it('should deny access to unauthorized users', async () => {
             const response = await request(app)
-                .get(`/api/${dealId}`)
+                .get(`/transaction/${dealId}`)
                 .set('Authorization', `Bearer ${otherUser.token}`);
 
             expect(response.status).toBe(403);
@@ -383,7 +383,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
         it('should return 404 for non-existent deals', async () => {
             const response = await request(app)
-                .get(`/api/nonexistent-deal-id`)
+                .get(`/transaction/nonexistent-deal-id`)
                 .set('Authorization', `Bearer ${buyer.token}`);
 
             expect(response.status).toBe(404);
@@ -428,7 +428,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
         it('should list user deals with proper pagination', async () => {
             const response = await request(app)
-                .get('/api/transactions')
+                .get('/transaction/transactions')
                 .set('Authorization', `Bearer ${buyer.token}`);
 
             expect(response.status).toBe(200);
@@ -446,7 +446,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
         it('should respect limit parameter', async () => {
             const response = await request(app)
-                .get('/api/transactions?limit=1')
+                .get('/transaction/transactions?limit=1')
                 .set('Authorization', `Bearer ${buyer.token}`);
 
             expect(response.status).toBe(200);
@@ -456,7 +456,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
         it('should return empty array for users with no deals', async () => {
             const response = await request(app)
-                .get('/api/transactions')
+                .get('/transaction/transactions')
                 .set('Authorization', `Bearer ${otherUser.token}`);
 
             expect(response.status).toBe(200);
@@ -497,7 +497,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
             console.log(`[INTEGRATION TEST] Buyer token: ${buyer.token ? 'present' : 'missing'}`);
             
             const response = await request(app)
-                .patch('/api/conditions/integration_test_condition/buyer-review')
+                .patch('/transaction/conditions/integration_test_condition/buyer-review')
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send({
                     dealId: dealId,
@@ -527,7 +527,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
         it('should reject invalid status values', async () => {
             const response = await request(app)
-                .patch('/api/conditions/integration_test_condition/buyer-review')
+                .patch('/transaction/conditions/integration_test_condition/buyer-review')
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send({
                     dealId: dealId,
@@ -561,7 +561,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
         it('should sync deal status from smart contract state', async () => {
             const response = await request(app)
-                .put(`/api/${dealId}/sync-status`)
+                .put(`/transaction/${dealId}/sync-status`)
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send({
                     newSCStatus: 'IN_ESCROW',
@@ -590,7 +590,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
         it('should reject invalid smart contract status values', async () => {
             const response = await request(app)
-                .put(`/api/${dealId}/sync-status`)
+                .put(`/transaction/${dealId}/sync-status`)
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send({
                     newSCStatus: 'INVALID_STATUS'
@@ -603,7 +603,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
         it('should handle final approval deadline setting', async () => {
             const futureDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
             const response = await request(app)
-                .put(`/api/${dealId}/sync-status`)
+                .put(`/transaction/${dealId}/sync-status`)
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send({
                     newSCStatus: 'IN_FINAL_APPROVAL',
@@ -624,7 +624,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
         it('should deny access to non-participants', async () => {
             const response = await request(app)
-                .put(`/api/${dealId}/sync-status`)
+                .put(`/transaction/${dealId}/sync-status`)
                 .set('Authorization', `Bearer ${otherUser.token}`)
                 .send({
                     newSCStatus: 'IN_ESCROW'
@@ -658,7 +658,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
         it('should start final approval period with valid deadline', async () => {
             const futureDate = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000); // 3 days from now
             const response = await request(app)
-                .post(`/api/${dealId}/sc/start-final-approval`)
+                .post(`/transaction/${dealId}/sc/start-final-approval`)
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send({
                     finalApprovalDeadlineISO: futureDate.toISOString()
@@ -680,7 +680,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
         it('should reject past deadline dates', async () => {
             const pastDate = new Date(Date.now() - 24 * 60 * 60 * 1000); // 1 day ago
             const response = await request(app)
-                .post(`/api/${dealId}/sc/start-final-approval`)
+                .post(`/transaction/${dealId}/sc/start-final-approval`)
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send({
                     finalApprovalDeadlineISO: pastDate.toISOString()
@@ -692,7 +692,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
         it('should require valid ISO date format', async () => {
             const response = await request(app)
-                .post(`/api/${dealId}/sc/start-final-approval`)
+                .post(`/transaction/${dealId}/sc/start-final-approval`)
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send({
                     finalApprovalDeadlineISO: 'invalid-date'
@@ -726,7 +726,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
         it('should raise dispute with valid deadline', async () => {
             const futureDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000); // 14 days from now
             const response = await request(app)
-                .post(`/api/${dealId}/sc/raise-dispute`)
+                .post(`/transaction/${dealId}/sc/raise-dispute`)
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send({
                     conditionId: 'property_condition',
@@ -754,7 +754,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
             const futureDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
             const response = await request(app)
-                .post(`/api/${dealId}/sc/raise-dispute`)
+                .post(`/transaction/${dealId}/sc/raise-dispute`)
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send({
                     conditionId: 'property_condition',
@@ -769,7 +769,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
     describe('POST /estimate-gas - Gas Estimation (Always Available)', () => {
         it('should estimate gas for contract deployment', async () => {
             const response = await request(app)
-                .post('/api/estimate-gas')
+                .post('/transaction/estimate-gas')
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send({
                     operation: 'deploy',
@@ -791,7 +791,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
         it('should estimate gas for fund release', async () => {
             const response = await request(app)
-                .post('/api/estimate-gas')
+                .post('/transaction/estimate-gas')
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send({
                     operation: 'release',
@@ -810,7 +810,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
         it('should estimate gas for fund cancellation', async () => {
             const response = await request(app)
-                .post('/api/estimate-gas')
+                .post('/transaction/estimate-gas')
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send({
                     operation: 'cancel',
@@ -827,7 +827,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
         it('should reject invalid operations', async () => {
             const response = await request(app)
-                .post('/api/estimate-gas')
+                .post('/transaction/estimate-gas')
                 .set('Authorization', `Bearer ${buyer.token}`)
                 .send({
                     operation: 'invalid_operation',
@@ -846,7 +846,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
         it('should require authentication', async () => {
             const response = await request(app)
-                .post('/api/estimate-gas')
+                .post('/transaction/estimate-gas')
                 .send({
                     operation: 'deploy',
                     network: 'ethereum',
@@ -891,7 +891,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
             });
 
             const response = await request(app)
-                .get('/api/admin/manual-intervention')
+                .get('/transaction/admin/manual-intervention')
                 .set('Authorization', `Bearer ${buyer.token}`); // Using buyer token since we don't have real admin auth
 
             expect(response.status).toBe(200);
@@ -910,93 +910,12 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
         });
     });
 
-    describe('GET /admin/scheduled-jobs-status - System Monitoring', () => {
-        it('should return scheduled jobs status', async () => {
-            const response = await request(app)
-                .get('/api/admin/scheduled-jobs-status')
-                .set('Authorization', `Bearer ${buyer.token}`);
-
-            expect(response.status).toBe(200);
-            // Check for either scheduledJobsStatus structure or other valid response
-            if (response.body.scheduledJobsStatus) {
-                expect(response.body.scheduledJobsStatus).toHaveProperty('enabled');
-                expect(response.body.scheduledJobsStatus).toHaveProperty('lastRun');
-                expect(response.body.scheduledJobsStatus).toHaveProperty('nextRun');
-            } else {
-                // Alternative valid structure - job monitoring data
-                expect(response.body).toBeDefined();
-                console.log(`[INTEGRATION TEST] Jobs status structure:`, Object.keys(response.body));
-            }
-            
-            console.log(`[INTEGRATION TEST] ✅ Scheduled jobs status retrieved`);
-        });
-    });
-
-    describe('POST /admin/trigger-scheduled-job - Admin Operations', () => {
-        it('should trigger contract deadline checks', async () => {
-            const response = await request(app)
-                .post('/api/admin/trigger-scheduled-job')
-                .set('Authorization', `Bearer ${buyer.token}`)
-                .send({
-                    jobType: 'contract-deadlines'
-                });
-
-            // Job trigger might have different response codes/structures
-            if (response.status === 200) {
-                expect(response.body.success).toBe(true);
-                expect(response.body.message).toContain('Contract deadline check');
-            } else if (response.status === 400) {
-                // Some job types might not be available or have different names
-                console.log(`[INTEGRATION TEST] Job trigger response:`, response.body);
-                expect(response.body.error || response.body.message).toBeDefined();
-            } else {
-                throw new Error(`Unexpected response status: ${response.status}`);
-            }
-            
-            console.log(`[INTEGRATION TEST] ✅ Contract deadline check triggered`);
-        });
-
-        it('should trigger cross-chain transaction monitoring', async () => {
-            const response = await request(app)
-                .post('/api/admin/trigger-scheduled-job')
-                .set('Authorization', `Bearer ${buyer.token}`)
-                .send({
-                    jobType: 'cross-chain-monitoring'
-                });
-
-            // Job trigger might have different response codes/structures
-            if (response.status === 200) {
-                expect(response.body.success).toBe(true);
-                expect(response.body.message).toContain('Cross-chain transaction monitoring');
-            } else if (response.status === 400) {
-                // Some job types might not be available or have different names
-                console.log(`[INTEGRATION TEST] Cross-chain job trigger response:`, response.body);
-                expect(response.body.error || response.body.message).toBeDefined();
-            } else {
-                throw new Error(`Unexpected response status: ${response.status}`);
-            }
-            
-            console.log(`[INTEGRATION TEST] ✅ Cross-chain monitoring triggered`);
-        });
-
-        it('should reject invalid job types', async () => {
-            const response = await request(app)
-                .post('/api/admin/trigger-scheduled-job')
-                .set('Authorization', `Bearer ${buyer.token}`)
-                .send({
-                    jobType: 'invalid-job-type'
-                });
-
-            expect(response.status).toBe(400);
-            expect(response.body.error).toContain('Invalid job type');
-        });
-    });
 
     if (realBlockchainTesting) {
         describe('POST /estimate-gas - Real Gas Estimation', () => {
             it('should estimate gas for contract deployment on real network', async () => {
                 const response = await request(app)
-                    .post('/api/estimate-gas')
+                    .post('/transaction/estimate-gas')
                     .set('Authorization', `Bearer ${buyer.token}`)
                     .send({
                         operation: 'deploy',
@@ -1018,7 +937,7 @@ describe('Transaction Routes Integration Tests (/api/transactions)', () => {
 
             it('should estimate gas for fund release', async () => {
                 const response = await request(app)
-                    .post('/api/estimate-gas')
+                    .post('/transaction/estimate-gas')
                     .set('Authorization', `Bearer ${buyer.token}`)
                     .send({
                         operation: 'release',

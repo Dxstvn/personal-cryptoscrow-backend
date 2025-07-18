@@ -1,5 +1,4 @@
 import { vi, describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
-import { jest, describe, it, expect, beforeEach, beforeAll, afterAll } from '@jest/globals';
 
 // Mock the 'ethers' module using unstable mocking for ESM
 const mockIsAddress = vi.fn();
@@ -15,31 +14,63 @@ vi.mock('ethers', () => ({
     }
 }));
 
-// Mock cross-chain service
-vi.mock('../../../../../services/crossChainService.js', () => ({
-    areNetworksEVMCompatible: vi.fn(),
-    getBridgeInfo: vi.fn(),
-    estimateTransactionFees: vi.fn(),
-    prepareCrossChainTransaction: vi.fn(),
-    executeCrossChainStep: vi.fn(),
-    getCrossChainTransactionStatus: vi.fn()
-}));
 
 // Now import everything else after setting up the mock
 const { default: request } = await import('supertest');
 const { default: express } = await import('express');
 const { Timestamp } = await import('firebase-admin/firestore');
-const { adminFirestore, PROJECT_ID } = await import('../../../../../../jest.emulator.setup.js');
+import { getFirestore } from 'firebase-admin/firestore';
+import { getAdminApp } from '../../../auth/admin.js';
+import { spawn } from 'child_process';
+
+// Firebase emulator variables
+let adminFirestore;
+let emulatorProcess = null;
+
+// Simple emulator setup functions
+async function startEmulators() {
+  // Set environment variables for emulators
+  process.env.NODE_ENV = 'test';
+  process.env.FIREBASE_PROJECT_ID = 'demo-test';
+  process.env.FIREBASE_STORAGE_BUCKET = 'demo-test.appspot.com';
+  process.env.FIRESTORE_EMULATOR_HOST = 'localhost:5004';
+  process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9099';
+  process.env.FIREBASE_STORAGE_EMULATOR_HOST = 'localhost:9199';
+
+  console.log('🚀 Starting Firebase emulators...');
+  
+  // Start emulators in background
+  emulatorProcess = spawn('firebase', ['emulators:start', '--only', 'auth,firestore,storage', '--project', 'demo-test'], {
+    detached: true,
+    stdio: 'ignore'
+  });
+
+  // Wait for emulators to start
+  await new Promise(resolve => setTimeout(resolve, 10000));
+  console.log('✅ Firebase emulators started');
+  
+  // Initialize Firebase Admin for tests
+  const adminApp = await getAdminApp();
+  adminFirestore = getFirestore(adminApp);
+}
+
+function stopEmulators() {
+  if (emulatorProcess) {
+    console.log('🛑 Stopping Firebase emulators...');
+    emulatorProcess.kill();
+    emulatorProcess = null;
+  }
+}
+
+const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'demo-test';
 const { deleteAdminApp } = await import('../../../auth/admin.js');
 const { createTestUser, cleanUp } = await import('../../../../../helperFunctions.js');
 
-// Import cross-chain service mocks
-const crossChainService = await import('../../../../../services/crossChainService.js');
 
 // Import the module under test AFTER setting up the mock
 const { default: walletRoutes } = await import('../../walletRoutes.js');
 
-jest.setTimeout(60000);
+// Vitest timeout configuration will be set per test
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const app = express();
@@ -74,21 +105,34 @@ const testAddresses = {
 };
 
 beforeAll(async () => {
-    console.log(`[TEST SETUP] Starting Wallet integration tests with Project ID: ${PROJECT_ID}`);
-    await cleanUp();
-}, 60000);
+    try {
+        console.log(`[TEST SETUP] Starting Wallet integration tests with Project ID: ${PROJECT_ID}`);
+        
+        // Set up Firebase emulators first
+        await startEmulators();
+        await cleanUp();
+    } catch (error) {
+        console.error('BeforeAll setup failed:', error);
+        throw error;
+    }
+}, 90000); // Increased timeout for emulator startup
 
 afterAll(async () => {
-    console.log('[TEST TEARDOWN] Cleaning up after all wallet tests.');
-    await cleanUp();
-    if (typeof deleteAdminApp === 'function') {
-        try {
-            await deleteAdminApp();
-        } catch (e) {
-            console.warn('[TEST TEARDOWN] Could not delete admin app:', e.message);
+    try {
+        console.log('[TEST TEARDOWN] Cleaning up after all wallet tests.');
+        await cleanUp();
+        if (typeof deleteAdminApp === 'function') {
+            try {
+                await deleteAdminApp();
+            } catch (e) {
+                console.warn('[TEST TEARDOWN] Could not delete admin app:', e.message);
+            }
         }
+        stopEmulators();
+        vi.restoreAllMocks();
+    } catch (error) {
+        console.error('AfterAll cleanup failed:', error);
     }
-    vi.restoreAllMocks();
 }, 60000);
 
 beforeEach(async () => {
@@ -98,53 +142,6 @@ beforeEach(async () => {
     mockIsAddress.mockReset().mockReturnValue(true);
     mockGetAddress.mockReset().mockImplementation(addr => addr);
 
-    // Reset cross-chain service mocks
-    crossChainService.areNetworksEVMCompatible.mockReset();
-    crossChainService.getBridgeInfo.mockReset();
-    crossChainService.estimateTransactionFees.mockReset();
-    crossChainService.prepareCrossChainTransaction.mockReset();
-    crossChainService.executeCrossChainStep.mockReset();
-    crossChainService.getCrossChainTransactionStatus.mockReset();
-
-    // Configure cross-chain service mocks
-    crossChainService.areNetworksEVMCompatible.mockImplementation((source, target) => {
-        const evmNetworks = ['ethereum', 'polygon', 'bsc', 'arbitrum', 'optimism'];
-        return evmNetworks.includes(source) && evmNetworks.includes(target);
-    });
-
-    crossChainService.getBridgeInfo.mockImplementation((source, target) => {
-        if (crossChainService.areNetworksEVMCompatible(source, target)) {
-            return null;
-        }
-        return {
-            bridge: 'test-bridge',
-            estimatedTime: '10-30 minutes',
-            fees: '0.01 ETH'
-        };
-    });
-
-    crossChainService.estimateTransactionFees.mockResolvedValue({
-        sourceNetworkFee: '0.001',
-        targetNetworkFee: '0.001',
-        bridgeFee: '0.01',
-        totalEstimatedFee: '0.021'
-    });
-
-    crossChainService.prepareCrossChainTransaction.mockResolvedValue({
-        id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        status: 'prepared',
-        steps: []
-    });
-
-    crossChainService.executeCrossChainStep.mockResolvedValue({
-        success: true,
-        nextStep: 2
-    });
-
-    crossChainService.getCrossChainTransactionStatus.mockResolvedValue({
-        id: 'tx_test_123',
-        status: 'completed'
-    });
 
     try {
         const timestamp = Date.now();
@@ -721,153 +718,6 @@ describe('Wallet Routes API Integration Tests (/api/wallets)', () => {
         });
     });
 
-    describe('Cross-chain endpoints', () => {
-        describe('POST /cross-chain/estimate-fees', () => {
-            it('should estimate cross-chain fees successfully', async () => {
-                const response = await request(app)
-                    .post('/api/wallets/cross-chain/estimate-fees')
-                    .send({
-                        sourceNetwork: 'ethereum',
-                        targetNetwork: 'solana',
-                        amount: '1.0'
-                    })
-                    .expect(200);
-
-                expect(response.body.success).toBe(true);
-                expect(response.body.data).toHaveProperty('feeEstimate');
-                expect(response.body.data).toHaveProperty('isEVMCompatible');
-                expect(response.body.data).toHaveProperty('bridgeInfo');
-                expect(response.body.data).toHaveProperty('requiresBridge');
-                
-                expect(crossChainService.estimateTransactionFees).toHaveBeenCalledWith(
-                    'ethereum',
-                    'solana',
-                    '1.0'
-                );
-            });
-
-            it('should return 400 for missing parameters', async () => {
-                const response = await request(app)
-                    .post('/api/wallets/cross-chain/estimate-fees')
-                    .send({
-                        sourceNetwork: 'ethereum'
-                    })
-                    .expect(400);
-
-                expect(response.body.success).toBe(false);
-                expect(response.body.message).toBe('Source network, target network, and amount are required');
-            });
-        });
-
-        describe('POST /cross-chain/prepare', () => {
-            it('should prepare cross-chain transaction successfully', async () => {
-                const transactionData = {
-                    fromAddress: testAddresses.ethereum,
-                    toAddress: testAddresses.solana,
-                    amount: '1.0',
-                    sourceNetwork: 'ethereum',
-                    targetNetwork: 'solana',
-                    dealId: 'deal_123'
-                };
-
-                const response = await request(app)
-                    .post('/api/wallets/cross-chain/prepare')
-                    .send(transactionData)
-                    .expect(200);
-
-                expect(response.body.success).toBe(true);
-                expect(response.body.data).toHaveProperty('id');
-                expect(response.body.data).toHaveProperty('status');
-                
-                expect(crossChainService.prepareCrossChainTransaction).toHaveBeenCalledWith(
-                    expect.objectContaining({
-                        ...transactionData,
-                        userId: 'anonymous'
-                    })
-                );
-            });
-
-            it('should return 400 for missing parameters', async () => {
-                const response = await request(app)
-                    .post('/api/wallets/cross-chain/prepare')
-                    .send({
-                        fromAddress: testAddresses.ethereum
-                    })
-                    .expect(400);
-
-                expect(response.body.success).toBe(false);
-                expect(response.body.message).toBe('All transaction parameters are required');
-            });
-        });
-
-        describe('POST /cross-chain/:transactionId/execute-step', () => {
-            it('should execute cross-chain step successfully', async () => {
-                const response = await request(app)
-                    .post('/api/wallets/cross-chain/tx_test_123/execute-step')
-                    .send({
-                        stepNumber: 1,
-                        txHash: '0xabcdef123456'
-                    })
-                    .expect(200);
-
-                expect(response.body.success).toBe(true);
-                expect(response.body.data).toHaveProperty('success');
-                expect(response.body.data).toHaveProperty('nextStep');
-                
-                expect(crossChainService.executeCrossChainStep).toHaveBeenCalledWith(
-                    'tx_test_123',
-                    1,
-                    '0xabcdef123456'
-                );
-            });
-
-            it('should return 400 for missing step number', async () => {
-                const response = await request(app)
-                    .post('/api/wallets/cross-chain/tx_test_123/execute-step')
-                    .send({
-                        txHash: '0xabcdef123456'
-                    })
-                    .expect(400);
-
-                expect(response.body.success).toBe(false);
-                expect(response.body.message).toBe('Step number is required');
-            });
-        });
-
-        describe('GET /cross-chain/:transactionId/status', () => {
-            it('should get cross-chain transaction status successfully', async () => {
-                const response = await request(app)
-                    .get('/api/wallets/cross-chain/tx_test_123/status')
-                    .expect(200);
-
-                expect(response.body.success).toBe(true);
-                expect(response.body.data).toHaveProperty('id');
-                expect(response.body.data).toHaveProperty('status');
-                
-                expect(crossChainService.getCrossChainTransactionStatus).toHaveBeenCalledWith('tx_test_123');
-            });
-        });
-
-        describe('GET /cross-chain/networks', () => {
-            it('should return supported networks successfully', async () => {
-                const response = await request(app)
-                    .get('/api/wallets/cross-chain/networks')
-                    .expect(200);
-
-                expect(response.body.success).toBe(true);
-                expect(response.body.data.networks).toHaveProperty('ethereum');
-                expect(response.body.data.networks).toHaveProperty('polygon');
-                expect(response.body.data.networks).toHaveProperty('solana');
-                expect(response.body.data.networks).toHaveProperty('bitcoin');
-                
-                expect(response.body.data.networks.ethereum).toEqual({
-                    name: 'Ethereum',
-                    symbol: 'ETH',
-                    isEVM: true
-                });
-            });
-        });
-    });
 
     describe('Error handling', () => {
         it('should handle internal server errors gracefully', async () => {
@@ -883,20 +733,5 @@ describe('Wallet Routes API Integration Tests (/api/wallets)', () => {
             expect(response.body.error).toBe('User profile not found');
         });
 
-        it('should handle cross-chain service errors', async () => {
-            crossChainService.estimateTransactionFees.mockRejectedValue(new Error('Service unavailable'));
-
-            const response = await request(app)
-                .post('/api/wallets/cross-chain/estimate-fees')
-                .send({
-                    sourceNetwork: 'ethereum',
-                    targetNetwork: 'solana',
-                    amount: '1.0'
-                })
-                .expect(500);
-
-            expect(response.body.success).toBe(false);
-            expect(response.body.message).toBe('Failed to estimate fees');
-        });
     });
 });

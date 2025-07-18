@@ -2,8 +2,13 @@
 import { getFirestore, Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { getAdminApp } from '../api/routes/auth/admin.js'; // Use async getAdminApp
 import admin from 'firebase-admin'; // Import admin to access default app
+import { EventEmitter } from 'events';
 
 let dbInstance = null;
+
+// Create a singleton event emitter for database events
+class DatabaseEventEmitter extends EventEmitter {}
+export const databaseEvents = new DatabaseEventEmitter();
 
 async function getDb() {
   if (dbInstance) {
@@ -371,6 +376,134 @@ export async function updateDispute(escrowId, disputeData) {
     console.log(`[DBService] Updated dispute for escrow ${escrowId}`);
   } catch (error) {
     console.error('[DBService] Error updating dispute:', error);
+    throw error;
+  }
+}
+
+/**
+ * Raise a dispute with event emission
+ * @param {string} dealId - The deal ID
+ * @param {Object} disputeData - The dispute data including escrowId, chainId, reason
+ * @returns {Promise<Object>} The update result
+ */
+export async function raiseDealDispute(dealId, disputeData) {
+  try {
+    const db = await getDb();
+    const dealRef = db.collection('deals').doc(dealId);
+    
+    // Get current deal data
+    const doc = await dealRef.get();
+    if (!doc.exists) {
+      throw new Error(`Deal ${dealId} not found`);
+    }
+    const dealData = doc.data();
+    
+    // Update deal with dispute information
+    const updateData = {
+      disputeRaised: true,
+      disputeTimestamp: Date.now(),
+      disputeReason: disputeData.reason,
+      disputeRaisedBy: disputeData.raisedBy,
+      ...disputeData,
+      lastUpdated: FieldValue.serverTimestamp()
+    };
+    
+    await dealRef.update(updateData);
+    
+    // Emit event for dispute handler
+    databaseEvents.emit('disputeRaised', dealId, {
+      dealId,
+      escrowId: dealData.escrowId || disputeData.escrowId,
+      chainId: dealData.buyerChainId || disputeData.chainId,
+      contractAddress: dealData.smartContractAddress || disputeData.contractAddress,
+      disputeTimestamp: Date.now(),
+      ...disputeData
+    });
+    
+    console.log(`[DBService] Dispute raised for deal ${dealId}`);
+    
+    return { success: true, dealId, disputeTimestamp: updateData.disputeTimestamp };
+  } catch (error) {
+    console.error('[DBService] Error raising dispute:', error);
+    throw error;
+  }
+}
+
+/**
+ * Resolve a dispute with event emission
+ * @param {string} dealId - The deal ID
+ * @param {Object} resolutionData - The resolution data
+ * @returns {Promise<Object>} The update result
+ */
+export async function resolveDealDispute(dealId, resolutionData) {
+  try {
+    const db = await getDb();
+    const dealRef = db.collection('deals').doc(dealId);
+    
+    // Update deal with resolution
+    const updateData = {
+      disputeResolved: true,
+      disputeResolvedTimestamp: Date.now(),
+      disputeResolution: resolutionData.resolution,
+      resolutionTxHash: resolutionData.txHash,
+      ...resolutionData,
+      lastUpdated: FieldValue.serverTimestamp()
+    };
+    
+    await dealRef.update(updateData);
+    
+    // Emit event for dispute handler
+    databaseEvents.emit('disputeResolved', dealId, updateData);
+    
+    console.log(`[DBService] Dispute resolved for deal ${dealId}`);
+    
+    return { success: true, dealId, resolution: resolutionData.resolution };
+  } catch (error) {
+    console.error('[DBService] Error resolving dispute:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update deal condition with event emission for real-time sync
+ * @param {string} dealId - The deal ID
+ * @param {boolean} conditionMet - Whether all conditions are met
+ * @param {Object} dealData - The full deal data
+ * @returns {Promise<Object>} The update result
+ */
+export async function updateDealCondition(dealId, conditionMet, dealData = null) {
+  try {
+    const db = await getDb();
+    const dealRef = db.collection('deals').doc(dealId);
+    
+    // If dealData not provided, fetch it
+    if (!dealData) {
+      const doc = await dealRef.get();
+      if (!doc.exists) {
+        throw new Error(`Deal ${dealId} not found`);
+      }
+      dealData = doc.data();
+    }
+    
+    // Update the deal
+    await dealRef.update({
+      allConditionsMet: conditionMet,
+      lastUpdated: FieldValue.serverTimestamp()
+    });
+    
+    // Emit event for real-time sync
+    // Include all necessary data for contractConditionSync
+    databaseEvents.emit('conditionUpdated', dealId, conditionMet, {
+      ...dealData,
+      dealId,
+      allConditionsMet: conditionMet
+    });
+    
+    console.log(`[DBService] Condition updated for deal ${dealId}: ${conditionMet}`);
+    
+    return { success: true, dealId, conditionMet };
+  } catch (error) {
+    console.error('[DBService] Error updating deal condition:', error);
     throw error;
   }
 }

@@ -1,333 +1,381 @@
-# Smart Contracts (`src/contract`)
+# Smart Contracts (`/contract`)
 
 ## Overview
 
-This directory contains the Solidity smart contracts that power the on-chain escrow logic for the CryptoEscrow platform. The primary contract, `PropertyEscrow.sol`, is developed and deployed using the Hardhat framework to Ethereum-compatible networks.
+This directory contains the Solidity smart contracts for the CryptoEscrow platform, built with Hardhat for multi-network deployment. The current implementation provides basic escrow functionality with plans for advanced features like cross-chain integration and DeFi capabilities.
 
-**Frontend Relevance**: While frontend developers don't interact directly with these contracts, understanding their behavior and state transitions is crucial for building accurate UI flows, status indicators, and user guidance. The backend synchronizes contract states to Firestore, which the frontend consumes via real-time listeners.
+**Status**: Basic escrow implementation with multi-network deployment capability  
+**Framework**: Hardhat with Solidity 0.8.28  
+**Networks**: Ethereum Sepolia, Arbitrum Sepolia, Polygon Amoy
 
 ## Directory Structure
 
 ### **`contracts/`**
-- **`PropertyEscrow.sol`**: Core escrow smart contract handling funds, state transitions, and dispute resolution
+- **`UniversalEscrowServiceV3Test.sol`**: Main escrow contract (test version)
+- **`UniversalEscrowServiceV3DisputesStargateOnly.sol.bak`**: Backup contract with dispute features
+- **`interfaces/`**: Contract interfaces
+  - `IDEXAggregator.sol`: DEX aggregator interface (1inch, 0x)
+  - `IUniswapV2Router.sol`: Uniswap V2 router interface
+- **`mocks/`**: Test contracts
+  - `TestToken.sol`: Simple ERC20 test token
 
 ### **`scripts/`**
-- **`deploy.js`**: Contract deployment scripts for different networks
-- **`verify.js`**: Contract verification on block explorers
+- **`deploy.js`**: Contract deployment scripts
+- **`deployments.json`**: Deployment addresses and metadata
 
 ### **`test/`**
-- **Unit Tests**: Comprehensive testing for all contract functions
-- **Integration Tests**: Multi-contract interaction testing
-- **Edge Case Tests**: Boundary condition and error testing
+- Unit tests for escrow functionality
+- Integration tests with mock tokens
+- Network-specific test configurations
 
 ### **`hardhat.config.js`**
-- Network configurations (Ethereum Mainnet, Sepolia, Polygon, etc.)
-- Solidity compiler settings
-- Plugin configurations for verification and gas reporting
+- Multi-network configurations
+- Compiler optimizations
+- Gas reporting and verification settings
 
-### **`artifacts/`** ⚠️ **Critical for Backend**
-- **Contract ABIs**: JSON interfaces the backend uses to interact with contracts
-- **Bytecode**: Compiled contract code for deployment
-- **Contract metadata**: Additional deployment information
+## Current Smart Contract Implementation
 
-## PropertyEscrow.sol Contract
+### **UniversalEscrowServiceV3Test.sol**
 
-### **Core Purpose**
-The `PropertyEscrow.sol` contract provides trustless escrow functionality with the following features:
+The main escrow contract providing basic trustless escrow functionality.
 
-### **Key Functions**
+**Key Features**:
+- ✅ Basic escrow creation and management
+- ✅ Condition-based fund release
+- ✅ 2% service fee implementation
+- ✅ Multi-participant support
+- ✅ Emergency functions for contract management
 
-#### **Deposit & State Management**
-- `depositFunds()` - Buyer deposits escrow amount
-- `confirmConditionsMet()` - Buyer confirms off-chain conditions fulfilled
-- `startFinalApprovalPeriod()` - Initiates time-locked approval period
+**Core Functions**:
 
-#### **Dispute Resolution**
-- `raiseDispute()` - Buyer can dispute during final approval
-- `resolveDisputeAndRefulfillConditions()` - Buyer re-confirms conditions
-- `cancelEscrowAndRefund()` - Returns funds to buyer after dispute timeout
-
-#### **Fund Release**
-- `releaseFunds()` - Releases funds to seller
-- `releaseFundsAfterApprovalPeriod()` - Automated release after 48 hours
-- `emergencyRefund()` - Emergency fund recovery (admin only)
-
-### **Contract States & Frontend Integration**
-
-#### **State Flow Diagram**
-```
-AWAITING_DEPOSIT
-       ↓ (buyer deposits)
-AWAITING_FULFILLMENT
-       ↓ (buyer confirms conditions)
-READY_FOR_FINAL_APPROVAL
-       ↓ (final approval started)
-IN_FINAL_APPROVAL (48 hours)
-       ↓ (no dispute)          ↓ (dispute raised)
-   COMPLETED               IN_DISPUTE (7 days)
-                                ↓ (timeout)
-                            CANCELLED
+#### Escrow Management
+```solidity
+function createEscrow(
+    address _buyer,
+    address _seller,
+    uint256 _amount,
+    string[] memory _conditions
+) external returns (uint256 escrowId)
 ```
 
-#### **Frontend State Handling**
+#### Condition Updates
+```solidity
+function updateCondition(
+    uint256 _escrowId,
+    uint256 _conditionIndex,
+    bool _fulfilled
+) external onlySeller
+```
 
-**`AWAITING_DEPOSIT`**
-- **UI**: Show deposit instructions, contract address, amount required
-- **Actions**: Guide user to send ETH to contract
-- **Monitoring**: Watch for deposit transaction confirmation
+#### Fund Operations
+```solidity
+function releaseEscrow(uint256 _escrowId) external
+function cancelEscrow(uint256 _escrowId) external
+```
 
-**`AWAITING_FULFILLMENT`**
-- **UI**: Display condition checklist for buyer
-- **Actions**: Enable condition marking interface
-- **Backend Sync**: Use `/transaction/:id/conditions/:conditionId/buyer-review`
+### **Contract States**
 
-**`READY_FOR_FINAL_APPROVAL`**
-- **UI**: Show "Ready for Final Approval" status
-- **Actions**: Enable final approval start button
-- **User Guidance**: Explain what final approval means
+Current implementation supports these states:
+- `AWAITING_DEPOSIT`: Waiting for buyer to deposit funds
+- `AWAITING_FULFILLMENT`: Funds deposited, conditions pending
+- `COMPLETED`: All conditions met, funds released to seller
+- `CANCELLED`: Escrow cancelled, funds refunded to buyer
 
-**`IN_FINAL_APPROVAL`**
-- **UI**: Show 48-hour countdown timer
-- **Actions**: Enable dispute button for buyer only
-- **Critical**: Explain consequences of no action (auto-release)
-
-**`IN_DISPUTE`**
-- **UI**: Show 7-day dispute resolution countdown
-- **Actions**: Guide buyer through condition re-fulfillment
-- **Warning**: Explain auto-cancellation if unresolved
-
-**`COMPLETED`**
-- **UI**: Show success message, transaction hash
-- **Actions**: Enable new deal creation
-- **Display**: Final transaction details and timeline
-
-**`CANCELLED`**
-- **UI**: Show cancellation reason, refund transaction
-- **Actions**: Enable new deal creation
-- **Support**: Provide customer support contact
-
-### **Event Monitoring**
-
-The contract emits events that the backend monitors:
+### **Events System**
 
 ```solidity
-event FundsDeposited(address indexed buyer, uint256 amount);
-event ConditionsMet(address indexed buyer);
-event FinalApprovalStarted(uint256 deadline);
-event DisputeRaised(address indexed buyer, string reason);
-event FundsReleased(address indexed seller, uint256 amount);
-event EscrowCancelled(address indexed buyer, uint256 refundAmount);
+event EscrowCreated(uint256 indexed escrowId, address buyer, address seller, uint256 amount);
+event ConditionUpdated(uint256 indexed escrowId, uint256 conditionIndex, bool fulfilled);
+event EscrowReleased(uint256 indexed escrowId, address indexed recipient, uint256 amount);
+event EscrowCancelled(uint256 indexed escrowId, address indexed refundRecipient, uint256 amount);
 ```
 
-**Frontend Integration**: These events trigger backend updates, which sync to Firestore and update the frontend via real-time listeners.
+## Network Support
 
-## Deployment & Network Support
+### **Deployed Networks**
+- **Ethereum Sepolia**: Contract address `0x...` (see deployments.json)
+- **Arbitrum Sepolia**: Contract address `0x...` (see deployments.json)
+- **Polygon Amoy**: Contract address `0x...` (see deployments.json)
 
-### **Supported Networks**
-- **Ethereum Mainnet**: Production escrow transactions
-- **Sepolia Testnet**: Development and testing
-- **Polygon Mainnet**: Lower gas fee alternative
-- **Polygon Mumbai**: Polygon testing
-- **BSC Mainnet**: Binance Smart Chain support
-- **BSC Testnet**: BSC development environment
+### **Configuration**
+```javascript
+// hardhat.config.js networks
+networks: {
+  sepolia: {
+    url: process.env.SEPOLIA_URL,
+    accounts: [process.env.PRIVATE_KEY],
+    chainId: 11155111
+  },
+  arbitrumSepolia: {
+    url: process.env.ARBITRUM_SEPOLIA_URL,
+    accounts: [process.env.PRIVATE_KEY],
+    chainId: 421614
+  },
+  polygonAmoy: {
+    url: process.env.POLYGON_AMOY_URL,
+    accounts: [process.env.PRIVATE_KEY],
+    chainId: 80002
+  }
+}
+```
 
-### **Deployment Process**
-1. **Backend Triggers**: New deal creation calls `contractDeployer.js`
-2. **Contract Deployment**: Unique contract instance per deal
-3. **Address Storage**: Contract address saved to Firestore deal document
-4. **Frontend Display**: Show contract address to users for transparency
+## Backend Integration
 
-### **Gas Optimization**
-- **Efficient State Management**: Minimal storage operations
-- **Batch Operations**: Combined function calls where possible
-- **Event-Driven**: Use events for state change notifications
-- **Proxy Patterns**: Upgradeable contracts for future improvements
+### **EscrowServiceV3 Integration**
+
+The contracts integrate with the backend through the EscrowServiceV3 service:
+
+```javascript
+// Contract interaction example
+const contract = new ethers.Contract(
+  contractAddress,
+  UniversalEscrowServiceV3TestABI,
+  provider
+);
+
+// Create escrow
+const tx = await contract.createEscrow(
+  buyerAddress,
+  sellerAddress,
+  amount,
+  conditions
+);
+
+// Monitor events
+contract.on('EscrowCreated', (escrowId, buyer, seller, amount) => {
+  console.log('New escrow created:', escrowId);
+});
+```
+
+### **Real-time Synchronization**
+
+The backend monitors contract events for real-time updates:
+- Event listeners for state changes
+- Automatic Firestore updates
+- Frontend notification through WebSocket/real-time listeners
+
+## Development Workflow
+
+### **Setup**
+```bash
+# Install dependencies
+npm install
+
+# Compile contracts
+npx hardhat compile
+
+# Run tests
+npx hardhat test
+
+# Start local blockchain
+npx hardhat node
+```
+
+### **Deployment**
+```bash
+# Deploy to Sepolia
+npx hardhat run scripts/deploy.js --network sepolia
+
+# Verify contract
+npx hardhat verify --network sepolia <CONTRACT_ADDRESS>
+
+# Update deployments.json with new addresses
+```
+
+### **Testing**
+```bash
+# Run all tests
+npx hardhat test
+
+# Run specific test file
+npx hardhat test test/UniversalEscrowServiceV3Test.js
+
+# Run with gas reporting
+REPORT_GAS=true npx hardhat test
+```
 
 ## Security Features
 
 ### **Access Control**
-- **Buyer-Only Functions**: Deposit, condition confirmation, disputes
-- **Seller-Only Functions**: Fund release (after approval period)
-- **Time-Based Locks**: Automated deadline enforcement
-- **Admin Functions**: Emergency controls with multi-sig requirements
+- Buyer-only functions: deposit funds
+- Seller-only functions: update conditions
+- Admin functions: emergency controls with proper access control
 
-### **Reentrancy Protection**
-- **ReentrancyGuard**: Prevents reentrant attacks
-- **State Checks**: Proper state validation before external calls
-- **Pull Pattern**: Safe fund withdrawal mechanisms
+### **Safety Mechanisms**
+- Reentrancy protection on fund transfers
+- Input validation for all functions
+- State checks before operations
+- Safe math operations (Solidity 0.8+)
 
-### **Input Validation**
-- **Amount Checks**: Validate deposit amounts and addresses
-- **State Validation**: Ensure valid state transitions
-- **Time Validation**: Prevent manipulation of deadlines
+### **Current Limitations**
+⚠️ **Important**: The current implementation lacks some security features mentioned in other documentation:
+- No time-based dispute windows
+- No automated dispute resolution
+- Basic access control (can be enhanced)
 
-## Testing & Quality Assurance
+## Testing
 
-### **Test Coverage Areas**
-- **Happy Path**: Normal escrow completion flow
-- **Dispute Scenarios**: Various dispute and resolution paths
-- **Edge Cases**: Boundary conditions and invalid inputs
-- **Gas Analysis**: Optimization and cost measurement
-- **Security Tests**: Attack vector prevention
+### **Current Test Coverage**
+- ✅ Basic escrow creation and management
+- ✅ Condition updates and validation
+- ✅ Fund release mechanisms
+- ✅ Access control testing
+- ✅ Event emission verification
 
-### **Frontend Testing Integration**
+### **Test Examples**
 ```javascript
-// Example: Testing contract state changes
-const testContractStateSync = async () => {
-  // 1. Deploy test contract
-  const contract = await deployTestContract();
-  
-  // 2. Monitor Firestore for updates
-  const dealRef = doc(db, 'deals', testDealId);
-  const unsubscribe = onSnapshot(dealRef, (doc) => {
-    expect(doc.data().status).toBe('AWAITING_DEPOSIT');
-  });
-  
-  // 3. Perform contract interaction
-  await contract.depositFunds({ value: depositAmount });
-  
-  // 4. Verify frontend receives update
-  await waitFor(() => {
-    expect(screen.getByText('Funds Deposited')).toBeInTheDocument();
-  });
-};
-```
-
-## Development Workflow
-
-### **Contract Development**
-1. **Edit Contracts**: Modify `.sol` files in `contracts/`
-2. **Compile**: Run `npx hardhat compile` to generate artifacts
-3. **Test**: Execute `npx hardhat test` for validation
-4. **Deploy**: Use network-specific deployment scripts
-
-### **Frontend Integration Workflow**
-1. **Contract Change**: Developer modifies contract
-2. **Recompile**: Generate new ABI artifacts
-3. **Backend Update**: Update contract interaction code
-4. **Test Integration**: Verify frontend state synchronization
-5. **Deploy**: Release updated contract and backend
-
-### **Environment Management**
-```bash
-# Local development with Hardhat Network
-npm run node:local
-
-# Testnet deployment
-npm run deploy:sepolia
-
-# Mainnet deployment (production)
-npm run deploy:mainnet
-
-# Contract verification
-npm run verify:etherscan
-```
-
-## Contract Interaction Examples
-
-### **Backend Integration**
-```javascript
-// Example: Backend monitoring contract events
-const contractInstance = new ethers.Contract(
-  contractAddress, 
-  PropertyEscrowABI, 
-  provider
-);
-
-contractInstance.on('FundsDeposited', async (buyer, amount, event) => {
-  // Update Firestore deal status
-  await updateDealStatus(dealId, 'AWAITING_FULFILLMENT');
-  
-  // Add timeline event
-  await addTimelineEvent(dealId, {
-    event: 'Funds deposited',
-    amount: ethers.formatEther(amount),
-    txHash: event.transactionHash,
-    timestamp: new Date()
+describe("UniversalEscrowServiceV3Test", function () {
+  it("Should create escrow successfully", async function () {
+    const [buyer, seller] = await ethers.getSigners();
+    const conditions = ["Title transfer", "Inspection complete"];
+    
+    await expect(
+      escrow.createEscrow(buyer.address, seller.address, amount, conditions)
+    ).to.emit(escrow, "EscrowCreated");
   });
 });
 ```
 
-### **Frontend State Synchronization**
-```javascript
-// Example: Frontend listening to backend updates
-const DealStatusComponent = ({ dealId }) => {
-  const [dealData, setDealData] = useState(null);
-  
-  useEffect(() => {
-    const unsubscribe = onSnapshot(
-      doc(db, 'deals', dealId),
-      (doc) => {
-        const data = doc.data();
-        setDealData(data);
-        
-        // Update UI based on contract state
-        switch(data.status) {
-          case 'AWAITING_DEPOSIT':
-            showDepositInterface(data.smartContractAddress);
-            break;
-          case 'IN_FINAL_APPROVAL':
-            startCountdownTimer(data.finalApprovalDeadline);
-            break;
-          // Handle all states...
-        }
-      }
-    );
-    
-    return unsubscribe;
-  }, [dealId]);
-  
-  return <DealInterface dealData={dealData} />;
-};
+## Planned Enhancements
+
+### **Advanced Features (Roadmap)**
+The following features are referenced in other parts of the codebase but not yet implemented in contracts:
+
+🔮 **Future Implementations**:
+- ⏱️ 48-hour dispute window enforcement
+- 🔗 LayerZero cross-chain integration
+- 🔄 Uniswap DeFi integration
+- ⚖️ Automated dispute resolution
+- 🎯 Advanced condition types
+- 📊 Enhanced event system
+
+### **Cross-Chain Integration (Planned)**
+```solidity
+// Future interface for LayerZero integration
+interface ILayerZeroEscrow {
+    function sendCrossChainMessage(
+        uint16 _dstChainId,
+        bytes calldata _payload
+    ) external payable;
+}
 ```
 
-## Troubleshooting & Debugging
+### **DeFi Integration (Planned)**
+```solidity
+// Future interface for Uniswap integration
+interface IUniswapEscrow {
+    function depositWithSwap(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        uint256 amountOutMin
+    ) external;
+}
+```
+
+## Contract Interfaces
+
+### **DEX Aggregator Interface**
+```solidity
+interface IDEXAggregator {
+    function getQuote(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn
+    ) external view returns (uint256 amountOut);
+    
+    function swap(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address to
+    ) external returns (uint256 amountOut);
+}
+```
+
+## Error Handling
+
+### **Common Contract Errors**
+- `"Caller is not the buyer"`: Access control violation
+- `"Caller is not the seller"`: Access control violation
+- `"Invalid escrow state"`: Operation not allowed in current state
+- `"Insufficient funds"`: Deposit amount too low
+- `"All conditions must be met"`: Conditions not fulfilled before release
+
+### **Frontend Error Handling**
+```javascript
+try {
+  const tx = await contract.createEscrow(buyer, seller, amount, conditions);
+  await tx.wait();
+} catch (error) {
+  if (error.message.includes("Caller is not")) {
+    showError("You don't have permission for this action");
+  } else if (error.message.includes("Invalid escrow state")) {
+    showError("This action is not available in the current state");
+  }
+}
+```
+
+## Gas Optimization
+
+### **Current Optimizations**
+- Compiler optimization enabled (200 runs)
+- Efficient storage layout
+- Minimal external calls
+- Event-based state tracking
+
+### **Gas Estimates**
+- Contract deployment: ~800k gas
+- Create escrow: ~150k gas
+- Update condition: ~50k gas
+- Release escrow: ~80k gas
+
+## Troubleshooting
 
 ### **Common Issues**
 
-**Contract Deployment Failures**
-- Check gas limits and network congestion
-- Verify deployer wallet has sufficient ETH
-- Ensure constructor parameters are correct
+**Deployment Failures**:
+- Check private key and network URL in `.env`
+- Ensure sufficient ETH for gas fees
+- Verify Hardhat network configuration
 
-**State Synchronization Issues**
-- Verify backend event listeners are active
-- Check Firestore security rules
-- Monitor network connectivity
+**Transaction Failures**:
+- Validate caller permissions
+- Check escrow state before operations
+- Ensure sufficient gas limit
 
-**Transaction Failures**
-- Validate wallet connections and network
-- Check gas estimation and limits
-- Verify contract state allows the operation
+**Event Monitoring Issues**:
+- Verify WebSocket connection to provider
+- Check event filter configurations
+- Monitor for provider rate limits
 
-### **Debugging Tools**
-- **Hardhat Console**: Interactive contract testing
-- **Etherscan**: Transaction and contract verification
-- **Tenderly**: Advanced debugging and simulation
-- **OpenZeppelin Defender**: Contract monitoring
+### **Development Tips**
+- Use `hardhat console` for interactive testing
+- Enable gas reporting for optimization
+- Use `hardhat-deploy` for consistent deployments
+- Test on testnets before mainnet deployment
 
-## Future Enhancements
+## Integration with Backend
 
-### **Planned Contract Improvements**
-- **Multi-Token Support**: ERC20 token escrows
-- **Partial Releases**: Milestone-based fund releases
-- **Oracle Integration**: External condition verification
-- **Governance**: Decentralized dispute resolution
+### **EscrowServiceV3 Connection**
+The contracts work with the EscrowServiceV3 backend service for:
+- Automatic escrow creation via API
+- Real-time event monitoring
+- State synchronization with Firestore
+- Frontend real-time updates
 
-### **Frontend Integration Roadmap**
-- **Web3 Modal**: Simplified wallet connection
-- **Transaction Simulation**: Preview outcomes before execution
-- **Gas Estimation**: Real-time gas price optimization
-- **Mobile Wallet**: Enhanced mobile app integration
+### **API Integration Points**
+- `POST /transaction/create` → `createEscrow()`
+- `POST /transaction/updateCondition` → `updateCondition()`
+- `POST /transaction/releaseEscrow` → `releaseEscrow()`
 
 ---
 
-**Critical Frontend Integration Points**:
+**Current Status Summary**:
 
-1. **Real-time State Sync**: Always use Firestore listeners for contract state updates
-2. **User Guidance**: Provide clear instructions for each contract interaction
-3. **Transaction Monitoring**: Show transaction status and confirmations
-4. **Error Handling**: Graceful handling of failed transactions
-5. **Gas Management**: Display gas costs and optimization tips
-6. **Security Warnings**: Alert users about irreversible actions
-7. **Deadline Awareness**: Clear countdown timers for time-sensitive operations
+✅ **Working**: Basic escrow functionality, multi-network deployment, backend integration  
+🚧 **In Development**: Advanced dispute resolution, cross-chain features, DeFi integration  
+📋 **Planned**: Comprehensive timing mechanisms, automated arbitration, enhanced security
+
+The contracts provide a solid foundation for the CryptoEscrow platform with room for significant enhancement as described in the roadmap.

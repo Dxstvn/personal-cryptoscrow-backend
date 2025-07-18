@@ -3,10 +3,16 @@
  * Updates on-chain condition status immediately when database condition changes
  */
 
-const { ethers } = require('ethers');
-const EventEmitter = require('events');
-const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '../../.env') });
+import { ethers } from 'ethers';
+import { EventEmitter } from 'events';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
+import { RetryHandler, ErrorRecovery } from '../utils/retryHandler.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 class ContractConditionSync extends EventEmitter {
     constructor(databaseService, escrowService) {
@@ -17,6 +23,13 @@ class ContractConditionSync extends EventEmitter {
         this.providers = {};
         this.wallets = {};
         this.contracts = {};
+        
+        // Initialize retry handler
+        this.retryHandler = new RetryHandler({
+            maxRetries: 3,
+            initialDelay: 2000,
+            maxDelay: 30000
+        });
         
         this._initializeProviders();
     }
@@ -66,7 +79,8 @@ class ContractConditionSync extends EventEmitter {
             }
             
             // Get contract ABI
-            const contractArtifact = require('../contract/artifacts/contracts/UniversalEscrowServiceV3Disputes.sol/UniversalEscrowServiceV3Disputes.json');
+            // For ES modules, we need to use dynamic import for JSON
+            const { default: contractArtifact } = await import('../contract/artifacts/contracts/UniversalEscrowServiceV3Disputes.sol/UniversalEscrowServiceV3Disputes.json', { assert: { type: 'json' } });
             
             this.contracts[key] = new ethers.Contract(
                 contractAddress,
@@ -109,48 +123,82 @@ class ContractConditionSync extends EventEmitter {
     }
 
     /**
-     * Sync a single condition update to the contract
+     * Sync a single condition update to the contract with retry logic
      */
     async syncConditionToContract(escrowId, conditionMet, escrowData) {
         console.log(`Syncing condition for escrow ${escrowId}: ${conditionMet}`);
 
-        // Get escrow details from database if not provided
-        if (!escrowData) {
-            escrowData = await this.db.getEscrowById(escrowId);
+        try {
+            // Get escrow details from database if not provided
+            if (!escrowData) {
+                escrowData = await this.db.getEscrowById(escrowId);
+            }
+            
+            if (!escrowData) {
+                throw new Error(`Escrow ${escrowId} not found in database`);
+            }
+
+            const contract = await this._getContract(escrowData.chainId, escrowData.contractAddress);
+
+            // Check on-chain status first
+            const onChainEscrow = await contract.escrows(escrowId);
+            if (onChainEscrow.conditionMet === conditionMet) {
+                console.log(`Condition already synced for ${escrowId}`);
+                return;
+            }
+
+            // Update on-chain condition with retry logic
+            const { tx, receipt } = await this.retryHandler.executeWithRetry(
+                async () => {
+                    const transaction = await contract.updateCondition(escrowId, conditionMet);
+                    const txReceipt = await transaction.wait();
+                    return { tx: transaction, receipt: txReceipt };
+                },
+                'updateCondition',
+                { escrowId, conditionMet, chainId: escrowData.chainId }
+            );
+
+            console.log(`✅ Condition synced for ${escrowId}. Tx: ${tx.hash}`);
+            
+            // Check if we should trigger automatic release
+            if (conditionMet) {
+                await this._checkAutoRelease(escrowId, escrowData);
+            }
+            
+            this.emit('conditionSynced', { 
+                escrowId, 
+                conditionMet, 
+                txHash: tx.hash,
+                blockNumber: receipt.blockNumber 
+            });
+
+            return tx.hash;
+            
+        } catch (error) {
+            console.error(`Failed to sync condition for escrow ${escrowId}:`, error);
+            
+            // Try to recover from specific errors
+            const recovery = await ErrorRecovery.handleBlockchainError(error, {
+                operation: 'syncCondition',
+                escrowId,
+                chainId: escrowData?.chainId
+            });
+            
+            if (recovery.recovered) {
+                console.log(`Recovered from error: ${recovery.reason}`);
+                return null;
+            }
+            
+            // Emit error event
+            this.emit('syncError', { 
+                escrowId, 
+                error: error.message,
+                retryable: recovery.retryable,
+                requiresAdmin: recovery.requiresAdmin
+            });
+            
+            throw error;
         }
-        
-        if (!escrowData) {
-            throw new Error(`Escrow ${escrowId} not found in database`);
-        }
-
-        const contract = await this._getContract(escrowData.chainId, escrowData.contractAddress);
-
-        // Check on-chain status
-        const onChainEscrow = await contract.escrows(escrowId);
-        if (onChainEscrow.conditionMet === conditionMet) {
-            console.log(`Condition already synced for ${escrowId}`);
-            return;
-        }
-
-        // Update on-chain condition
-        const tx = await contract.updateCondition(escrowId, conditionMet);
-        const receipt = await tx.wait();
-
-        console.log(`✅ Condition synced for ${escrowId}. Tx: ${tx.hash}`);
-        
-        // Check if we should trigger automatic release
-        if (conditionMet) {
-            await this._checkAutoRelease(escrowId, escrowData);
-        }
-        
-        this.emit('conditionSynced', { 
-            escrowId, 
-            conditionMet, 
-            txHash: tx.hash,
-            blockNumber: receipt.blockNumber 
-        });
-
-        return tx.hash;
     }
 
     /**
@@ -341,7 +389,7 @@ class ContractConditionSync extends EventEmitter {
     }
 }
 
-module.exports = ContractConditionSync;
+export default ContractConditionSync;
 
 /**
  * Example usage:

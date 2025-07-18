@@ -88,6 +88,12 @@ import contactRouter from './api/routes/contact/contactRoutes.js';
 import transactionRouter from './api/routes/transaction/transactionRoutes.js';
 import walletRouter from './api/routes/wallet/walletRoutes.js';
 
+// Import services for real-time sync
+import ContractConditionSync from './services/contractConditionSync.js';
+import { databaseEvents } from './services/databaseService.js';
+import { EscrowServiceV3 } from './services/escrowServiceV3.js';
+import DisputeEventHandler from './services/disputeEventHandler.js';
+
 const app = express();
 
 // Security middleware - applied first
@@ -142,10 +148,34 @@ async function startServer() {
     
     const port = config.get('PORT') || 3000;
     
-    const server = app.listen(port, () => {
+    const server = app.listen(port, async () => {
       console.log(`🚀 CryptoEscrow Backend server running on port ${port}`);
       console.log(`Environment: ${config.get('NODE_ENV')}`);
       console.log(`AWS Secrets Manager: ${config.get('USE_AWS_SECRETS') ? 'Enabled' : 'Disabled'}`);
+      
+      // Initialize real-time contract synchronization
+      if (process.env.NODE_ENV !== 'test') {
+        try {
+          console.log('🔄 Initializing real-time contract synchronization...');
+          
+          // Initialize escrow service
+          const escrowService = new EscrowServiceV3();
+          await escrowService.initialize();
+          
+          // Initialize condition sync
+          const conditionSync = new ContractConditionSync(databaseEvents, escrowService);
+          await conditionSync.start();
+          
+          // Initialize event-driven dispute handler
+          const disputeHandler = new DisputeEventHandler(escrowService, databaseEvents);
+          disputeHandler.start();
+          
+          console.log('✅ Real-time synchronization services started');
+        } catch (error) {
+          console.error('⚠️ Failed to initialize sync services:', error);
+          // Don't exit - allow server to run without sync
+        }
+      }
     });
     
     // Graceful shutdown

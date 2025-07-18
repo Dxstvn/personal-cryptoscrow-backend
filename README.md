@@ -2,7 +2,7 @@
 
 ## Overview
 
-CryptoEscrow is a comprehensive Node.js backend system designed to power a secure, trustless escrow platform for cryptocurrency-based property or high-value asset transactions. The backend leverages **Express.js**, **Firebase** (Firestore, Authentication, Storage), and **Ethereum smart contracts** to provide a complete escrow solution.
+CryptoEscrow is a comprehensive Node.js backend system designed to power a secure, trustless escrow platform for cryptocurrency-based property or high-value asset transactions. The backend leverages **Express.js**, **Firebase** (Firestore, Authentication, Storage), **EscrowServiceV3**, and **multi-chain smart contracts** to provide a complete escrow solution with real-time blockchain synchronization.
 
 ## Core Features
 
@@ -12,19 +12,19 @@ CryptoEscrow is a comprehensive Node.js backend system designed to power a secur
 - Contact management and invitation system
 - User profile management with wallet integration
 
-### 💰 **Multi-Network Wallet Support**
-- **Ethereum** (Mainnet, Testnets) - Full support
-- **Solana** - Address validation and integration ready
-- **Bitcoin** - Address validation and integration ready
-- **Polygon & BSC** - EVM-compatible support
-- Cross-chain transaction preparation and monitoring
+### 💰 **Multi-Chain Escrow Support**
+- **Ethereum** (Mainnet, Sepolia) - V3 Escrow Contract
+- **Arbitrum** - LayerZero cross-chain integration
+- **Polygon** - EVM-compatible support
+- **Uniswap Integration** - Token swapping for escrow deposits
+- Real-time cross-chain transaction monitoring
 
-### 🤝 **Escrow Transaction Management**
-- Complete deal lifecycle management
-- Smart contract deployment per transaction
-- Off-chain condition tracking and verification
-- Real-time status synchronization
-- Automated deadline enforcement
+### 🤝 **Advanced Escrow Management**
+- **EscrowServiceV3** - Event-driven architecture with real-time sync
+- **Condition Tracking** - Dynamic condition management with blockchain sync
+- **Dispute Resolution** - 48-hour dispute window + 7-day resolution period
+- **Cross-Chain Escrow** - LayerZero integration for multi-chain deals
+- **Automated Release** - Smart contract enforced timing and validation
 
 ### 📄 **Advanced File Management**
 - Secure file uploads to Firebase Storage
@@ -32,22 +32,22 @@ CryptoEscrow is a comprehensive Node.js backend system designed to power a secur
 - File access control and permissions
 - Download management with authentication
 
-### ⚡ **Real-Time Features**
-- Firestore real-time listeners for live updates
-- Automated transaction monitoring
-- Status change notifications
-- Cross-platform synchronization
+### ⚡ **Real-Time Blockchain Sync**
+- **EventEmitter Architecture** - Real-time condition and dispute updates
+- **Blockchain Event Listeners** - Automatic smart contract synchronization
+- **Live Status Updates** - Instant deal status changes via Firestore
+- **Cross-Chain Monitoring** - Multi-network transaction tracking
 
 ## Tech Stack
 
 - **Backend**: Node.js 18+, Express.js
-- **Database**: Firebase Firestore
+- **Database**: Firebase Firestore (real-time listeners)
 - **Authentication**: Firebase Authentication
 - **Storage**: Firebase Storage
-- **Blockchain**: Ethers.js v6, Solidity
-- **Smart Contract Platform**: Hardhat
-- **Testing**: Jest, Supertest
-- **Scheduling**: node-cron
+- **Blockchain**: Ethers.js v6, Solidity, LayerZero, Uniswap
+- **Smart Contracts**: Hardhat, EscrowV3, Cross-chain integration
+- **Testing**: Vitest, Supertest, Firebase Emulators, Hardhat
+- **Event System**: EventEmitter for real-time sync
 
 ## Getting Started
 
@@ -98,6 +98,11 @@ SEPOLIA_RPC_URL=https://sepolia.infura.io/v3/your-key
 CHAIN_ID=1
 DEPLOYER_PRIVATE_KEY=your-deployer-private-key
 BACKEND_WALLET_PRIVATE_KEY=your-backend-wallet-key
+
+# Cross-Chain & DeFi Integration
+LAYERZERO_ENDPOINT=your-layerzero-endpoint
+UNISWAP_ROUTER_ADDRESS=your-uniswap-router
+ARBITRUM_RPC_URL=https://arb1.arbitrum.io/rpc
 
 # Security
 JWT_SECRET=your-jwt-secret
@@ -234,38 +239,10 @@ Content-Type: application/json
 }
 ```
 
-#### Cross-Chain Fee Estimation
-```http
-POST /wallet/cross-chain/estimate-fees
-Authorization: Bearer <ID_TOKEN>
-Content-Type: application/json
-
-{
-  "sourceNetwork": "ethereum",
-  "targetNetwork": "solana",
-  "amount": "1.5"
-}
-```
-
-#### Prepare Cross-Chain Transaction
-```http
-POST /wallet/cross-chain/prepare
-Authorization: Bearer <ID_TOKEN>
-Content-Type: application/json
-
-{
-  "sourceNetwork": "ethereum",
-  "destinationNetwork": "solana",
-  "sourceWalletAddress": "0x1234...",
-  "destinationWalletAddress": "9WzDX...",
-  "amount": "1.5",
-  "currency": "ETH"
-}
-```
 
 ### 🤝 Transaction Management (`/transaction`)
 
-#### Create New Escrow Deal
+#### Create New V3 Escrow Deal
 ```http
 POST /transaction/create
 Authorization: Bearer <ID_TOKEN>
@@ -280,6 +257,9 @@ Content-Type: application/json
   "otherPartyEmail": "seller@example.com",
   "buyerWalletAddress": "0xBuyer...",
   "sellerWalletAddress": "0xSeller...",
+  "buyerChainId": 1, // Ethereum Mainnet
+  "sellerChainId": 42161, // Arbitrum (for cross-chain)
+  "contractType": "V3_ESCROW",
   "initialConditions": [
     {
       "id": "cond-title", 
@@ -298,35 +278,60 @@ Authorization: Bearer <ID_TOKEN>
 
 #### List User's Deals
 ```http
-GET /transaction
+GET /transaction/transactions
 Authorization: Bearer <ID_TOKEN>
 
 # Optional query parameters:
 ?limit=10&startAfter=timestamp&orderBy=createdAt&orderDirection=desc&network=ethereum&status=ACTIVE
 ```
 
-#### Update Condition Status (Buyer)
+#### Update Deal Condition (Real-time Sync)
 ```http
-PUT /transaction/:transactionId/conditions/:conditionId/buyer-review
+PUT /transaction/:dealId/update-condition
 Authorization: Bearer <ID_TOKEN>
 Content-Type: application/json
 
 {
-  "newBackendStatus": "FULFILLED_BY_BUYER",
-  "reviewComment": "Condition completed successfully"
+  "conditionId": "cond-title",
+  "newStatus": "FULFILLED",
+  "description": "Title deed verification completed",
+  "metadata": { "verificationHash": "0x..." }
 }
 ```
 
-#### Sync with Smart Contract
+#### Raise Deal Dispute
 ```http
-PUT /transaction/:transactionId/sync-status
+POST /transaction/:dealId/raise-dispute
 Authorization: Bearer <ID_TOKEN>
 Content-Type: application/json
 
 {
-  "newSCStatus": "IN_FINAL_APPROVAL",
-  "eventMessage": "Final approval period started",
-  "finalApprovalDeadlineISO": "2023-10-27T10:00:00.000Z"
+  "reason": "CONDITION_NOT_MET",
+  "description": "Title verification failed",
+  "evidence": ["file1.pdf", "file2.jpg"]
+}
+```
+
+#### Resolve Deal Dispute
+```http
+POST /transaction/:dealId/resolve-dispute
+Authorization: Bearer <ID_TOKEN>
+Content-Type: application/json
+
+{
+  "resolution": "RELEASE_TO_SELLER", // or "REFUND_TO_BUYER"
+  "resolutionNotes": "Evidence supports seller's claim"
+}
+```
+
+#### Release Escrow (48-hour window enforced)
+```http
+POST /transaction/:dealId/release-escrow
+Authorization: Bearer <ID_TOKEN>
+Content-Type: application/json
+
+{
+  "releaseType": "STANDARD" // or "EMERGENCY"
 }
 ```
 
@@ -368,27 +373,33 @@ Response:
 }
 ```
 
-## Smart Contract Integration
+## Smart Contract Integration (V3)
 
-### PropertyEscrow.sol States
+### EscrowV3 Contract States
 
-The backend synchronizes with smart contract states:
+The backend synchronizes with V3 smart contract states:
 
 - `AWAITING_DEPOSIT` - Waiting for buyer to deposit funds
 - `AWAITING_FULFILLMENT` - Funds deposited, awaiting condition fulfillment
-- `READY_FOR_FINAL_APPROVAL` - All conditions met, ready for approval period
-- `IN_FINAL_APPROVAL` - Time-locked approval period (48 hours)
-- `IN_DISPUTE` - Buyer raised dispute (7 days resolution period)
+- `DISPUTE_WINDOW` - 48-hour period after conditions met (dispute allowed)
+- `IN_DISPUTE` - Active dispute (7-day resolution period)
 - `COMPLETED` - Funds released to seller
 - `CANCELLED` - Escrow cancelled, funds refunded
 
-### Automated Processes
+### Event-Driven Architecture
 
-The backend includes automated monitoring via `scheduledJobs.js`:
+Real-time blockchain synchronization via EventEmitter:
 
-- **Deadline Enforcement**: Automatically releases funds or cancels deals based on deadlines
-- **State Synchronization**: Keeps Firestore in sync with smart contract state
-- **Cross-Chain Monitoring**: Tracks cross-chain transaction progress
+- **Condition Updates**: Instant propagation of condition status changes
+- **Dispute Events**: Real-time dispute creation and resolution
+- **Cross-Chain Sync**: LayerZero message bridging for multi-chain deals
+- **Automatic Release**: Smart contract enforced 48-hour + 7-day timing
+
+### Timing Mechanisms
+
+- **48-Hour Dispute Window**: After all conditions met, buyers can raise disputes
+- **7-Day Resolution**: If dispute raised, 7-day period for resolution
+- **Automatic Release**: If no disputes in 48 hours, funds auto-release to seller
 
 ## Frontend Integration Guide
 
@@ -419,14 +430,14 @@ const unsubscribe = onSnapshot(
 3. **API Calls**: Include token in Authorization header for all protected endpoints
 4. **Real-time**: Set up Firestore listeners for live data updates
 
-### 🌐 Cross-Chain Support
+### 🌐 Cross-Chain & DeFi Integration
 
-The backend supports multiple blockchain networks:
+The backend supports advanced multi-chain functionality:
 
-- **Network Detection**: Automatic detection from wallet addresses
-- **Bridge Integration**: Preparation for cross-chain transactions
-- **Fee Estimation**: Real-time cross-chain fee calculations
-- **Status Tracking**: Multi-step transaction monitoring
+- **LayerZero Integration**: Cross-chain message passing for escrow sync
+- **Uniswap Integration**: Token swapping for escrow deposits
+- **Multi-Network Support**: Ethereum, Arbitrum, Polygon
+- **Real-time Monitoring**: Cross-chain transaction status tracking
 
 ### 📱 Error Handling
 
@@ -449,19 +460,31 @@ Standard HTTP status codes with JSON error responses:
 
 ## Testing
 
+### Comprehensive Test Suite
+
 ```bash
-# Run all tests
+# Run all tests (Vitest)
 npm test
 
-# Run unit tests only
+# Run unit tests with mocks
 npm run test:unit
+
+# Run integration tests with Firebase emulators
+npm run test:integration
+
+# Run real integration tests with Hardhat + Firebase
+npm run test:real-integration
 
 # Run with coverage
 npm run test:coverage
-
-# Run specific test
-npm test -- --testNamePattern="specific test"
 ```
+
+### Test Architecture
+
+- **Unit Tests**: Fully mocked dependencies (24 tests)
+- **Integration Tests**: Firebase emulators only  
+- **Real Integration Tests**: Hardhat blockchain + Firebase emulators (21 tests)
+- **Coverage**: Authentication, escrow operations, dispute resolution, cross-chain
 
 ## Development Scripts
 
@@ -475,8 +498,11 @@ npm run lint
 # Run Firebase emulators
 npm run emulators
 
-# Clean and reinstall dependencies
-npm run clean-install
+# Start Hardhat local blockchain
+cd src/contract && npx hardhat node
+
+# Deploy contracts to local Hardhat
+cd src/contract && npx hardhat run scripts/deploy.js --network localhost
 ```
 
 ## Security Features
@@ -516,4 +542,13 @@ The backend supports deployment to various platforms:
 
 ---
 
-**Note**: This backend is designed to work seamlessly with a frontend application. All features are built with real-time updates and user experience in mind. The system handles complex escrow workflows while maintaining simplicity for frontend integration.
+## Key Features Summary
+
+- **V3 Escrow Architecture**: Event-driven real-time blockchain synchronization
+- **Multi-Chain Support**: Ethereum, Arbitrum, Polygon with LayerZero bridging
+- **DeFi Integration**: Uniswap token swapping for flexible escrow deposits  
+- **Dispute Resolution**: 48-hour dispute window + 7-day resolution enforcement
+- **Comprehensive Testing**: 45+ tests across unit, integration, and real blockchain scenarios
+- **Real-Time Sync**: EventEmitter architecture for instant status updates
+
+**Note**: This V3 backend provides a complete escrow solution with advanced blockchain integration, real-time synchronization, and comprehensive test coverage. The system enforces secure timing mechanisms while maintaining seamless frontend integration.
