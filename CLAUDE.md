@@ -109,3 +109,38 @@ The codebase is in a **production-ready state** with:
 - ✅ Cross-chain transaction capabilities
 
 The system successfully implements the complete escrow workflow with proper timing enforcement, real-time synchronization, and comprehensive error handling.
+
+## Frontend Development Notes
+
+### 🖥️ **Local Development vs Vercel Deployment**
+When working with the frontend locally, there are specific initialization patterns to be aware of:
+
+#### **Common Frontend Errors and Solutions**
+
+1. **Module-Level API Configuration Errors**
+   - **Error**: `TypeError: Cannot read properties of undefined (reading 'configure')`
+   - **Cause**: Circular dependencies or initialization order issues when services try to configure each other at module load time
+   - **Solution**: Defer configuration to runtime using browser-only checks and setTimeout
+   ```javascript
+   // ❌ BAD - Executes immediately at module load
+   apiClient.configure({ onTokenExpired: handler });
+   
+   // ✅ GOOD - Defers execution and checks environment
+   if (typeof window !== 'undefined') {
+     setTimeout(() => {
+       if (apiClient && typeof apiClient.configure === 'function') {
+         apiClient.configure({ onTokenExpired: handler });
+       }
+     }, 0);
+   }
+   ```
+
+2. **Server-Side Rendering (SSR) Issues**
+   - Always check for `typeof window !== 'undefined'` before accessing browser APIs
+   - Use dynamic imports for browser-only modules
+   - Defer initialization of services that depend on localStorage or other browser APIs
+
+3. **API URL Configuration**
+   - Local development uses `http://localhost:3000`
+   - Production uses environment variables or domain-based URLs
+   - The API service should dynamically determine the correct URL based on the environment

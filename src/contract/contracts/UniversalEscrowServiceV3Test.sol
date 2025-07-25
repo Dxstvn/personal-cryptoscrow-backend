@@ -60,7 +60,8 @@ contract UniversalEscrowServiceV3Test is Ownable {
         address depositToken,
         uint256 depositAmount,
         address targetToken,
-        uint256 targetChainId
+        uint256 targetChainId,
+        uint256 disputeResolutionDays
     ) external payable returns (uint256) {
         require(seller != address(0), "Invalid seller");
         require(depositAmount > 0, "Invalid amount");
