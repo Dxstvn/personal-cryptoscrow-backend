@@ -7,13 +7,14 @@ import { Timestamp, FieldValue } from 'firebase-admin/firestore';
  */
 export class ReputationService {
   constructor() {
-    // Reputation tiers configuration (matches smart contract)
+    // Reputation tiers configuration - inverted for new system where users start at 1000
+    // Lower scores = worse reputation = higher stake requirements
     this.reputationTiers = [
-      { name: 'Unverified', minScore: 0, maxScore: 199, stakePercentage: 0.10 },
-      { name: 'Bronze', minScore: 200, maxScore: 499, stakePercentage: 0.05 },
-      { name: 'Silver', minScore: 500, maxScore: 749, stakePercentage: 0.035 },
-      { name: 'Gold', minScore: 750, maxScore: 899, stakePercentage: 0.025 },
-      { name: 'Platinum', minScore: 900, maxScore: 1000, stakePercentage: 0.02 }
+      { name: 'Restricted', minScore: 0, maxScore: 199, stakePercentage: 0.10 },    // Lost significant reputation
+      { name: 'Probation', minScore: 200, maxScore: 499, stakePercentage: 0.07 },   // Lost moderate reputation
+      { name: 'Standard', minScore: 500, maxScore: 749, stakePercentage: 0.05 },    // Lost some reputation
+      { name: 'Good', minScore: 750, maxScore: 899, stakePercentage: 0.035 },       // Slightly below perfect
+      { name: 'Excellent', minScore: 900, maxScore: 1000, stakePercentage: 0.025 }  // Near perfect or perfect reputation
     ];
   }
 
@@ -58,15 +59,16 @@ export class ReputationService {
       const userDoc = await db.collection('users').doc(userId).get();
       
       if (!userDoc.exists) {
-        // New user starts with 0 reputation
-        return 0;
+        // New user starts with full reputation (1000)
+        return 1000;
       }
       
       const userData = userDoc.data();
-      return userData.reputationScore || 0;
+      // If user exists but has no reputation score, they get full score
+      return userData.reputationScore !== undefined ? userData.reputationScore : 1000;
     } catch (error) {
       console.error('[ReputationService] Error getting user reputation:', error);
-      return 0; // Default to 0 on error
+      return 1000; // Default to full score on error
     }
   }
 
@@ -84,7 +86,9 @@ export class ReputationService {
       
       // Get current score
       const userDoc = await userRef.get();
-      const currentScore = userDoc.exists ? (userDoc.data().reputationScore || 0) : 0;
+      const currentScore = userDoc.exists ? 
+        (userDoc.data().reputationScore !== undefined ? userDoc.data().reputationScore : 1000) : 
+        1000;
       
       // Calculate new score (capped between 0 and 1000)
       let newScore = currentScore + points;
@@ -259,20 +263,24 @@ export class ReputationService {
       
       switch (resolution.outcome) {
         case 'resolved_in_favor':
-          reputationChange = 25;
-          reason = 'Valid dispute raised';
+          // Valid disputes maintain reputation (no increase)
+          reputationChange = 0;
+          reason = 'Valid dispute - reputation maintained';
           break;
         case 'resolved_against':
+          // Invalid disputes lose reputation
           reputationChange = -100;
-          reason = 'Invalid dispute raised';
+          reason = 'Invalid dispute raised - reputation decreased';
           break;
         case 'partial_return':
+          // Partially valid disputes lose some reputation
           reputationChange = -50;
-          reason = 'Partially valid dispute';
+          reason = 'Partially valid dispute - reputation slightly decreased';
           break;
         case 'timeout_return':
-          reputationChange = 10;
-          reason = 'Dispute auto-resolved in favor';
+          // Auto-resolved disputes maintain reputation
+          reputationChange = 0;
+          reason = 'Dispute auto-resolved - reputation maintained';
           break;
       }
       

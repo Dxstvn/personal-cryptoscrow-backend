@@ -59,6 +59,8 @@ export async function createTestUser(email, profileData = {}) {
             phone_number: profileData.phone_number || '1234567890',
             wallets: userWallets,
             createdAt: Timestamp.now(), // Use Firestore Timestamp
+            reputationScore: 1000, // New users start with full reputation
+            lastReputationUpdate: Timestamp.now()
         });
     } catch (error) {
         console.error(`HELPER: Failed to create Firestore profile for ${email}:`, error);

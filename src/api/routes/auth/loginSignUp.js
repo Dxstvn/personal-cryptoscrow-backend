@@ -83,7 +83,9 @@ router.post("/signUpEmailPass", async (req, res) => {
         addedAt: new Date()
       }] : [],
       createdAt: new Date(),
-      uid: userRecord.uid
+      uid: userRecord.uid,
+      reputationScore: 1000, // New users start with full reputation
+      lastReputationUpdate: new Date()
     };
     
     try {
@@ -228,7 +230,9 @@ router.post("/signInGoogle", async (req, res) => {
           phone_number: '',
           wallets: [],
           createdAt: new Date(),
-          uid: uid
+          uid: uid,
+          reputationScore: 1000, // New users start with full reputation
+          lastReputationUpdate: new Date()
         };
         await db.collection('users').doc(uid).set(userProfile);
         console.log(`/signInGoogle: Created profile for new Google user ${uid}`);
