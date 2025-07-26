@@ -112,28 +112,29 @@ export class EscrowServiceV3 {
           console.log('[EscrowServiceV3] Service initialized with DisputesStargateOnly ABI (Production)');
           return;
         } catch (disputesError) {
-        // Try Enhanced Stargate version
-        try {
-          artifactPath = path.join(__dirname, '../contract/artifacts/contracts/UniversalEscrowServiceV3StargateEnhanced.sol/UniversalEscrowServiceV3StargateEnhanced.json');
-          const enhancedArtifact = await fs.readFile(artifactPath, 'utf8');
-          const artifact = JSON.parse(enhancedArtifact);
-          this.abi = artifact.abi;
-          this.contractVersion = 'StargateEnhanced';
-          console.log('[EscrowServiceV3] Service initialized with Enhanced Stargate ABI');
-          return;
-        } catch (enhancedError) {
-          // Try regular Stargate version
+          // Try Enhanced Stargate version
           try {
-            artifactPath = path.join(__dirname, '../contract/artifacts/contracts/UniversalEscrowServiceV3Stargate.sol/UniversalEscrowServiceV3Stargate.json');
-            const stargateArtifact = await fs.readFile(artifactPath, 'utf8');
-            const artifact = JSON.parse(stargateArtifact);
+            artifactPath = path.join(__dirname, '../contract/artifacts/contracts/UniversalEscrowServiceV3StargateEnhanced.sol/UniversalEscrowServiceV3StargateEnhanced.json');
+            const enhancedArtifact = await fs.readFile(artifactPath, 'utf8');
+            const artifact = JSON.parse(enhancedArtifact);
             this.abi = artifact.abi;
-            this.contractVersion = 'Stargate';
-            console.log('[EscrowServiceV3] Service initialized with Stargate ABI');
+            this.contractVersion = 'StargateEnhanced';
+            console.log('[EscrowServiceV3] Service initialized with Enhanced Stargate ABI');
             return;
-          } catch (stargateError) {
-            // Fallback to regular V3
-            console.log('[EscrowServiceV3] Enhanced/Stargate versions not found, using regular V3');
+          } catch (enhancedError) {
+            // Try regular Stargate version
+            try {
+              artifactPath = path.join(__dirname, '../contract/artifacts/contracts/UniversalEscrowServiceV3Stargate.sol/UniversalEscrowServiceV3Stargate.json');
+              const stargateArtifact = await fs.readFile(artifactPath, 'utf8');
+              const artifact = JSON.parse(stargateArtifact);
+              this.abi = artifact.abi;
+              this.contractVersion = 'Stargate';
+              console.log('[EscrowServiceV3] Service initialized with Stargate ABI');
+              return;
+            } catch (stargateError) {
+              // Fallback to regular V3
+              console.log('[EscrowServiceV3] Enhanced/Stargate versions not found, using regular V3');
+            }
           }
         }
       }

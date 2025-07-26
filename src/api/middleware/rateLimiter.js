@@ -2,11 +2,15 @@
 import rateLimit from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
 import Redis from 'ioredis';
-import { getConfig } from '../../config/index.js';
+import config from '../../config/index.js';
 
 // Create Redis client for distributed rate limiting
 const createRedisClient = () => {
-  const config = getConfig();
+  // Skip Redis in test environment
+  if (process.env.NODE_ENV === 'test') {
+    return null;
+  }
+  
   const redisUrl = config.get('REDIS_URL');
   
   if (redisUrl) {

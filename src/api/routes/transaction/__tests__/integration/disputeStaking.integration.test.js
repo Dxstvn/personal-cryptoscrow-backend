@@ -5,7 +5,7 @@ import express from 'express';
 import { initializeApp, deleteApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
-import { DatabaseService } from '../../../../../services/databaseService.js';
+import * as databaseService from '../../../../../services/databaseService.js';
 import { EscrowServiceV3 } from '../../../../../services/escrowServiceV3.js';
 import { ReputationService } from '../../../../../services/reputationService.js';
 import transactionRoutes from '../../transactionRoutes.js';
@@ -48,7 +48,7 @@ describe('Dispute Staking Integration Tests', () => {
     auth = getAuth(app);
 
     // Initialize services
-    databaseService = new DatabaseService();
+    // databaseService is already imported as a module
     escrowService = new EscrowServiceV3();
     reputationService = new ReputationService();
 

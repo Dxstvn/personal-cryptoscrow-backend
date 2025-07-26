@@ -6,7 +6,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { ReputationService } from '../../reputationService.js';
-import { DatabaseService } from '../../databaseService.js';
+import * as databaseService from '../../databaseService.js';
 import { EscrowServiceV3 } from '../../escrowServiceV3.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -53,7 +53,7 @@ describe('Staking Mechanism Integration Tests', () => {
     
     // Initialize services
     reputationService = new ReputationService();
-    databaseService = new DatabaseService();
+    // databaseService is already imported as a module
     escrowService = new EscrowServiceV3();
 
     // Deploy test contracts

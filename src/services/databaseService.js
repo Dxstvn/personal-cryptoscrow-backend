@@ -10,7 +10,7 @@ let dbInstance = null;
 class DatabaseEventEmitter extends EventEmitter {}
 export const databaseEvents = new DatabaseEventEmitter();
 
-async function getDb() {
+export async function getDb() {
   if (dbInstance) {
     return dbInstance;
   }
