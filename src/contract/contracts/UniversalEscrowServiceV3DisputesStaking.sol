@@ -2,13 +2,14 @@
 pragma solidity ^0.8.22;
 
 import "./UniversalEscrowServiceV3StargateOnly.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
 
 /**
  * @title UniversalEscrowServiceV3DisputesStaking
  * @notice Production-ready escrow with Stargate-only cross-chain, full dispute resolution, and staking mechanism
  * @dev Adds staking requirements for raising disputes based on user reputation
  */
-contract UniversalEscrowServiceV3DisputesStaking is UniversalEscrowServiceV3StargateOnly {
+contract UniversalEscrowServiceV3DisputesStaking is UniversalEscrowServiceV3StargateOnly, Pausable {
     using SafeERC20 for IERC20;
     
     // Dispute constants
@@ -77,6 +78,8 @@ contract UniversalEscrowServiceV3DisputesStaking is UniversalEscrowServiceV3Star
     error StakeTransferFailed();
     error InvalidSlashPercentage();
     error StakeAlreadyProcessed();
+    error InsufficientBalance();
+    error MaxTiersExceeded();
 
     constructor(
         address _serviceWallet,
@@ -116,8 +119,11 @@ contract UniversalEscrowServiceV3DisputesStaking is UniversalEscrowServiceV3Star
         uint256 userScore = reputationScores[user];
         stakePercentage = MAX_STAKE_PERCENTAGE; // Default to max
         
-        // Find applicable tier
-        for (uint i = reputationTiers.length; i > 0; i--) {
+        // Find applicable tier (with gas optimization)
+        uint256 tierCount = reputationTiers.length;
+        if (tierCount > 10) revert MaxTiersExceeded(); // Gas protection
+        
+        for (uint i = tierCount; i > 0; i--) {
             if (userScore >= reputationTiers[i-1].minScore) {
                 stakePercentage = reputationTiers[i-1].stakePercentage;
                 break;
@@ -158,7 +164,7 @@ contract UniversalEscrowServiceV3DisputesStaking is UniversalEscrowServiceV3Star
         bytes32 escrowId, 
         string calldata reason,
         address stakeToken
-    ) external payable nonReentrant {
+    ) external payable nonReentrant whenNotPaused {
         EscrowDeposit storage escrow = escrows[escrowId];
         DisputeInfo storage dispute = disputes[escrowId];
         
@@ -171,6 +177,16 @@ contract UniversalEscrowServiceV3DisputesStaking is UniversalEscrowServiceV3Star
         
         // Calculate required stake
         (uint256 stakePercentage, uint256 requiredStake) = calculateStakeRequirement(msg.sender, escrow.depositAmount);
+        
+        // Validate user has sufficient balance
+        if (stakeToken == address(0)) {
+            if (msg.value < requiredStake) revert InsufficientStake();
+        } else {
+            uint256 userBalance = IERC20(stakeToken).balanceOf(msg.sender);
+            if (userBalance < requiredStake) revert InsufficientBalance();
+            uint256 allowance = IERC20(stakeToken).allowance(msg.sender, address(this));
+            if (allowance < requiredStake) revert InsufficientBalance();
+        }
         
         // Handle stake transfer
         if (stakeToken == address(0)) {
@@ -273,9 +289,9 @@ contract UniversalEscrowServiceV3DisputesStaking is UniversalEscrowServiceV3Star
     }
     
     /**
-     * @notice Return stake to user
+     * @notice Return stake to user with reentrancy protection
      */
-    function _returnStake(bytes32 escrowId, address to, uint256 amount) internal {
+    function _returnStake(bytes32 escrowId, address to, uint256 amount) internal nonReentrant {
         DisputeInfo storage dispute = disputes[escrowId];
         
         if (dispute.stakeToken == address(0)) {
@@ -288,9 +304,9 @@ contract UniversalEscrowServiceV3DisputesStaking is UniversalEscrowServiceV3Star
     }
     
     /**
-     * @notice Slash stake (send to counterparty or service wallet)
+     * @notice Slash stake (send to counterparty or service wallet) with reentrancy protection
      */
-    function _slashStake(bytes32 escrowId, uint256 amount) internal {
+    function _slashStake(bytes32 escrowId, uint256 amount) internal nonReentrant {
         EscrowDeposit storage escrow = escrows[escrowId];
         DisputeInfo storage dispute = disputes[escrowId];
         
@@ -485,7 +501,7 @@ contract UniversalEscrowServiceV3DisputesStaking is UniversalEscrowServiceV3Star
      * @notice Emergency stake return (service wallet only)
      * @param escrowId The escrow with stuck stake
      */
-    function emergencyStakeReturn(bytes32 escrowId) external onlyServiceWallet {
+    function emergencyStakeReturn(bytes32 escrowId) external onlyServiceWallet nonReentrant {
         DisputeInfo storage dispute = disputes[escrowId];
         
         if (dispute.stakeStatus != StakeStatus.Locked) revert StakeAlreadyProcessed();
@@ -515,5 +531,19 @@ contract UniversalEscrowServiceV3DisputesStaking is UniversalEscrowServiceV3Star
         }
         
         return (true, "Can release");
+    }
+    
+    /**
+     * @notice Pause contract operations (emergency only)
+     */
+    function pause() external onlyServiceWallet {
+        _pause();
+    }
+    
+    /**
+     * @notice Unpause contract operations
+     */
+    function unpause() external onlyServiceWallet {
+        _unpause();
     }
 }

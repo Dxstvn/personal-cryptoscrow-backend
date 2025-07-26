@@ -6,6 +6,8 @@ import { updateDealCondition, raiseDealDispute, resolveDealDispute } from '../..
 import { isAddress, getAddress, parseUnits, JsonRpcProvider, formatEther, parseEther } from 'ethers';
 import { Wallet } from 'ethers';
 import config from '../../../config/index.js';
+import rateLimiters from '../../middleware/rateLimiter.js';
+import securityLogger from '../../../services/securityLogger.js';
 
 // Import the new V3 escrow service
 import { EscrowServiceV3 } from '../../../services/escrowServiceV3.js';
@@ -525,8 +527,8 @@ router.post('/releaseEscrow', async (req, res) => {
     }
 });
 
-// Raise dispute (legacy endpoint - no staking)
-router.post('/raiseDispute', async (req, res) => {
+// Raise dispute (legacy endpoint - no staking) with rate limiting
+router.post('/raiseDispute', rateLimiters.dispute, rateLimiters.monitor, async (req, res) => {
     try {
         await ensureConfig();
         const { dealId, reason } = req.body;
@@ -609,8 +611,8 @@ router.post('/raiseDispute', async (req, res) => {
     }
 });
 
-// Raise dispute with staking (new endpoint)
-router.post('/raiseDisputeWithStake', async (req, res) => {
+// Raise dispute with staking (new endpoint) - with enhanced security
+router.post('/raiseDisputeWithStake', rateLimiters.dispute, rateLimiters.monitor, async (req, res) => {
     try {
         await ensureConfig();
         const { dealId, reason, userId, stakeToken } = req.body;
@@ -646,16 +648,68 @@ router.post('/raiseDisputeWithStake', async (req, res) => {
         const { reputationService } = await import('../../../services/reputationService.js');
         
         // Calculate stake requirement
+        const transactionAmount = dealData.dealAmount || dealData.amount || 0;
         const stakeRequirements = await reputationService.calculateStakeRequirement(
             userId,
-            dealData.dealAmount || dealData.amount || 0
+            transactionAmount
         );
+        
+        // Security: Validate user has sufficient balance BEFORE blockchain call
+        const userBalance = await validateUserStakeBalance(
+            userId,
+            stakeRequirements.requiredStake,
+            stakeToken || 'ETH',
+            dealData.buyerChainId
+        );
+        
+        if (!userBalance.sufficient) {
+            await securityLogger.logSecurityEvent(
+                securityLogger.SecurityEventType.BALANCE_CHECK_FAILED,
+                {
+                    userId,
+                    dealId,
+                    requiredStake: stakeRequirements.requiredStake,
+                    userBalance: userBalance.balance,
+                    token: stakeToken || 'ETH'
+                }
+            );
+            
+            return res.status(400).json({
+                success: false,
+                error: 'Insufficient balance for stake requirement',
+                details: {
+                    required: stakeRequirements.requiredStake,
+                    available: userBalance.balance,
+                    token: stakeToken || 'ETH'
+                }
+            });
+        }
+        
+        // Check for suspicious patterns
+        const suspiciousPatterns = await securityLogger.detectSuspiciousPatterns(userId);
+        if (suspiciousPatterns && Object.values(suspiciousPatterns).some(p => p)) {
+            console.warn('[SECURITY] Suspicious patterns detected for user:', userId, suspiciousPatterns);
+        }
 
+        // Log high-value operation if applicable
+        if (transactionAmount > 10000) {
+            await securityLogger.logSecurityEvent(
+                securityLogger.SecurityEventType.HIGH_VALUE_OPERATION,
+                {
+                    userId,
+                    dealId,
+                    amount: transactionAmount,
+                    operation: 'DISPUTE_WITH_STAKE',
+                    stakeAmount: stakeRequirements.requiredStake
+                }
+            );
+        }
+        
         // Record stake in database
         const stakeId = await reputationService.recordDisputeStake({
             userId,
             dealId,
-            transactionAmount: dealData.dealAmount || dealData.amount || 0,
+            transactionAmount,
             stakeAmount: stakeRequirements.requiredStake,
             stakePercentage: stakeRequirements.stakePercentage,
             stakeToken: stakeToken || 'ETH'
@@ -671,6 +725,22 @@ router.post('/raiseDisputeWithStake', async (req, res) => {
                 signerPrivateKey: config.get('BACKEND_WALLET_PRIVATE_KEY'),
                 stakeAmount: stakeRequirements.requiredStake,
                 stakeToken: stakeToken || null // null for ETH
+            }
+        );
+        
+        // Log successful stake operation
+        await securityLogger.logStakeOperation(
+            securityLogger.SecurityEventType.STAKE_LOCKED,
+            {
+                userId,
+                dealId,
+                amount: stakeRequirements.requiredStake,
+                txHash: disputeResult.txHash,
+                chainId: dealData.buyerChainId,
+                token: stakeToken || 'ETH',
+                reputationScore: stakeRequirements.reputationScore,
+                blockNumber: disputeResult.blockNumber,
+                gasUsed: disputeResult.gasUsed
             }
         );
 
@@ -721,8 +791,8 @@ router.post('/raiseDisputeWithStake', async (req, res) => {
     }
 });
 
-// Resolve dispute
-router.post('/resolveDispute', async (req, res) => {
+// Resolve dispute with security logging
+router.post('/resolveDispute', rateLimiters.monitor, async (req, res) => {
     try {
         await ensureConfig();
         const { dealId, releaseFunds, slashPercentage } = req.body;
@@ -1359,5 +1429,50 @@ router.get('/admin/manual-intervention', async (req, res) => {
     }
 });
 
+// Helper function to validate user stake balance
+async function validateUserStakeBalance(userId, requiredStake, token, chainId) {
+    try {
+        // Get user wallet address from database
+        const { db } = await getFirebaseServices();
+        const userDoc = await db.collection('users').doc(userId).get();
+        
+        if (!userDoc.exists) {
+            return { sufficient: false, balance: 0 };
+        }
+        
+        const userData = userDoc.data();
+        const walletAddress = userData.walletAddress;
+        
+        if (!walletAddress || !isAddress(walletAddress)) {
+            return { sufficient: false, balance: 0 };
+        }
+        
+        // Get RPC URL for the chain
+        const rpcUrl = await escrowService._getRpcUrl(chainId);
+        const provider = new JsonRpcProvider(rpcUrl);
+        
+        let balance = 0;
+        
+        if (token === 'ETH' || !token) {
+            // Check ETH balance
+            const ethBalance = await provider.getBalance(walletAddress);
+            balance = parseFloat(formatEther(ethBalance));
+        } else {
+            // Check ERC20 token balance
+            // This would require the token contract ABI and address
+            // For now, we'll assume sufficient balance and rely on contract validation
+            return { sufficient: true, balance: requiredStake };
+        }
+        
+        return {
+            sufficient: balance >= requiredStake,
+            balance
+        };
+    } catch (error) {
+        console.error('[ValidateBalance] Error checking user balance:', error);
+        // On error, let the contract handle validation
+        return { sufficient: true, balance: 0 };
+    }
+}
 
 export default router;
