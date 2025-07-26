@@ -40,12 +40,12 @@ describe('Staking Mechanism Integration Tests', () => {
     }
 
     // Initialize Firebase with emulator settings
-    process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8080';
+    process.env.FIRESTORE_EMULATOR_HOST = 'localhost:5004';
     process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9099';
     
     app = initializeApp({
       projectId: 'test-project',
-      databaseURL: 'http://localhost:8080'
+      databaseURL: 'http://localhost:5004'
     }, 'staking-test');
 
     db = getFirestore(app);

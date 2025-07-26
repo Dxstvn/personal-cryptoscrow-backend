@@ -33,12 +33,12 @@ describe('ReputationService Integration Tests', () => {
     console.log('[Test] Starting ReputationService integration tests...');
     
     // Initialize Firebase with emulator settings
-    process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8080';
+    process.env.FIRESTORE_EMULATOR_HOST = 'localhost:5004';
     process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9099';
     
     app = initializeApp({
       projectId: 'test-project',
-      databaseURL: 'http://localhost:8080'
+      databaseURL: 'http://localhost:5004'
     }, 'reputation-integration-test');
 
     db = getFirestore(app);

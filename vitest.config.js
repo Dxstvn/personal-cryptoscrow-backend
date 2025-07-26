@@ -27,8 +27,8 @@ export default defineConfig({
       ]
     },
     setupFiles: [
-      './vitest.setup.js',
-      './vitest.emulator.setup.js'
+      './vitest.setup.js'
+      // './vitest.emulator.setup.js' // Temporarily disabled - emulators already running
     ],
     testTimeout: 30000,
     hookTimeout: 30000,

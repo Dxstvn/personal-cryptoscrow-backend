@@ -5,9 +5,9 @@ import express from 'express';
 import { initializeApp, deleteApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
-import { DatabaseService } from '../../../../services/databaseService.js';
-import { EscrowServiceV3 } from '../../../../services/escrowServiceV3.js';
-import { ReputationService } from '../../../../services/reputationService.js';
+import { DatabaseService } from '../../../../../services/databaseService.js';
+import { EscrowServiceV3 } from '../../../../../services/escrowServiceV3.js';
+import { ReputationService } from '../../../../../services/reputationService.js';
 import transactionRoutes from '../../transactionRoutes.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -36,12 +36,12 @@ describe('Dispute Staking Integration Tests', () => {
     console.log('[Test] Initializing dispute staking tests...');
 
     // Set up Firebase emulators
-    process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8080';
+    process.env.FIRESTORE_EMULATOR_HOST = 'localhost:5004';
     process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9099';
     
     app = initializeApp({
       projectId: 'test-project',
-      databaseURL: 'http://localhost:8080'
+      databaseURL: 'http://localhost:5004'
     }, 'dispute-staking-test');
 
     db = getFirestore(app);

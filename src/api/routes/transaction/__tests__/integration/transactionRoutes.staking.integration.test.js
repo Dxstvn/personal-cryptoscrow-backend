@@ -5,9 +5,9 @@ import express from 'express';
 import { initializeApp, deleteApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
-import * as databaseService from '../../../../../services/databaseService.js';
-import { EscrowServiceV3 } from '../../../../../services/escrowServiceV3.js';
-import { ReputationService } from '../../../../../services/reputationService.js';
+import * as databaseService from '../../../../../../services/databaseService.js';
+import { EscrowServiceV3 } from '../../../../../../services/escrowServiceV3.js';
+import { ReputationService } from '../../../../../../services/reputationService.js';
 import transactionRoutes from '../../transactionRoutes.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -40,7 +40,7 @@ describe('Transaction Routes - Staking Integration Tests', () => {
     console.log('[Test] Starting full staking integration tests...');
 
     // Start Hardhat node
-    const contractDir = path.join(__dirname, '../../../../../contract');
+    const contractDir = path.join(__dirname, '../../../../../../contract');
     try {
       console.log('[Test] Starting Hardhat node...');
       await execAsync('npx hardhat node', { cwd: contractDir });
@@ -67,12 +67,12 @@ describe('Transaction Routes - Staking Integration Tests', () => {
     signer = provider.getSigner(0);
 
     // Initialize Firebase with emulator settings
-    process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8080';
+    process.env.FIRESTORE_EMULATOR_HOST = 'localhost:5004';
     process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9099';
     
     app = initializeApp({
       projectId: 'test-project',
-      databaseURL: 'http://localhost:8080'
+      databaseURL: 'http://localhost:5004'
     }, 'staking-integration-test');
 
     db = getFirestore(app);
