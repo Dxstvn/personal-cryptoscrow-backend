@@ -2,7 +2,7 @@
 pragma solidity ^0.8.22;
 
 import "./UniversalEscrowServiceV3StargateOnly.sol";
-import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 
 /**
  * @title UniversalEscrowServiceV3DisputesStaking

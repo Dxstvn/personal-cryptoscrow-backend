@@ -4,7 +4,7 @@ import { initializeApp, deleteApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 import { ReputationService } from '../../reputationService.js';
-import { DatabaseService } from '../../databaseService.js';
+import * as databaseService from '../../databaseService.js';
 
 // Mock blockchain interactions
 vi.mock('../../escrowServiceV3.js', () => ({
@@ -27,7 +27,6 @@ describe('ReputationService Integration Tests', () => {
   let db;
   let auth;
   let reputationService;
-  let databaseService;
   let testUsers = {};
 
   beforeAll(async () => {
@@ -46,7 +45,6 @@ describe('ReputationService Integration Tests', () => {
     auth = getAuth(app);
     
     // Initialize services
-    databaseService = new DatabaseService();
     reputationService = new ReputationService();
 
     // Create test users with various reputation scores

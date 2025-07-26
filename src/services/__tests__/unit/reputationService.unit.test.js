@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { ReputationService } from '../../reputationService.js';
 import { Timestamp } from 'firebase-admin/firestore';
+import { getDb } from '../../databaseService.js';
 
 // Mock the database service
 vi.mock('../../databaseService.js', () => ({
@@ -90,8 +91,7 @@ describe('ReputationService Unit Tests', () => {
       collection: vi.fn((name) => mockCollection)
     };
 
-    // Import getDb and set its return value
-    const { getDb } = require('../../databaseService.js');
+    // Set up the mock return value
     getDb.mockResolvedValue(mockDb);
 
     // Create service instance
