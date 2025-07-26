@@ -91,17 +91,27 @@ export class EscrowServiceV3 {
     await this.initializeChainConfigs();
     
     try {
-      // Try to load DisputesStargateOnly version first (production contract)
-      let artifactPath = path.join(__dirname, '../contract/artifacts/contracts/UniversalEscrowServiceV3DisputesStargateOnly.sol/UniversalEscrowServiceV3DisputesStargateOnly.json');
+      // Try to load DisputesStaking version first (latest with staking mechanism)
+      let artifactPath = path.join(__dirname, '../contract/artifacts/contracts/UniversalEscrowServiceV3DisputesStaking.sol/UniversalEscrowServiceV3DisputesStaking.json');
       
       try {
-        const disputesArtifact = await fs.readFile(artifactPath, 'utf8');
-        const artifact = JSON.parse(disputesArtifact);
+        const stakingArtifact = await fs.readFile(artifactPath, 'utf8');
+        const artifact = JSON.parse(stakingArtifact);
         this.abi = artifact.abi;
-        this.contractVersion = 'DisputesStargateOnly';
-        console.log('[EscrowServiceV3] Service initialized with DisputesStargateOnly ABI (Production)');
+        this.contractVersion = 'DisputesStaking';
+        console.log('[EscrowServiceV3] Service initialized with DisputesStaking ABI (Staking Support)');
         return;
-      } catch (disputesError) {
+      } catch (stakingError) {
+        // Try DisputesStargateOnly version (production contract)
+        try {
+          artifactPath = path.join(__dirname, '../contract/artifacts/contracts/UniversalEscrowServiceV3DisputesStargateOnly.sol/UniversalEscrowServiceV3DisputesStargateOnly.json');
+          const disputesArtifact = await fs.readFile(artifactPath, 'utf8');
+          const artifact = JSON.parse(disputesArtifact);
+          this.abi = artifact.abi;
+          this.contractVersion = 'DisputesStargateOnly';
+          console.log('[EscrowServiceV3] Service initialized with DisputesStargateOnly ABI (Production)');
+          return;
+        } catch (disputesError) {
         // Try Enhanced Stargate version
         try {
           artifactPath = path.join(__dirname, '../contract/artifacts/contracts/UniversalEscrowServiceV3StargateEnhanced.sol/UniversalEscrowServiceV3StargateEnhanced.json');
@@ -1187,11 +1197,11 @@ export class EscrowServiceV3 {
    * Raise a dispute for an escrow
    * @param {string} escrowId - The escrow ID
    * @param {string} reason - The reason for the dispute
-   * @param {object} options - Additional options
+   * @param {object} options - Additional options including stake info
    * @returns {Promise<object>} Transaction result
    */
   async raiseDispute(escrowId, reason, options = {}) {
-    const { chainId, contractAddress } = options;
+    const { chainId, contractAddress, stakeToken, stakeAmount } = options;
     
     if (!chainId || !contractAddress) {
       throw new Error('Chain ID and contract address required for dispute');
@@ -1205,27 +1215,78 @@ export class EscrowServiceV3 {
     const contractABI = this.abi;
     const contract = new Contract(contractAddress, contractABI, signer);
 
-    // Raise dispute
-    const tx = await contract.raiseDispute(escrowId, reason);
-    const receipt = await tx.wait();
+    // Check if this is the staking version
+    if (this.contractVersion === 'DisputesStaking' && stakeAmount) {
+      // For staking contract, use the new signature with stake
+      const stakeTokenAddress = stakeToken || '0x0000000000000000000000000000000000000000'; // ETH by default
+      
+      if (stakeTokenAddress === '0x0000000000000000000000000000000000000000') {
+        // ETH stake
+        const tx = await contract.raiseDispute(escrowId, reason, stakeTokenAddress, {
+          value: parseEther(stakeAmount.toString())
+        });
+        const receipt = await tx.wait();
+        
+        return {
+          success: true,
+          transactionHash: tx.hash,
+          blockNumber: receipt.blockNumber,
+          events: receipt.logs,
+          stakeAmount: stakeAmount
+        };
+      } else {
+        // ERC20 stake - need to approve first
+        const tokenContract = new Contract(stakeTokenAddress, [
+          'function approve(address spender, uint256 amount) public returns (bool)',
+          'function allowance(address owner, address spender) public view returns (uint256)'
+        ], signer);
+        
+        // Check current allowance
+        const signerAddress = await signer.getAddress();
+        const currentAllowance = await tokenContract.allowance(signerAddress, contractAddress);
+        const requiredAmount = parseUnits(stakeAmount.toString(), 18); // Assuming 18 decimals
+        
+        // Approve if needed
+        if (currentAllowance < requiredAmount) {
+          const approveTx = await tokenContract.approve(contractAddress, requiredAmount);
+          await approveTx.wait();
+        }
+        
+        // Raise dispute with ERC20 stake
+        const tx = await contract.raiseDispute(escrowId, reason, stakeTokenAddress);
+        const receipt = await tx.wait();
+        
+        return {
+          success: true,
+          transactionHash: tx.hash,
+          blockNumber: receipt.blockNumber,
+          events: receipt.logs,
+          stakeAmount: stakeAmount
+        };
+      }
+    } else {
+      // Non-staking contract or no stake amount specified
+      const tx = await contract.raiseDispute(escrowId, reason);
+      const receipt = await tx.wait();
 
-    return {
-      success: true,
-      transactionHash: tx.hash,
-      blockNumber: receipt.blockNumber,
-      events: receipt.logs
-    };
+      return {
+        success: true,
+        transactionHash: tx.hash,
+        blockNumber: receipt.blockNumber,
+        events: receipt.logs
+      };
+    }
   }
 
   /**
    * Resolve a dispute
    * @param {string} escrowId - The escrow ID
    * @param {boolean} releaseFunds - Whether to release funds to seller
-   * @param {object} options - Additional options
+   * @param {object} options - Additional options including slash percentage for staking
    * @returns {Promise<object>} Transaction result
    */
   async resolveDispute(escrowId, releaseFunds, options = {}) {
-    const { chainId, contractAddress } = options;
+    const { chainId, contractAddress, slashPercentage } = options;
     
     if (!chainId || !contractAddress) {
       throw new Error('Chain ID and contract address required for dispute resolution');
@@ -1238,16 +1299,31 @@ export class EscrowServiceV3 {
     const contractABI = this.abi;
     const contract = new Contract(contractAddress, contractABI, signer);
 
-    // Resolve dispute
-    const tx = await contract.resolveDispute(escrowId, releaseFunds);
-    const receipt = await tx.wait();
+    // Check if this is the staking version
+    if (this.contractVersion === 'DisputesStaking' && slashPercentage !== undefined) {
+      // For staking contract, use the new signature with slash percentage
+      const tx = await contract.resolveDispute(escrowId, releaseFunds, slashPercentage);
+      const receipt = await tx.wait();
 
-    return {
-      success: true,
-      transactionHash: tx.hash,
-      blockNumber: receipt.blockNumber,
-      events: receipt.logs
-    };
+      return {
+        success: true,
+        transactionHash: tx.hash,
+        blockNumber: receipt.blockNumber,
+        events: receipt.logs,
+        slashPercentage: slashPercentage
+      };
+    } else {
+      // Non-staking contract
+      const tx = await contract.resolveDispute(escrowId, releaseFunds);
+      const receipt = await tx.wait();
+
+      return {
+        success: true,
+        transactionHash: tx.hash,
+        blockNumber: receipt.blockNumber,
+        events: receipt.logs
+      };
+    }
   }
 
   /**
@@ -1525,6 +1601,150 @@ export class EscrowServiceV3 {
       console.error('[EscrowServiceV3] Error updating condition:', error);
       throw error;
     }
+  }
+
+  /**
+   * Calculate stake requirement for a user based on reputation score
+   * @param {string} userAddress - The user's wallet address
+   * @param {number} transactionAmount - The transaction amount
+   * @param {number} chainId - The chain ID
+   * @param {string} contractAddress - The contract address
+   * @returns {Promise<object>} Stake requirement information
+   */
+  async calculateStakeRequirement(userAddress, transactionAmount, chainId, contractAddress) {
+    if (!chainId || !contractAddress) {
+      throw new Error('Chain ID and contract address required');
+    }
+
+    const provider = await this.getProvider(chainId);
+    const contract = new Contract(contractAddress, this.abi, provider);
+
+    // Only available in staking contract
+    if (this.contractVersion !== 'DisputesStaking') {
+      throw new Error('Stake calculation only available in staking contract version');
+    }
+
+    try {
+      const result = await contract.calculateStakeRequirement(
+        userAddress,
+        parseUnits(transactionAmount.toString(), 18)
+      );
+
+      return {
+        stakePercentage: Number(result.stakePercentage) / 100, // Convert from basis points
+        stakeAmount: formatUnits(result.stakeAmount, 18),
+        stakePercentageBasisPoints: Number(result.stakePercentage)
+      };
+    } catch (error) {
+      console.error('[EscrowServiceV3] Error calculating stake requirement:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get user reputation score from contract
+   * @param {string} userAddress - The user's wallet address
+   * @param {number} chainId - The chain ID
+   * @param {string} contractAddress - The contract address
+   * @returns {Promise<number>} Reputation score
+   */
+  async getUserReputationScore(userAddress, chainId, contractAddress) {
+    if (!chainId || !contractAddress) {
+      throw new Error('Chain ID and contract address required');
+    }
+
+    const provider = await this.getProvider(chainId);
+    const contract = new Contract(contractAddress, this.abi, provider);
+
+    // Only available in staking contract
+    if (this.contractVersion !== 'DisputesStaking') {
+      throw new Error('Reputation scores only available in staking contract version');
+    }
+
+    try {
+      const score = await contract.reputationScores(userAddress);
+      return Number(score);
+    } catch (error) {
+      console.error('[EscrowServiceV3] Error getting reputation score:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Set user reputation score (service wallet only)
+   * @param {string} userAddress - The user's wallet address
+   * @param {number} score - The new reputation score (0-1000)
+   * @param {number} chainId - The chain ID
+   * @param {string} contractAddress - The contract address
+   * @returns {Promise<object>} Transaction result
+   */
+  async setUserReputationScore(userAddress, score, chainId, contractAddress) {
+    if (!chainId || !contractAddress) {
+      throw new Error('Chain ID and contract address required');
+    }
+
+    const signer = await this.getSigner(chainId);
+    const contract = new Contract(contractAddress, this.abi, signer);
+
+    // Only available in staking contract
+    if (this.contractVersion !== 'DisputesStaking') {
+      throw new Error('Reputation score setting only available in staking contract version');
+    }
+
+    try {
+      const tx = await contract.setReputationScore(userAddress, score);
+      const receipt = await tx.wait();
+
+      return {
+        success: true,
+        transactionHash: tx.hash,
+        blockNumber: receipt.blockNumber
+      };
+    } catch (error) {
+      console.error('[EscrowServiceV3] Error setting reputation score:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get extended dispute information including stake details
+   * @param {string} escrowId - The escrow ID
+   * @param {object} options - Additional options
+   * @returns {Promise<object>} Extended dispute information
+   */
+  async getDisputeInfoWithStake(escrowId, options = {}) {
+    const { chainId, contractAddress } = options;
+    
+    if (!chainId || !contractAddress) {
+      throw new Error('Chain ID and contract address required');
+    }
+
+    const provider = await this.getProvider(chainId);
+    const contract = new Contract(contractAddress, this.abi, provider);
+
+    // Get basic dispute info first
+    const basicInfo = await this.getDisputeInfo(escrowId, options);
+
+    // If staking contract, get additional stake info
+    if (this.contractVersion === 'DisputesStaking') {
+      try {
+        const stakeInfo = await contract.getDisputeInfo(escrowId);
+        
+        return {
+          ...basicInfo,
+          stakeAmount: stakeInfo.stakeAmount ? formatUnits(stakeInfo.stakeAmount, 18) : '0',
+          stakePercentage: stakeInfo.stakePercentage ? Number(stakeInfo.stakePercentage) / 100 : 0,
+          stakeToken: stakeInfo.stakeToken,
+          stakeStatus: ['None', 'Locked', 'Returned', 'Slashed', 'PartialReturn'][stakeInfo.stakeStatus] || 'None',
+          reputationScoreAtStake: Number(stakeInfo.reputationScoreAtStake || 0)
+        };
+      } catch (error) {
+        console.error('[EscrowServiceV3] Error getting stake info:', error);
+        return basicInfo;
+      }
+    }
+
+    return basicInfo;
   }
 }
 

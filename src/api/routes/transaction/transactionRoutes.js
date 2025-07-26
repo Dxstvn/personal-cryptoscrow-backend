@@ -525,7 +525,7 @@ router.post('/releaseEscrow', async (req, res) => {
     }
 });
 
-// Raise dispute
+// Raise dispute (legacy endpoint - no staking)
 router.post('/raiseDispute', async (req, res) => {
     try {
         await ensureConfig();
@@ -609,11 +609,123 @@ router.post('/raiseDispute', async (req, res) => {
     }
 });
 
+// Raise dispute with staking (new endpoint)
+router.post('/raiseDisputeWithStake', async (req, res) => {
+    try {
+        await ensureConfig();
+        const { dealId, reason, userId, stakeToken } = req.body;
+        
+        if (!dealId || !reason || !userId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required fields: dealId, reason, userId'
+            });
+        }
+
+        const { db } = await getFirebaseServices();
+        const dealRef = db.collection('deals').doc(dealId);
+        const dealDoc = await dealRef.get();
+        
+        if (!dealDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                error: 'Deal not found'
+            });
+        }
+
+        const dealData = dealDoc.data();
+        
+        if (!dealData.escrowId || !dealData.smartContractAddress || !dealData.buyerChainId) {
+            return res.status(400).json({
+                success: false,
+                error: 'No escrow contract found for this deal'
+            });
+        }
+
+        // Import reputation service
+        const { reputationService } = await import('../../../services/reputationService.js');
+        
+        // Calculate stake requirement
+        const stakeRequirements = await reputationService.calculateStakeRequirement(
+            userId,
+            dealData.dealAmount || dealData.amount || 0
+        );
+
+        // Record stake in database
+        const stakeId = await reputationService.recordDisputeStake({
+            userId,
+            dealId,
+            transactionAmount: dealData.dealAmount || dealData.amount || 0,
+            stakeAmount: stakeRequirements.requiredStake,
+            stakePercentage: stakeRequirements.stakePercentage,
+            stakeToken: stakeToken || 'ETH'
+        });
+
+        // Raise dispute on contract with stake
+        const disputeResult = await escrowService.raiseDispute(
+            dealData.escrowId,
+            reason,
+            {
+                chainId: dealData.buyerChainId,
+                contractAddress: dealData.smartContractAddress,
+                signerPrivateKey: config.get('BACKEND_WALLET_PRIVATE_KEY'),
+                stakeAmount: stakeRequirements.requiredStake,
+                stakeToken: stakeToken || null // null for ETH
+            }
+        );
+
+        // Update database with timeline event and stake info
+        await dealRef.update({
+            status: 'disputed',
+            disputeTxHash: disputeResult.txHash,
+            disputeStakeId: stakeId,
+            disputeStakeAmount: stakeRequirements.requiredStake,
+            disputeStakePercentage: stakeRequirements.stakePercentage,
+            lastUpdated: Timestamp.now(),
+            timeline: FieldValue.arrayUnion({
+                event: `Dispute raised with ${stakeRequirements.stakePercentage * 100}% stake: ${reason}`,
+                timestamp: Timestamp.now(),
+                system: true
+            })
+        });
+        
+        // Get custom dispute resolution period from deal data
+        const customDisputePeriodMs = dealData.disputeResolutionPeriodMs || (7 * 24 * 60 * 60 * 1000); // Default to 7 days
+        
+        // Raise dispute with event emission for automatic resolution after custom period
+        await raiseDealDispute(dealId, {
+            escrowId: dealData.escrowId,
+            chainId: dealData.buyerChainId,
+            contractAddress: dealData.smartContractAddress,
+            reason,
+            raisedBy: userId,
+            txHash: disputeResult.txHash,
+            customDisputeResolutionPeriodMs: customDisputePeriodMs,
+            stakeId,
+            stakeAmount: stakeRequirements.requiredStake
+        });
+
+        res.json({
+            success: true,
+            txHash: disputeResult.txHash,
+            stakeRequirements,
+            stakeId
+        });
+
+    } catch (error) {
+        console.error('[RAISE DISPUTE WITH STAKE ERROR]', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 // Resolve dispute
 router.post('/resolveDispute', async (req, res) => {
     try {
         await ensureConfig();
-        const { dealId, releaseFunds } = req.body;
+        const { dealId, releaseFunds, slashPercentage } = req.body;
         
         if (!dealId || releaseFunds === undefined) {
             return res.status(400).json({
@@ -642,6 +754,18 @@ router.post('/resolveDispute', async (req, res) => {
             });
         }
 
+        // Validate slash percentage if provided
+        let validatedSlashPercentage = 50; // Default 50%
+        if (slashPercentage !== undefined) {
+            validatedSlashPercentage = parseInt(slashPercentage);
+            if (isNaN(validatedSlashPercentage) || validatedSlashPercentage < 0 || validatedSlashPercentage > 100) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Invalid slash percentage. Must be between 0 and 100'
+                });
+            }
+        }
+
         // Resolve dispute on contract
         const resolveResult = await escrowService.resolveDispute(
             dealData.escrowId,
@@ -649,18 +773,47 @@ router.post('/resolveDispute', async (req, res) => {
             {
                 chainId: dealData.buyerChainId,
                 contractAddress: dealData.smartContractAddress,
-                signerPrivateKey: config.get('BACKEND_WALLET_PRIVATE_KEY')
+                signerPrivateKey: config.get('BACKEND_WALLET_PRIVATE_KEY'),
+                slashPercentage: validatedSlashPercentage
             }
         );
 
+        // Handle stake resolution if stake exists
+        if (dealData.disputeStakeId) {
+            const { reputationService } = await import('../../../services/reputationService.js');
+            
+            let stakeOutcome = 'resolved_against';
+            if (validatedSlashPercentage === 0) {
+                stakeOutcome = 'resolved_in_favor';
+            } else if (validatedSlashPercentage === 100) {
+                stakeOutcome = 'resolved_against';
+            } else {
+                stakeOutcome = 'partial_return';
+            }
+
+            await reputationService.updateDisputeStakeStatus(dealData.disputeStakeId, {
+                status: validatedSlashPercentage === 0 ? 'returned' : 
+                        validatedSlashPercentage === 100 ? 'slashed' : 'partial_return',
+                outcome: stakeOutcome,
+                amountReturned: dealData.disputeStakeAmount ? 
+                    dealData.disputeStakeAmount * (100 - validatedSlashPercentage) / 100 : 0,
+                amountSlashed: dealData.disputeStakeAmount ? 
+                    dealData.disputeStakeAmount * validatedSlashPercentage / 100 : 0
+            });
+        }
+
         // Update database with timeline event
+        const stakeInfo = validatedSlashPercentage !== undefined ? 
+            ` (Stake: ${100 - validatedSlashPercentage}% returned, ${validatedSlashPercentage}% slashed)` : '';
+        
         await dealRef.update({
             status: releaseFunds ? 'completed' : 'refunded',
             disputeResolved: true,
             resolveTxHash: resolveResult.txHash,
+            disputeSlashPercentage: validatedSlashPercentage,
             lastUpdated: Timestamp.now(),
             timeline: FieldValue.arrayUnion({
-                event: `Dispute resolved: ${releaseFunds ? 'Funds released to seller' : 'Funds refunded to buyer'}`,
+                event: `Dispute resolved: ${releaseFunds ? 'Funds released to seller' : 'Funds refunded to buyer'}${stakeInfo}`,
                 timestamp: Timestamp.now(),
                 system: true
             })
@@ -670,13 +823,15 @@ router.post('/resolveDispute', async (req, res) => {
         await resolveDealDispute(dealId, {
             resolution: releaseFunds ? 'released_to_seller' : 'refunded_to_buyer',
             txHash: resolveResult.txHash,
-            resolvedBy: 'admin' // This should be the service wallet/admin
+            resolvedBy: 'admin', // This should be the service wallet/admin
+            slashPercentage: validatedSlashPercentage
         });
 
         res.json({
             success: true,
             txHash: resolveResult.txHash,
-            resolution: releaseFunds ? 'released_to_seller' : 'refunded_to_buyer'
+            resolution: releaseFunds ? 'released_to_seller' : 'refunded_to_buyer',
+            slashPercentage: validatedSlashPercentage
         });
 
     } catch (error) {
