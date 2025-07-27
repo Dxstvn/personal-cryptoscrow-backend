@@ -289,9 +289,9 @@ contract UniversalEscrowServiceV3DisputesStaking is UniversalEscrowServiceV3Star
     }
     
     /**
-     * @notice Return stake to user with reentrancy protection
+     * @notice Return stake to user (no reentrancy modifier - handled by caller)
      */
-    function _returnStake(bytes32 escrowId, address to, uint256 amount) internal nonReentrant {
+    function _returnStake(bytes32 escrowId, address to, uint256 amount) internal {
         DisputeInfo storage dispute = disputes[escrowId];
         
         if (dispute.stakeToken == address(0)) {
@@ -304,9 +304,9 @@ contract UniversalEscrowServiceV3DisputesStaking is UniversalEscrowServiceV3Star
     }
     
     /**
-     * @notice Slash stake (send to counterparty or service wallet) with reentrancy protection
+     * @notice Slash stake (send to counterparty or service wallet) (no reentrancy modifier - handled by caller)
      */
-    function _slashStake(bytes32 escrowId, uint256 amount) internal nonReentrant {
+    function _slashStake(bytes32 escrowId, uint256 amount) internal {
         EscrowDeposit storage escrow = escrows[escrowId];
         DisputeInfo storage dispute = disputes[escrowId];
         

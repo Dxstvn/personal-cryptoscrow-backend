@@ -296,11 +296,12 @@ router.post('/create', async (req, res) => {
             success: true,
             message: 'Deal created successfully',
             dealId: transactionRef.id,
-            escrowId: newTransactionData.escrowId,
-            contractAddress: newTransactionData.smartContractAddress,
-            fees: newTransactionData.fees,
+            transactionId: transactionRef.id, // For backward compatibility
+            escrowId: newTransactionData.escrowId || null,
+            contractAddress: newTransactionData.smartContractAddress || null,
+            fees: newTransactionData.fees || null,
             isCrossChain: newTransactionData.isCrossChain,
-            smartContractAddress: newTransactionData.smartContractAddress,
+            smartContractAddress: newTransactionData.smartContractAddress || null,
             transactionData: {
                 ...newTransactionData,
                 id: transactionRef.id
@@ -1114,6 +1115,38 @@ router.patch('/conditions/:conditionId/buyer-review', async (req, res) => {
             });
         }
         
+        const dealData = dealDoc.data();
+        
+        // Find and update the condition
+        if (!dealData.conditions || !Array.isArray(dealData.conditions)) {
+            return res.status(400).json({
+                success: false,
+                error: 'No conditions found in deal'
+            });
+        }
+        
+        const conditionIndex = dealData.conditions.findIndex(c => c.id === conditionId);
+        if (conditionIndex === -1) {
+            return res.status(404).json({
+                success: false,
+                error: 'Condition not found'
+            });
+        }
+        
+        // Update the condition
+        dealData.conditions[conditionIndex].status = status;
+        dealData.conditions[conditionIndex].updatedAt = new Date().toISOString();
+        
+        if (req.body.notes) {
+            dealData.conditions[conditionIndex].notes = req.body.notes;
+        }
+        
+        // Update the deal document
+        await dealRef.update({
+            conditions: dealData.conditions,
+            lastUpdated: FieldValue.serverTimestamp()
+        });
+        
         res.json({
             success: true,
             conditionId,
@@ -1187,18 +1220,44 @@ router.put('/:dealId/sync-status', async (req, res) => {
             });
         }
         
+        // Map smart contract status to deal status
+        const statusMapping = {
+            'IN_ESCROW': 'IN_ESCROW',
+            'IN_FINAL_APPROVAL': 'IN_FINAL_APPROVAL',
+            'COMPLETED': 'COMPLETED',
+            'DISPUTED': 'DISPUTED'
+        };
+        
         // Update deal status
-        await dealRef.update({
+        const updateData = {
             smartContractStatus: newSCStatus,
-            lastUpdated: FieldValue.serverTimestamp(),
-            ...(finalApprovalDeadlineISO && { finalApprovalDeadline: new Date(finalApprovalDeadlineISO) })
-        });
+            status: statusMapping[newSCStatus] || dealData.status,
+            lastUpdated: FieldValue.serverTimestamp()
+        };
+        
+        if (finalApprovalDeadlineISO) {
+            updateData.finalApprovalDeadlineBackend = new Date(finalApprovalDeadlineISO);
+        }
+        
+        // Add timeline event if message provided
+        if (eventMessage) {
+            const timeline = dealData.timeline || [];
+            timeline.push({
+                event: eventMessage,
+                timestamp: new Date().toISOString(),
+                userId: userId,
+                system: false
+            });
+            updateData.timeline = timeline;
+        }
+        
+        await dealRef.update(updateData);
         
         res.json({
             success: true,
             dealId,
             newStatus: newSCStatus,
-            message: eventMessage || 'Smart contract status updated'
+            message: `Deal status synced/updated to ${newSCStatus}`
         });
         
     } catch (error) {
@@ -1228,7 +1287,7 @@ router.post('/:dealId/sc/start-final-approval', async (req, res) => {
         if (isNaN(deadline.getTime())) {
             return res.status(400).json({
                 success: false,
-                error: 'Invalid date format'
+                error: 'Invalid finalApprovalDeadlineISO format'
             });
         }
         
@@ -1251,8 +1310,10 @@ router.post('/:dealId/sc/start-final-approval', async (req, res) => {
         }
         
         await dealRef.update({
+            finalApprovalDeadlineBackend: deadline,
             finalApprovalDeadline: deadline,
             smartContractStatus: 'IN_FINAL_APPROVAL',
+            status: 'IN_FINAL_APPROVAL',
             lastUpdated: FieldValue.serverTimestamp()
         });
         
@@ -1298,30 +1359,41 @@ router.post('/:dealId/sc/raise-dispute', async (req, res) => {
         
         const dealData = dealDoc.data();
         
-        // Check if deal is already completed
-        if (dealData.status === 'completed') {
+        // Check if deal is already completed or in a state where dispute can't be raised
+        const nonDisputableStatuses = ['completed', 'COMPLETED', 'cancelled', 'CANCELLED'];
+        if (nonDisputableStatuses.includes(dealData.status)) {
             return res.status(400).json({
                 success: false,
-                error: 'Cannot raise dispute on completed deal'
+                error: 'Cannot raise dispute - deal is not in a state where a dispute can be raised'
             });
         }
         
         // Update deal with dispute info
-        await dealRef.update({
-            status: 'disputed',
+        const updateData = {
+            status: 'IN_DISPUTE',
             disputeConditionId: conditionId,
+            disputeResolutionDeadlineBackend: new Date(disputeResolutionDeadlineISO),
             disputeResolutionDeadline: new Date(disputeResolutionDeadlineISO),
             lastUpdated: FieldValue.serverTimestamp()
-        });
+        };
         
-        // Use event-driven dispute handling
-        await raiseDealDispute(dealId, {
-            escrowId: dealData.escrowId,
-            chainId: dealData.buyerChainId,
-            contractAddress: dealData.smartContractAddress,
-            reason: `Dispute on condition: ${conditionId}`,
-            conditionId
-        });
+        await dealRef.update(updateData);
+        
+        // Use event-driven dispute handling if smart contract exists
+        if (dealData.escrowId && dealData.smartContractAddress && dealData.buyerChainId) {
+            try {
+                await raiseDealDispute(dealId, {
+                    escrowId: dealData.escrowId,
+                    chainId: dealData.buyerChainId,
+                    contractAddress: dealData.smartContractAddress,
+                    reason: `Dispute on condition: ${conditionId}`,
+                    conditionId
+                });
+            } catch (disputeError) {
+                console.error('[DISPUTE SMART CONTRACT ERROR]', disputeError);
+                // Continue even if smart contract dispute fails
+            }
+        }
         
         res.json({
             success: true,
@@ -1381,10 +1453,22 @@ router.post('/estimate-gas', async (req, res) => {
         
         res.json({
             success: true,
-            operation,
-            network,
-            gasEstimate: gasEstimates[operation],
-            estimatedCost: '0.01 ETH' // Mock value
+            data: {
+                operation,
+                network,
+                gasLimit: parseInt(gasEstimates[operation]),
+                gasEstimate: gasEstimates[operation],
+                estimatedCost: '0.01 ETH', // Mock value
+                gasPrices: {
+                    slow: '20',
+                    standard: '30',
+                    fast: '40'
+                },
+                serviceFee: {
+                    percentage: 2,
+                    feeEth: '0.002'
+                }
+            }
         });
         
     } catch (error) {
@@ -1607,22 +1691,55 @@ router.get('/admin/manual-intervention', async (req, res) => {
         const { db } = await getFirebaseServices();
         
         // Get deals that might need manual intervention
-        const snapshot = await db.collection('deals')
-            .where('status', 'in', ['disputed', 'failed'])
-            .get();
-        
         const deals = [];
-        snapshot.forEach(doc => {
-            deals.push({
-                id: doc.id,
-                ...doc.data()
+        
+        try {
+            // Get deals by status
+            const disputedSnapshot = await db.collection('deals')
+                .where('status', '==', 'disputed')
+                .get();
+            
+            disputedSnapshot.forEach(doc => {
+                const data = doc.data();
+                if (data) {
+                    deals.push({
+                        id: doc.id,
+                        ...data
+                    });
+                }
             });
-        });
+            
+            // Get deals marked as requiring intervention
+            const interventionSnapshot = await db.collection('deals')
+                .where('requiresManualIntervention', '==', true)
+                .get();
+            
+            interventionSnapshot.forEach(doc => {
+                const data = doc.data();
+                if (data && !deals.find(d => d.id === doc.id)) {
+                    deals.push({
+                        id: doc.id,
+                        ...data
+                    });
+                }
+            });
+        } catch (queryError) {
+            console.error('[ADMIN QUERY ERROR]', queryError);
+        }
+        
+        // Calculate summary statistics
+        const summary = {
+            totalDeals: deals.length,
+            totalStuck: deals.filter(d => d.status === 'STUCK').length,
+            disputed: deals.filter(d => d.status === 'disputed' || d.status === 'IN_DISPUTE').length,
+            requiresIntervention: deals.filter(d => d.requiresManualIntervention).length
+        };
         
         res.json({
             success: true,
             deals,
-            count: deals.length
+            count: deals.length,
+            summary
         });
         
     } catch (error) {

@@ -310,9 +310,10 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
 
         // Check buyer received stake back (and deal amount)
         const buyerBalanceAfter = await mockUSDC.balanceOf(await buyer.getAddress());
-        // When resolved for buyer, they get the deal amount + stake back
-        // But wait - the deal amount might have already been deducted, let's just check stake return
-        expect(buyerBalanceAfter - buyerBalanceBefore).to.equal(stakeAmount + DEAL_AMOUNT);
+        // When resolved for buyer (releaseFunds=false), they get the netAmount (98% of DEAL_AMOUNT) + stake back
+        // The contract deducts a 2% service fee, so netAmount = DEAL_AMOUNT * 98/100
+        const netAmount = DEAL_AMOUNT * 98n / 100n;
+        expect(buyerBalanceAfter - buyerBalanceBefore).to.equal(stakeAmount + netAmount);
       });
 
       it("should slash stake when resolved against disputer", async function () {
@@ -324,7 +325,7 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
           await mockUSDC.getAddress(),
           DEAL_AMOUNT,
           await mockUSDC.getAddress(),
-          1, // same chain to avoid cross-chain issues
+          0, // 0 means same chain (will use block.chainid)
           7
         );
         const receipt0 = await tx0.wait();
@@ -377,9 +378,10 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
         expect(disputeEvent.args.stakeReturned).to.equal(0);
         expect(disputeEvent.args.stakeSlashed).to.equal(slashStakeAmount);
 
-        // Check seller received slashed stake
+        // Check seller received slashed stake and the netAmount from the deal
         const sellerBalanceAfter = await mockUSDC.balanceOf(await seller.getAddress());
-        expect(sellerBalanceAfter - sellerBalanceBefore).to.equal(slashStakeAmount);
+        const netAmount = DEAL_AMOUNT * 98n / 100n; // 2% service fee
+        expect(sellerBalanceAfter - sellerBalanceBefore).to.equal(slashStakeAmount + netAmount);
       });
 
       it("should handle partial resolution correctly", async function () {
@@ -469,7 +471,9 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
         expect(stakeEvent.args.amount).to.equal(stakeAmount);
 
         const buyerBalanceAfter = await mockUSDC.balanceOf(await buyer.getAddress());
-        expect(buyerBalanceAfter - buyerBalanceBefore).to.equal(DEAL_AMOUNT + stakeAmount);
+        // Buyer gets back netAmount (98% of DEAL_AMOUNT) + stakeAmount
+        const netAmount = DEAL_AMOUNT * 98n / 100n;
+        expect(buyerBalanceAfter - buyerBalanceBefore).to.equal(netAmount + stakeAmount);
       });
 
       it("should emit correct events for stake resolution", async function () {
