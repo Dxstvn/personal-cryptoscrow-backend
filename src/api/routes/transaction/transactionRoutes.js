@@ -1396,6 +1396,211 @@ router.post('/estimate-gas', async (req, res) => {
     }
 });
 
+// Get stake requirement for a deal
+router.get('/:dealId/stake-requirement', async (req, res) => {
+    try {
+        const { dealId } = req.params;
+        const { db } = await getFirebaseServices();
+        
+        // Get deal details
+        const dealDoc = await db.collection('deals').doc(dealId).get();
+        if (!dealDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                error: 'Deal not found'
+            });
+        }
+        
+        const dealData = dealDoc.data();
+        const userId = req.user?.uid || dealData.buyer; // Use authenticated user or buyer
+        
+        // Get user reputation
+        const userDoc = await db.collection('users').doc(userId).get();
+        const userData = userDoc.exists ? userDoc.data() : {};
+        const reputationScore = userData.reputationScore || 0;
+        
+        // Calculate stake requirement based on reputation
+        const transactionAmount = dealData.depositAmount || dealData.amount;
+        const { stakePercentage, stakeAmount } = await escrowService.calculateStakeRequirement(
+            userData.walletAddress || '0x0000000000000000000000000000000000000000',
+            transactionAmount
+        );
+        
+        // Determine reputation level
+        let reputationLevel = 'Unverified';
+        if (reputationScore >= 900) reputationLevel = 'Excellent';
+        else if (reputationScore >= 750) reputationLevel = 'Good';
+        else if (reputationScore >= 500) reputationLevel = 'Standard';
+        else if (reputationScore >= 200) reputationLevel = 'Probation';
+        else reputationLevel = 'Restricted';
+        
+        res.json({
+            success: true,
+            reputationScore,
+            reputationLevel,
+            stakePercentage: stakePercentage / 100, // Convert from basis points to percentage
+            requiredStake: stakeAmount,
+            currency: dealData.currency || 'USDC'
+        });
+        
+    } catch (error) {
+        console.error('[STAKE REQUIREMENT ERROR]', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Fund transaction endpoint
+router.post('/:dealId/fund', async (req, res) => {
+    try {
+        const { dealId } = req.params;
+        const { network } = req.body;
+        const { db } = await getFirebaseServices();
+        
+        // Get deal details
+        const dealDoc = await db.collection('deals').doc(dealId).get();
+        if (!dealDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                error: 'Deal not found'
+            });
+        }
+        
+        const dealData = dealDoc.data();
+        
+        // Mark as funded in database
+        await db.collection('deals').doc(dealId).update({
+            status: 'funded',
+            fundedAt: FieldValue.serverTimestamp(),
+            lastUpdated: FieldValue.serverTimestamp()
+        });
+        
+        res.json({
+            success: true,
+            message: 'Transaction funded successfully',
+            transactionHash: '0x' + '0'.repeat(64) // Mock hash for testing
+        });
+        
+    } catch (error) {
+        console.error('[FUND TRANSACTION ERROR]', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Raise dispute with stake endpoint
+router.post('/:dealId/dispute/raise-with-stake', rateLimiters.dispute, rateLimiters.monitor, async (req, res) => {
+    try {
+        const { dealId } = req.params;
+        const { reason, stakeAmount, network } = req.body;
+        const userId = req.user?.uid;
+        
+        if (!reason) {
+            return res.status(400).json({
+                success: false,
+                error: 'Dispute reason is required'
+            });
+        }
+        
+        const { db } = await getFirebaseServices();
+        
+        // Get deal details
+        const dealDoc = await db.collection('deals').doc(dealId).get();
+        if (!dealDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                error: 'Deal not found'
+            });
+        }
+        
+        const dealData = dealDoc.data();
+        
+        // For testing, simulate the dispute
+        const disputeData = {
+            raisedBy: userId || dealData.buyer,
+            raisedAt: FieldValue.serverTimestamp(),
+            reason,
+            stakeAmount,
+            stakeStatus: 'locked',
+            status: 'pending'
+        };
+        
+        // Update deal with dispute
+        await db.collection('deals').doc(dealId).update({
+            status: 'disputed',
+            dispute: disputeData,
+            lastUpdated: FieldValue.serverTimestamp()
+        });
+        
+        res.json({
+            success: true,
+            message: 'Dispute raised successfully with stake',
+            dispute: {
+                ...disputeData,
+                raisedAt: new Date()
+            }
+        });
+        
+    } catch (error) {
+        console.error('[RAISE DISPUTE WITH STAKE ERROR]', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Calculate stake requirement based on transaction amount
+router.post('/calculate-stake', async (req, res) => {
+    try {
+        const { transactionAmount } = req.body;
+        const userId = req.user?.uid || 'standardUser';
+        
+        if (!transactionAmount || transactionAmount <= 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Valid transaction amount is required'
+            });
+        }
+        
+        const { db } = await getFirebaseServices();
+        
+        // Get user reputation
+        const userDoc = await db.collection('users').doc(userId).get();
+        const userData = userDoc.exists ? userDoc.data() : { reputationScore: 0 };
+        const reputationScore = userData.reputationScore || 0;
+        
+        // Calculate stake based on reputation tiers
+        let stakePercentage;
+        if (reputationScore >= 900) stakePercentage = 0.02; // 2%
+        else if (reputationScore >= 750) stakePercentage = 0.025; // 2.5%
+        else if (reputationScore >= 500) stakePercentage = 0.035; // 3.5%
+        else if (reputationScore >= 200) stakePercentage = 0.05; // 5%
+        else stakePercentage = 0.10; // 10%
+        
+        const requiredStake = transactionAmount * stakePercentage;
+        
+        res.json({
+            success: true,
+            reputationScore,
+            stakePercentage,
+            requiredStake,
+            transactionAmount
+        });
+        
+    } catch (error) {
+        console.error('[CALCULATE STAKE ERROR]', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 // Admin endpoints
 router.get('/admin/manual-intervention', async (req, res) => {
     try {

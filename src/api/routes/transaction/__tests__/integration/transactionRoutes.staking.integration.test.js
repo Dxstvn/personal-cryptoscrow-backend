@@ -41,10 +41,11 @@ describe('Transaction Routes - Staking Integration Tests', () => {
 
     // Start Hardhat node
     const contractDir = path.join(__dirname, '../../../../../../contract');
+    let testProvider;
     try {
       console.log('[Test] Checking if Hardhat is running...');
       // Check if hardhat is already running by trying to connect
-      const testProvider = new ethers.providers.JsonRpcProvider('http://localhost:8545');
+      testProvider = new ethers.JsonRpcProvider('http://localhost:8545');
       await testProvider.getNetwork();
       console.log('[Test] Hardhat already running');
     } catch (error) {
@@ -54,30 +55,31 @@ describe('Transaction Routes - Staking Integration Tests', () => {
 
     // Only deploy contracts if hardhat is available
     let hardhatAvailable = false;
-    try {
-      const testProvider = new ethers.providers.JsonRpcProvider('http://localhost:8545');
-      await testProvider.getNetwork();
-      hardhatAvailable = true;
-      
-      // Deploy contracts
-      console.log('[Test] Deploying contracts...');
-      const deployResult = await execAsync(
-        'npx hardhat run scripts/deployments/deployUniversalEscrowV3.js --network localhost',
-        { cwd: contractDir }
-      );
-      
-      // Extract contract address from deployment output
-      const addressMatch = deployResult.stdout.match(/Contract deployed to: (0x[a-fA-F0-9]{40})/);
-      if (addressMatch) {
-        contractAddress = addressMatch[1];
-        console.log('[Test] Contract deployed at:', contractAddress);
-      }
+    if (testProvider) {
+      try {
+        await testProvider.getNetwork();
+        hardhatAvailable = true;
+        
+        // Deploy contracts
+        console.log('[Test] Deploying contracts...');
+        const deployResult = await execAsync(
+          'npx hardhat run scripts/deployment-scripts/deployStakingContract.js --network localhost',
+          { cwd: contractDir }
+        );
+        
+        // Extract contract address from deployment output
+        const addressMatch = deployResult.stdout.match(/Contract deployed to: (0x[a-fA-F0-9]{40})|Contract: (0x[a-fA-F0-9]{40})/);
+        if (addressMatch) {
+          contractAddress = addressMatch[1] || addressMatch[2];
+          console.log('[Test] Contract deployed at:', contractAddress);
+        }
 
-      // Set up provider and signer
-      provider = testProvider;
-      signer = provider.getSigner(0);
-    } catch (error) {
-      console.log('[Test] Skipping contract deployment:', error.message);
+        // Set up provider and signer
+        provider = testProvider;
+        signer = await provider.getSigner(0);
+      } catch (error) {
+        console.log('[Test] Skipping contract deployment:', error.message);
+      }
     }
 
     // Initialize Firebase with emulator settings
@@ -101,7 +103,7 @@ describe('Transaction Routes - Staking Integration Tests', () => {
     expressApp = express();
     expressApp.use(express.json());
     
-    // Mock authentication middleware
+    // Mock authentication middleware - always authenticate as the first user
     expressApp.use((req, res, next) => {
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -110,6 +112,10 @@ describe('Transaction Routes - Staking Integration Tests', () => {
         if (userId) {
           req.user = { uid: userId };
         }
+      }
+      // Always set a user for testing
+      if (!req.user) {
+        req.user = { uid: 'excellentBuyer' };
       }
       next();
     });
@@ -158,15 +164,24 @@ describe('Transaction Routes - Staking Integration Tests', () => {
         emailVerified: true
       });
 
-      // Get wallet from private key
-      const wallet = new ethers.Wallet(config.privateKey, provider);
+      let wallet;
+      let walletAddress;
+      
+      if (provider) {
+        // Get wallet from private key
+        wallet = new ethers.Wallet(config.privateKey, provider);
+        walletAddress = wallet.address;
+      } else {
+        // Generate a placeholder address for tests without blockchain
+        walletAddress = `0x${config.uid.padEnd(40, '0')}`;
+      }
 
       // Create user document with reputation and wallet
       await db.collection('users').doc(config.uid).set({
         userId: config.uid,
         email: config.email,
         reputationScore: config.reputation,
-        walletAddress: wallet.address,
+        walletAddress: walletAddress,
         createdAt: Timestamp.now()
       });
 
@@ -180,28 +195,35 @@ describe('Transaction Routes - Staking Integration Tests', () => {
         token: authTokens[config.uid]
       };
 
-      // Fund wallet with ETH for gas
-      await signer.sendTransaction({
-        to: wallet.address,
-        value: ethers.utils.parseEther("10")
-      });
+      // Fund wallet with ETH for gas if blockchain is available
+      if (signer && wallet) {
+        await signer.sendTransaction({
+          to: wallet.address,
+          value: ethers.parseEther("10")
+        });
+      }
     }
 
-    // Deploy and setup mock USDC
-    const MockToken = await ethers.getContractFactory("MockToken", signer);
-    const mockUSDC = await MockToken.deploy("Mock USDC", "USDC", 6);
-    await mockUSDC.deployed();
+    // Deploy and setup mock USDC if blockchain is available
+    let mockUSDC;
+    if (signer) {
+      const MockToken = await ethers.getContractFactory("MockToken", signer);
+      mockUSDC = await MockToken.deploy("Mock USDC", "USDC", 6);
+      await mockUSDC.waitForDeployment();
 
-    // Fund test users with USDC
-    for (const userId of Object.keys(testUsers)) {
-      await mockUSDC.mint(
-        testUsers[userId].wallet.address,
-        ethers.utils.parseUnits("10000", 6)
-      );
+      // Fund test users with USDC
+      for (const userId of Object.keys(testUsers)) {
+        if (testUsers[userId].wallet) {
+          await mockUSDC.mint(
+            testUsers[userId].wallet.address,
+            ethers.parseUnits("10000", 6)
+          );
+        }
+      }
+      
+      // Store USDC address
+      process.env.MOCK_USDC_ADDRESS = await mockUSDC.getAddress();
     }
-
-    // Store USDC address
-    process.env.MOCK_USDC_ADDRESS = mockUSDC.address;
 
   }, TEST_TIMEOUT);
 
