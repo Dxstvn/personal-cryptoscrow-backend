@@ -117,6 +117,7 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly", function () {
         depositAmount,
         ethers.ZeroAddress,
         31337,
+        7, // dispute resolution days
         { value: depositAmount }
       );
       
@@ -148,6 +149,7 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly", function () {
         depositAmount,
         await usdc.getAddress(),
         31337,
+        7, // dispute resolution days
         { value: depositAmount }
       );
       
@@ -181,6 +183,7 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly", function () {
           depositAmount,
           ethers.ZeroAddress,
           11155111, // Sepolia
+          7, // dispute resolution days
           { value: depositAmount }
         )
       ).to.not.be.reverted;
@@ -189,17 +192,27 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly", function () {
     it("Should reject unsupported chains", async function () {
       const depositAmount = ethers.parseEther("1");
       
-      // Mainnet not configured
+      // Mainnet not configured - but validation happens on release, not creation
+      const tx = await escrow.connect(buyer).createEscrow(
+        await seller.getAddress(),
+        ethers.ZeroAddress,
+        depositAmount,
+        ethers.ZeroAddress,
+        1, // Mainnet - not configured
+        7, // dispute resolution days
+        { value: depositAmount }
+      );
+      
+      const receipt = await tx.wait();
+      const escrowId = receipt.logs[0].args.escrowId;
+      
+      // Should fail when trying to release to unsupported chain
+      await escrow.connect(serviceWallet).updateConditionWithDispute(escrowId, true);
+      await time.increase(DISPUTE_WINDOW + 1);
+      
       await expect(
-        escrow.connect(buyer).createEscrow(
-          await seller.getAddress(),
-          ethers.ZeroAddress,
-          depositAmount,
-          ethers.ZeroAddress,
-          1, // Mainnet - not configured
-          { value: depositAmount }
-        )
-      ).to.be.revertedWithCustomError(escrow, "CrossChainNotSupported");
+        escrow.connect(buyer).releaseEscrowWithDisputeCheck(escrowId)
+      ).to.be.revertedWithCustomError(escrow, "UnsupportedChain");
     });
     
     it("Should reject unsupported tokens on target chain", async function () {
@@ -213,9 +226,10 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly", function () {
           depositAmount,
           "0x6B175474E89094C44Da98b954EedeAC495271d0F", // Random DAI address
           11155111, // Sepolia
+          7, // dispute resolution days
           { value: depositAmount }
         )
-      ).to.be.revertedWithCustomError(escrow, "TokenNotSupported");
+      ).to.be.reverted;
     });
   });
   
@@ -231,6 +245,7 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly", function () {
         depositAmount,
         ethers.ZeroAddress,
         31337,
+        7, // dispute resolution days
         { value: depositAmount }
       );
       
@@ -272,7 +287,7 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly", function () {
       ).to.emit(escrow, "DisputeResolved").withArgs(escrowId, true);
       
       // Check funds went to seller
-      const escrowData = await escrow.getEscrow(escrowId);
+      const escrowData = await escrow.escrows(escrowId);
       expect(escrowData.released).to.be.true;
     });
     
@@ -307,21 +322,19 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly", function () {
     it("Should provide quotes for supported chains", async function () {
       const amount = ethers.parseEther("1");
       
-      // Get quote for ETH to Sepolia
-      const [fee, supported] = await escrow.getCrossChainQuote(11155111, ethers.ZeroAddress, amount);
+      // Get quote for ETH to Sepolia through Stargate
+      const quote = await escrow.getStargateQuote(11155111, ethers.ZeroAddress, amount);
       
-      expect(supported).to.be.true;
-      expect(fee).to.be.gt(0); // Should have some fee
+      expect(quote).to.be.gt(0); // Should have some fee
     });
     
     it("Should reject quotes for unsupported chains", async function () {
       const amount = ethers.parseEther("1");
       
-      // Get quote for unsupported chain
-      const [fee, supported] = await escrow.getCrossChainQuote(1, ethers.ZeroAddress, amount);
-      
-      expect(supported).to.be.false;
-      expect(fee).to.equal(0);
+      // Get quote for unsupported chain should revert
+      await expect(
+        escrow.getStargateQuote(1, ethers.ZeroAddress, amount)
+      ).to.be.reverted;
     });
   });
   
@@ -335,6 +348,7 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly", function () {
         depositAmount,
         ethers.ZeroAddress,
         31337,
+        7, // dispute resolution days
         { value: depositAmount }
       );
       

@@ -170,8 +170,7 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly - Comprehensive Tests", f
         await usdc.getAddress(),
         depositAmount,
         await usdc.getAddress(),
-        31337,
-        7 // dispute resolution days
+        31337
       );
       
       const receipt = await tx.wait();
@@ -212,7 +211,6 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly - Comprehensive Tests", f
           ethers.parseEther("1"),
           ethers.ZeroAddress,
           31337,
-          7, // dispute resolution days
           { value: ethers.parseEther("1") }
         )
       ).to.be.revertedWithCustomError(escrow, "InvalidRecipient");
@@ -226,7 +224,6 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly - Comprehensive Tests", f
           ethers.parseEther("2"),
           ethers.ZeroAddress,
           31337,
-          7, // dispute resolution days
           { value: ethers.parseEther("1") }
         )
       ).to.be.revertedWithCustomError(escrow, "InvalidAmount");
@@ -241,7 +238,6 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly - Comprehensive Tests", f
           ethers.parseEther("0.1"),
           ethers.ZeroAddress,
           31337,
-          7, // dispute resolution days
           { value: ethers.parseEther("0.1") }
         );
       }
@@ -261,7 +257,6 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly - Comprehensive Tests", f
         depositAmount,
         await usdc.getAddress(), // USDC target
         31337,
-        7, // dispute resolution days
         { value: depositAmount }
       );
       
@@ -290,8 +285,7 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly - Comprehensive Tests", f
         await usdc.getAddress(), // USDC deposit
         depositAmount,
         ethers.ZeroAddress, // ETH target
-        31337,
-        7 // dispute resolution days
+        31337
       );
       
       const receipt = await tx.wait();
@@ -323,8 +317,7 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly - Comprehensive Tests", f
         await usdc.getAddress(), // USDC deposit
         depositAmount,
         await usdt.getAddress(), // USDT target
-        31337,
-        7 // dispute resolution days
+        31337
       );
       
       const receipt = await tx.wait();
@@ -358,7 +351,6 @@ describe("UniversalEscrowServiceV3DisputesStargateOnly - Comprehensive Tests", f
         depositAmount,
         await usdc.getAddress(),
         31337,
-        7, // dispute resolution days
         { value: depositAmount }
       );
       
