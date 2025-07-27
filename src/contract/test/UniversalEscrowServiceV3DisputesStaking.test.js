@@ -65,8 +65,11 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
   });
 
   describe("Dispute Staking Mechanism", function () {
-    describe("raiseDisputeWithStake", function () {
+    describe("raiseDispute", function () {
       it("should allow buyer to raise dispute with correct stake", async function () {
+        // First mark conditions as met (only service wallet can do this)
+        await escrow.connect(owner).updateConditionWithDispute(dealId, true);
+        
         // Calculate stake requirement (2.5% for excellent reputation)
         const stakeAmount = DEAL_AMOUNT * 25n / 1000n; // 2.5%
 
@@ -74,17 +77,16 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
         await mockUSDC.connect(buyer).approve(await escrow.getAddress(), DEAL_AMOUNT + stakeAmount);
 
         // Raise dispute with stake
-        const tx = await escrow.connect(buyer).raiseDisputeWithStake(
+        const tx = await escrow.connect(buyer).raiseDispute(
           dealId,
-          ethers.id("Quality issue"),
-          stakeAmount,
-          950 // reputation score
+          "Quality issue",
+          await mockUSDC.getAddress() // stakeToken parameter
         );
 
         const receipt = await tx.wait();
         const logs = receipt.logs.filter(log => {
           try {
-            return escrow.interface.parseLog(log).name === "DisputeRaisedWithStake";
+            return escrow.interface.parseLog(log).name === "DisputeRaised";
           } catch {
             return false;
           }
@@ -104,8 +106,8 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
       });
 
       it("should allow seller to raise dispute with stake", async function () {
-        // Mark conditions met first
-        await escrow.connect(buyer).updateConditions(dealId, [true, true]);
+        // Mark conditions met first (only service wallet can do this)
+        await escrow.connect(owner).updateConditionWithDispute(dealId, true);
 
         // Mint and approve USDC for seller
         const stakeAmount = DEAL_AMOUNT * 35n / 1000n; // 3.5% for good reputation
@@ -113,17 +115,12 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
         await mockUSDC.connect(seller).approve(await escrow.getAddress(), stakeAmount);
 
         // Raise dispute with stake
-        const tx = await escrow.connect(seller).raiseDisputeWithStake(
-          dealId,
-          ethers.id("Payment issue"),
-          stakeAmount,
-          800 // reputation score
-        );
+        const tx = await escrow.connect(seller).raiseDispute(dealId, "Payment issue", await mockUSDC.getAddress());
 
         const receipt = await tx.wait();
         const logs = receipt.logs.filter(log => {
           try {
-            return escrow.interface.parseLog(log).name === "DisputeRaisedWithStake";
+            return escrow.interface.parseLog(log).name === "DisputeRaised";
           } catch {
             return false;
           }
@@ -132,68 +129,58 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
       });
 
       it("should fail if dispute already exists", async function () {
+        // Mark conditions as met first
+        await escrow.connect(owner).updateConditionWithDispute(dealId, true);
+        
         const stakeAmount = DEAL_AMOUNT * 25n / 1000n;
         
         // First dispute succeeds
-        await escrow.connect(buyer).raiseDisputeWithStake(
-          dealId,
-          ethers.id("Issue 1"),
-          stakeAmount,
-          950
-        );
+        await escrow.connect(buyer).raiseDispute(dealId, "Issue 1", await mockUSDC.getAddress());
 
         // Second dispute fails
         await expect(
-          escrow.connect(buyer).raiseDisputeWithStake(
-            dealId,
-            ethers.id("Issue 2"),
-            stakeAmount,
-            950
-          )
+          escrow.connect(buyer).raiseDispute(dealId, "Issue 2", await mockUSDC.getAddress())
         ).to.be.revertedWith("Deal already disputed");
       });
 
       it("should fail if insufficient stake provided", async function () {
+        // Mark conditions as met first
+        await escrow.connect(owner).updateConditionWithDispute(dealId, true);
+        
         const insufficientStake = DEAL_AMOUNT * 10n / 1000n; // 1% instead of 2.5%
 
         await expect(
-          escrow.connect(buyer).raiseDisputeWithStake(
-            dealId,
-            ethers.id("Issue"),
-            insufficientStake,
-            950
-          )
-        ).to.be.revertedWith("Insufficient stake for reputation level");
+          escrow.connect(buyer).raiseDispute(dealId, "Issue", await mockUSDC.getAddress())
+        ).to.be.revertedWithCustomError(escrow, "InsufficientStake");
       });
 
       it("should fail if stake transfer fails", async function () {
+        // Mark conditions as met first
+        await escrow.connect(owner).updateConditionWithDispute(dealId, true);
+        
         const stakeAmount = DEAL_AMOUNT * 100n / 1000n; // 10% for restricted
 
         // Don't approve enough tokens
         await mockUSDC.connect(buyer).approve(await escrow.getAddress(), 0);
 
         await expect(
-          escrow.connect(buyer).raiseDisputeWithStake(
-            dealId,
-            ethers.id("Issue"),
-            stakeAmount,
-            100
-          )
+          escrow.connect(buyer).raiseDispute(dealId, "Issue", await mockUSDC.getAddress())
         ).to.be.reverted;
       });
 
       it("should validate reputation score bounds", async function () {
+        // Mark conditions as met first
+        await escrow.connect(owner).updateConditionWithDispute(dealId, true);
+        
         const stakeAmount = DEAL_AMOUNT * 25n / 1000n;
 
+        // Set invalid reputation score
+        await escrow.connect(owner).setReputationScore(await buyer.getAddress(), 1001);
+        
         // Test reputation > 1000
         await expect(
-          escrow.connect(buyer).raiseDisputeWithStake(
-            dealId,
-            ethers.id("Issue"),
-            stakeAmount,
-            1001
-          )
-        ).to.be.revertedWith("Invalid reputation score");
+          escrow.connect(buyer).raiseDispute(dealId, "Issue", await mockUSDC.getAddress())
+        ).to.be.revertedWithCustomError(escrow, "InvalidReputationScore");
 
         // Test reputation < 0 (would underflow as uint256)
         // Cannot test negative as uint256 doesn't allow it
@@ -231,12 +218,17 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
 
           const expectedStake = DEAL_AMOUNT * BigInt(testCase.percentage) / 1000n;
 
+          // Mark conditions as met first
+          await escrow.connect(owner).updateConditionWithDispute(testDealId, true);
+          
+          // Set reputation score for this test
+          await escrow.connect(owner).setReputationScore(await buyer.getAddress(), testCase.reputation);
+          
           // This should succeed with exact stake
-          await escrow.connect(buyer).raiseDisputeWithStake(
+          await escrow.connect(buyer).raiseDispute(
             testDealId,
-            ethers.id("Test"),
-            expectedStake,
-            testCase.reputation
+            "Test",
+            await mockUSDC.getAddress()
           );
 
           const deal = await escrow.escrows(testDealId);
@@ -249,14 +241,12 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
       let stakeAmount;
 
       beforeEach(async function () {
+        // Mark conditions as met first
+        await escrow.connect(owner).updateConditionWithDispute(dealId, true);
+        
         // Raise dispute with stake
         stakeAmount = DEAL_AMOUNT * 25n / 1000n; // 2.5%
-        await escrow.connect(buyer).raiseDisputeWithStake(
-          dealId,
-          ethers.id("Test dispute"),
-          stakeAmount,
-          950
-        );
+        await escrow.connect(buyer).raiseDispute(dealId, "Test dispute", await mockUSDC.getAddress());
       });
 
       it("should return stake when resolved in favor of disputer", async function () {
@@ -351,7 +341,7 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
 
       it("should handle auto-resolution timeout correctly", async function () {
         // Mark conditions met
-        await escrow.connect(buyer).updateConditions(dealId, [true, true]);
+        await escrow.connect(owner).updateConditionWithDispute(dealId, true);
 
         // Wait for dispute window
         await time.increase(DISPUTE_WINDOW + 1);
@@ -414,14 +404,12 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
 
     describe("Emergency Functions", function () {
       it("should allow owner to emergency withdraw stuck stakes", async function () {
+        // Mark conditions as met first
+        await escrow.connect(owner).updateConditionWithDispute(dealId, true);
+        
         // Create situation with stuck stake
         const stakeAmount = DEAL_AMOUNT * 25n / 1000n;
-        await escrow.connect(buyer).raiseDisputeWithStake(
-          dealId,
-          ethers.id("Test"),
-          stakeAmount,
-          950
-        );
+        await escrow.connect(buyer).raiseDispute(dealId, "Test", await mockUSDC.getAddress());
 
         const ownerBalanceBefore = await mockUSDC.balanceOf(await owner.getAddress());
 
@@ -445,13 +433,11 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
       });
 
       it("should allow emergency stake return", async function () {
+        // Mark conditions as met first
+        await escrow.connect(owner).updateConditionWithDispute(dealId, true);
+        
         const stakeAmount = DEAL_AMOUNT * 25n / 1000n;
-        await escrow.connect(buyer).raiseDisputeWithStake(
-          dealId,
-          ethers.id("Test"),
-          stakeAmount,
-          950
-        );
+        await escrow.connect(buyer).raiseDispute(dealId, "Test", await mockUSDC.getAddress());
 
         const buyerBalanceBefore = await mockUSDC.balanceOf(await buyer.getAddress());
 
@@ -467,13 +453,11 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
       });
 
       it("should prevent double stake return", async function () {
+        // Mark conditions as met first
+        await escrow.connect(owner).updateConditionWithDispute(dealId, true);
+        
         const stakeAmount = DEAL_AMOUNT * 25n / 1000n;
-        await escrow.connect(buyer).raiseDisputeWithStake(
-          dealId,
-          ethers.id("Test"),
-          stakeAmount,
-          950
-        );
+        await escrow.connect(buyer).raiseDispute(dealId, "Test", await mockUSDC.getAddress());
 
         // First return succeeds
         await escrow.connect(owner).emergencyStakeReturn(dealId, await buyer.getAddress());
@@ -507,10 +491,14 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
         const event = escrow.interface.parseLog(logs[0]);
         const newDealId = event.args.dealId;
 
+        // Mark conditions as met first
+        await escrow.connect(owner).updateConditionWithDispute(newDealId, true);
+        
         // Raise regular dispute (no stake)
         await escrow.connect(buyer).raiseDispute(
           newDealId,
-          ethers.id("Regular dispute")
+          "Regular dispute",
+          await mockUSDC.getAddress()
         );
 
         const deal = await escrow.escrows(newDealId);
@@ -519,10 +507,14 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
       });
 
       it("should maintain backward compatibility", async function () {
+        // Mark conditions as met first
+        await escrow.connect(owner).updateConditionWithDispute(dealId, true);
+        
         // Old dispute flow should still work
         await escrow.connect(buyer).raiseDispute(
           dealId,
-          ethers.id("Old style dispute")
+          "Old style dispute",
+          await mockUSDC.getAddress()
         );
 
         // Resolution should work without stake considerations
@@ -567,22 +559,29 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
           const event = escrow.interface.parseLog(logs[0]);
           const testDealId = event.args.dealId;
 
+          // Mark conditions as met first
+          await escrow.connect(owner).updateConditionWithDispute(testDealId, true);
+          
+          // Set reputation score for this test
+          await escrow.connect(owner).setReputationScore(await buyer.getAddress(), testCase.reputation);
+          
           // Incorrect stake should fail
           await expect(
-            escrow.connect(buyer).raiseDisputeWithStake(
+            escrow.connect(buyer).raiseDispute(
               testDealId,
-              ethers.id("Test"),
-              testCase.incorrectStake,
-              testCase.reputation
+              "Test",
+              await mockUSDC.getAddress()
             )
-          ).to.be.revertedWith("Insufficient stake for reputation level");
+          ).to.be.revertedWithCustomError(escrow, "InsufficientStake");
 
+          // Approve more tokens and try with correct stake
+          await mockUSDC.connect(buyer).approve(await escrow.getAddress(), testCase.correctStake);
+          
           // Correct stake should succeed
-          await escrow.connect(buyer).raiseDisputeWithStake(
+          await escrow.connect(buyer).raiseDispute(
             testDealId,
-            ethers.id("Test"),
-            testCase.correctStake,
-            testCase.reputation
+            "Test",
+            await mockUSDC.getAddress()
           );
         }
       });
@@ -625,12 +624,17 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
           const event = escrow.interface.parseLog(logs[0]);
           const testDealId = event.args.dealId;
 
+          // Mark conditions as met first
+          await escrow.connect(owner).updateConditionWithDispute(testDealId, true);
+          
+          // Set reputation score for this test
+          await escrow.connect(owner).setReputationScore(await buyer.getAddress(), boundary.score);
+          
           // Should work with correct stake
-          await escrow.connect(buyer).raiseDisputeWithStake(
+          await escrow.connect(buyer).raiseDispute(
             testDealId,
-            ethers.id("Test"),
-            expectedStake,
-            boundary.score
+            "Test",
+            await mockUSDC.getAddress()
           );
         }
       });
@@ -638,17 +642,15 @@ describe("UniversalEscrowServiceV3 - Dispute Staking", function () {
 
     describe("Gas Optimization", function () {
       it("should have reasonable gas costs for stake operations", async function () {
+        // Mark conditions as met first
+        await escrow.connect(owner).updateConditionWithDispute(dealId, true);
+        
         const stakeAmount = DEAL_AMOUNT * 25n / 1000n;
 
         // Measure gas for raising dispute with stake
-        const tx1 = await escrow.connect(buyer).raiseDisputeWithStake(
-          dealId,
-          ethers.id("Gas test"),
-          stakeAmount,
-          950
-        );
+        const tx1 = await escrow.connect(buyer).raiseDispute(dealId, "Gas test", await mockUSDC.getAddress());
         const receipt1 = await tx1.wait();
-        console.log("Gas for raiseDisputeWithStake:", receipt1.gasUsed.toString());
+        console.log("Gas for raiseDispute:", receipt1.gasUsed.toString());
         expect(receipt1.gasUsed).to.be.lt(300000n); // Should be under 300k gas
 
         // Measure gas for resolution
