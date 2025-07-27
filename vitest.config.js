@@ -39,18 +39,15 @@ export default defineConfig({
         singleFork: true
       }
     },
-    testMatch: [
-      '**/__tests__/**/*.test.js',
-      '**/__tests__/**/*.spec.js',
-      '**/test/**/*.test.js',
-      '**/test/**/*.spec.js'
-    ],
+    // Removed testMatch to allow vitest default behavior
+    // This allows running specific files with: vitest path/to/specific.test.js
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
       '**/build/**',
       '**/.git/**',
-      '**/coverage/**'
+      '**/coverage/**',
+      '**/src/contract/node_modules/**'
     ]
   },
   resolve: {

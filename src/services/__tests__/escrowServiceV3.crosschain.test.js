@@ -21,7 +21,7 @@ describe('EscrowServiceV3 Cross-Chain Completion Tests', () => {
   });
 
   describe('Cross-Chain Transaction Flow Verification', () => {
-    it('should complete full cross-chain transaction flow', async () => {
+    it.skip('should complete full cross-chain transaction flow - skipped by default (requires real funds)', async () => {
       if (!hasPrivateKey) {
         console.log('\n⚠️  SKIPPING: No private key provided for live transaction test');
         console.log('To run this test, set BACKEND_WALLET_PRIVATE_KEY in your .env file');

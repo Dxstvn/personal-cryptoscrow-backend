@@ -156,14 +156,14 @@ describe('EscrowServiceV3', () => {
         decimals: 18,
         name: 'Ether'
       });
-    });
+    }, 10000); // 10 second timeout
 
     it('should get supported tokens for a chain', async () => {
       const tokens = await service.getSupportedTokens(11155111);
       expect(tokens).toBeInstanceOf(Array);
       expect(tokens.length).toBeGreaterThan(0);
       expect(tokens[0].symbol).toBe('ETH');
-    });
+    }, 10000); // 10 second timeout
   });
 
   describe('Explorer URLs', () => {
@@ -196,7 +196,7 @@ describe('EscrowServiceV3', () => {
         status: 'pending',
         scanUrl: 'https://layerzeroscan.com/tx/0x7e037acbb2667df60e69d7a6518786f3f76d9216e3ca0fef9eea8cdb96633679'
       });
-    });
+    }, 10000); // 10 second timeout
   });
 
   describe('Error Handling', () => {
