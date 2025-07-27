@@ -31,12 +31,21 @@ describe('Staking Mechanism Integration Tests', () => {
   beforeAll(async () => {
     console.log('[Test] Starting Firebase emulators and Hardhat...');
     
-    // Start Hardhat in the background
+    // Check if Hardhat is already running
     const contractDir = path.join(__dirname, '../../../contract');
     try {
-      await execAsync('npx hardhat node', { cwd: contractDir });
+      const response = await fetch('http://localhost:8545');
+      console.log('[Test] Hardhat node already running');
     } catch (error) {
-      console.log('[Test] Hardhat may already be running:', error.message);
+      console.log('[Test] Starting Hardhat node...');
+      // Only start if not running
+      try {
+        await execAsync('npx hardhat node &', { cwd: contractDir });
+        // Wait a bit for it to start
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      } catch (err) {
+        console.log('[Test] Error starting Hardhat:', err.message);
+      }
     }
 
     // Initialize Firebase with emulator settings
@@ -63,13 +72,26 @@ describe('Staking Mechanism Integration Tests', () => {
     // databaseService is already imported as a module
     escrowService = new EscrowServiceV3();
 
-    // Deploy test contracts
-    console.log('[Test] Deploying test contracts...');
-    const deployResult = await execAsync(
-      'npx hardhat run scripts/deployment-scripts/deployStakingContract.js --network localhost',
-      { cwd: contractDir }
-    );
-    console.log('[Test] Contracts deployed:', deployResult.stdout);
+    // Check if contracts are already deployed
+    console.log('[Test] Checking for deployed contracts...');
+    const deploymentPath = path.join(contractDir, 'deployments/staking-contract-localhost.json');
+    let contractAddress;
+    
+    if (require('fs').existsSync(deploymentPath)) {
+      const deployment = JSON.parse(require('fs').readFileSync(deploymentPath, 'utf8'));
+      contractAddress = deployment.stakingContract;
+      console.log('[Test] Using existing deployment at:', contractAddress);
+    } else {
+      // Deploy if not exists
+      console.log('[Test] Deploying test contracts...');
+      const deployResult = await execAsync(
+        'npx hardhat run scripts/deployment-scripts/deployStakingContract.js --network localhost',
+        { cwd: contractDir }
+      );
+      console.log('[Test] Contracts deployed:', deployResult.stdout);
+      const deployment = JSON.parse(require('fs').readFileSync(deploymentPath, 'utf8'));
+      contractAddress = deployment.stakingContract;
+    }
 
     // Create test users
     console.log('[Test] Creating test users...');
