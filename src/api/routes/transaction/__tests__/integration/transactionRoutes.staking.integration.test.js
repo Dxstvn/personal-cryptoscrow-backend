@@ -676,13 +676,15 @@ describe('Transaction Routes - Staking Integration Tests', () => {
             .post('/api/transaction/create')
             .set('Authorization', `Bearer ${buyer.token}`)
             .send({
-              buyer: buyer.uid,
-              seller: `concurrent-seller-${i}`,
               amount: 1000 * (i + 1),
-              currency: 'USDC',
-              network: 'ethereum',
-              description: `Concurrent test ${i}`,
-              conditions: ['test']
+              sellerEmail: `concurrent-seller-${i}@test.com`,
+              productDescription: `Concurrent test ${i}`,
+              conditions: [{text: 'test', status: 'pending'}],
+              sellerWalletAddress: `0x${i}234567890123456789012345678901234567890`,
+              buyerWalletAddress: buyer.wallet ? buyer.wallet.address : `0x${buyer.uid.padEnd(40, '0')}`,
+              isSeller: false,
+              buyerNetwork: 'ethereum',
+              sellerNetwork: 'ethereum'
             });
 
           return createRes.body.dealId || createRes.body.transactionData.id;
@@ -710,13 +712,15 @@ describe('Transaction Routes - Staking Integration Tests', () => {
         .post('/api/transaction/create')
         .set('Authorization', `Bearer ${buyer.token}`)
         .send({
-          buyer: buyer.uid,
-          seller: seller.uid,
           amount: 5000,
-          currency: 'USDC',
-          network: 'ethereum',
-          description: 'Stake validation test',
-          conditions: ['delivery']
+          sellerEmail: seller.email,
+          productDescription: 'Stake validation test',
+          conditions: [{text: 'delivery', status: 'pending'}],
+          sellerWalletAddress: seller.wallet ? seller.wallet.address : `0x${seller.uid.padEnd(40, '0')}`,
+          buyerWalletAddress: buyer.wallet ? buyer.wallet.address : `0x${buyer.uid.padEnd(40, '0')}`,
+          isSeller: false,
+          buyerNetwork: 'ethereum',
+          sellerNetwork: 'ethereum'
         });
 
       const dealId = createRes.body.dealId || createRes.body.transactionData.id;
@@ -765,17 +769,19 @@ describe('Transaction Routes - Staking Integration Tests', () => {
         .post('/api/transaction/create')
         .set('Authorization', `Bearer ${buyer.token}`)
         .send({
-          buyer: buyer.uid,
-          seller: 'seller123',
           amount: 1000,
-          currency: 'USDC',
-          network: 'invalid-network',
-          description: 'Network error test',
-          conditions: ['test']
+          sellerEmail: 'seller@test.com',
+          productDescription: 'Network error test',
+          conditions: [{text: 'test', status: 'pending'}],
+          sellerWalletAddress: '0x1234567890123456789012345678901234567890',
+          buyerWalletAddress: buyer.wallet ? buyer.wallet.address : `0x${buyer.uid.padEnd(40, '0')}`,
+          isSeller: false,
+          buyerNetwork: 'invalid-network',
+          sellerNetwork: 'invalid-network'
         });
 
       expect(res.status).toBe(400);
-      expect(res.body.error).toContain('Invalid network');
+      expect(res.body.error).toContain('Unsupported network');
     });
 
     it('should prevent duplicate stake submissions', async () => {
@@ -786,13 +792,15 @@ describe('Transaction Routes - Staking Integration Tests', () => {
         .post('/api/transaction/create')
         .set('Authorization', `Bearer ${buyer.token}`)
         .send({
-          buyer: buyer.uid,
-          seller: 'duplicate-seller',
           amount: 2000,
-          currency: 'USDC',
-          network: 'ethereum',
-          description: 'Duplicate stake test',
-          conditions: ['test']
+          sellerEmail: 'duplicate-seller@test.com',
+          productDescription: 'Duplicate stake test',
+          conditions: [{text: 'test', status: 'pending'}],
+          sellerWalletAddress: '0x1234567890123456789012345678901234567890',
+          buyerWalletAddress: buyer.wallet ? buyer.wallet.address : `0x${buyer.uid.padEnd(40, '0')}`,
+          isSeller: false,
+          buyerNetwork: 'ethereum',
+          sellerNetwork: 'ethereum'
         });
 
       const dealId = createRes.body.dealId || createRes.body.transactionData.id;
