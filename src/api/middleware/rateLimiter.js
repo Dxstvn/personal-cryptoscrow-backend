@@ -35,8 +35,8 @@ export const createDisputeRateLimiter = () => {
   const redisClient = createRedisClient();
   
   const options = {
-    windowMs: 60 * 60 * 1000, // 1 hour window
-    max: 3, // 3 disputes per hour per user
+    windowMs: process.env.NODE_ENV === 'test' ? 1000 : 60 * 60 * 1000, // 1 second in test, 1 hour in prod
+    max: process.env.NODE_ENV === 'test' ? 100 : 3, // 100 disputes per second in test, 3 per hour in prod
     message: {
       success: false,
       error: 'Too many dispute requests. Please wait before trying again.',

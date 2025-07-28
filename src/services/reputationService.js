@@ -32,8 +32,8 @@ export class ReputationService {
       // Find applicable tier
       const tier = this.getReputationTier(reputationScore);
       
-      // Calculate stake amount
-      const stakeAmount = transactionAmount * tier.stakePercentage;
+      // Calculate stake amount and round to avoid floating point precision issues
+      const stakeAmount = Math.round(transactionAmount * tier.stakePercentage * 100) / 100;
       
       return {
         reputationScore,
@@ -65,7 +65,8 @@ export class ReputationService {
       
       const userData = userDoc.data();
       // If user exists but has no reputation score, they get full score
-      return userData.reputationScore !== undefined ? userData.reputationScore : 1000;
+      const score = userData.reputationScore;
+      return score !== undefined && score !== null ? score : 1000;
     } catch (error) {
       console.error('[ReputationService] Error getting user reputation:', error);
       return 1000; // Default to full score on error
@@ -252,11 +253,16 @@ export class ReputationService {
         updateData.amountSlashed = resolution.amountSlashed;
       }
       
-      await stakeRef.update(updateData);
-      
-      // Update user reputation based on outcome
+      // Get stake data first if we need to calculate slashed amount
       const stakeDoc = await stakeRef.get();
       const stakeData = stakeDoc.data();
+      
+      // For full slash, set the slashed amount to the full stake amount
+      if (resolution.outcome === 'resolved_against' && updateData.amountSlashed === undefined) {
+        updateData.amountSlashed = stakeData.stakeAmount;
+      }
+      
+      await stakeRef.update(updateData);
       
       let reputationChange = 0;
       let reason = '';
@@ -287,6 +293,8 @@ export class ReputationService {
       if (reputationChange !== 0) {
         await this.updateReputationScore(stakeData.userId, reputationChange, reason);
       }
+      
+      return { reputationChange, reason };
     } catch (error) {
       console.error('[ReputationService] Error updating dispute stake status:', error);
       throw error;

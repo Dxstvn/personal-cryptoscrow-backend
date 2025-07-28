@@ -10,6 +10,13 @@ let dbInstance = null;
 class DatabaseEventEmitter extends EventEmitter {}
 export const databaseEvents = new DatabaseEventEmitter();
 
+// Test helper to reset the database instance
+export function resetDbInstance() {
+  if (process.env.NODE_ENV === 'test') {
+    dbInstance = null;
+  }
+}
+
 export async function getDb() {
   if (dbInstance) {
     return dbInstance;
@@ -18,12 +25,18 @@ export async function getDb() {
   if (process.env.NODE_ENV === 'test') {
     console.log('[DBService Test Env] Attempting to get Firestore instance from default app for testing.');
     try {
-      // Assume the test environment (e.g., jest.emulator.setup.js or test file's beforeAll)
-      // has initialized the default Firebase app.
-      dbInstance = admin.firestore(); // Directly use admin.firestore() which relies on the default app
-      console.log(`[DBService Test Env] Successfully obtained Firestore from default app via admin.firestore() for testing.`);
+      // Check if admin has apps initialized
+      if (admin.apps && admin.apps.length > 0) {
+        // Use the first app's firestore
+        dbInstance = admin.apps[0].firestore();
+        console.log(`[DBService Test Env] Successfully obtained Firestore from admin.apps[0] for testing.`);
+      } else {
+        // Fall back to admin.firestore()
+        dbInstance = admin.firestore();
+        console.log(`[DBService Test Env] Successfully obtained Firestore from default app via admin.firestore() for testing.`);
+      }
     } catch (e) {
-      console.error(`[DBService Test Env] CRITICAL ERROR: Could not get Firestore using admin.firestore(). Is default app initialized? Error: ${e.message}.`);
+      console.error(`[DBService Test Env] CRITICAL ERROR: Could not get Firestore. Error: ${e.message}.`);
       throw e; // Re-throw the error, as this is critical for tests.
     }
   } else {
@@ -453,10 +466,20 @@ export async function resolveDealDispute(dealId, resolutionData) {
       disputeResolved: true,
       disputeResolvedTimestamp: Date.now(),
       disputeResolution: resolutionData.resolution,
-      resolutionTxHash: resolutionData.txHash,
-      ...resolutionData,
       lastUpdated: FieldValue.serverTimestamp()
     };
+    
+    // Only add optional fields if they are defined
+    if (resolutionData.txHash !== undefined) {
+      updateData.resolutionTxHash = resolutionData.txHash;
+    }
+    
+    // Add other resolution data, filtering out undefined values
+    Object.keys(resolutionData).forEach(key => {
+      if (resolutionData[key] !== undefined && !updateData.hasOwnProperty(key)) {
+        updateData[key] = resolutionData[key];
+      }
+    });
     
     await dealRef.update(updateData);
     

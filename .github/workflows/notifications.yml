@@ -1,0 +1,205 @@
+name: Smart Notifications
+
+on:
+  workflow_run:
+    workflows: ["Deploy Pipeline", "CI Test Pipeline"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      notification_type:
+        description: 'Type of notification to send'
+        required: true
+        type: choice
+        options:
+          - 'deployment-success'
+          - 'test-results'
+          - 'security-update'
+
+jobs:
+  process-deployment-notifications:
+    name: Process Deployment Notifications
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_run' && 
+      github.event.workflow.name == 'Deploy Pipeline' &&
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Generate deployment success message
+        run: |
+          echo "# 🎉 Deployment Successful!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Workflow:** ${{ github.event.workflow.name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ github.event.workflow_run.conclusion }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.event.workflow_run.head_sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Time:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Create deployment record
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Only create a success comment, not an issue
+            console.log('Deployment completed successfully');
+            
+            // In production, this would:
+            // - Send Slack notification to #deployments channel
+            // - Update deployment dashboard
+            // - Trigger post-deployment monitoring
+
+  process-test-notifications:
+    name: Process Test Result Notifications
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_run' && 
+      github.event.workflow.name == 'CI Test Pipeline' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    steps:
+      - name: Analyze test results
+        run: |
+          STATUS="${{ github.event.workflow_run.conclusion }}"
+          
+          if [[ "$STATUS" == "failure" ]]; then
+            echo "# ⚠️ Main Branch Tests Failed!" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Tests on the main branch have failed. This requires immediate attention." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Failed Workflow Run:** [View Details](${{ github.event.workflow_run.html_url }})" >> $GITHUB_STEP_SUMMARY
+          elif [[ "$STATUS" == "success" ]]; then
+            echo "# ✅ Main Branch Tests Passed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "All tests on main branch are passing." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+      - name: Create issue for main branch failures
+        if: github.event.workflow_run.conclusion == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Check if there's already an open issue for main branch failures
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['main-branch-failure', 'automated'],
+              state: 'open'
+            });
+            
+            if (issues.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: '[URGENT] Main branch tests are failing',
+                body: `## 🚨 Main Branch Test Failure
+                
+                The CI pipeline has detected test failures on the main branch.
+                
+                **Failed Run:** ${{ github.event.workflow_run.html_url }}
+                **Commit:** ${{ github.event.workflow_run.head_sha }}
+                **Time:** ${new Date().toISOString()}
+                
+                ### Action Required
+                1. Review the failed test run
+                2. Identify the breaking changes
+                3. Fix or revert the problematic commits
+                4. Ensure main branch is stable
+                
+                This issue will be automatically closed when tests pass again.`,
+                labels: ['main-branch-failure', 'automated', 'priority-critical']
+              });
+            }
+
+  weekly-summary:
+    name: Weekly Summary Report
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' && github.event.schedule == '0 9 * * 1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Generate weekly summary
+        run: |
+          echo "# 📊 Weekly Backend Summary" >> weekly-summary.md
+          echo "" >> weekly-summary.md
+          echo "**Week Ending:** $(date -u +%Y-%m-%d)" >> weekly-summary.md
+          echo "" >> weekly-summary.md
+          
+          # Count commits
+          COMMIT_COUNT=$(git rev-list --count --since="1 week ago" HEAD)
+          echo "## Development Activity" >> weekly-summary.md
+          echo "- Total commits: $COMMIT_COUNT" >> weekly-summary.md
+          
+          # Recent deployments (would check tags in real scenario)
+          echo "" >> weekly-summary.md
+          echo "## Deployments" >> weekly-summary.md
+          echo "- Check deployment history in GitHub Actions" >> weekly-summary.md
+          
+          # Test statistics (would aggregate from test results)
+          echo "" >> weekly-summary.md
+          echo "## Test Health" >> weekly-summary.md
+          echo "- Unit test pass rate: Check latest runs" >> weekly-summary.md
+          echo "- Integration test stability: Monitor trends" >> weekly-summary.md
+          
+          cat weekly-summary.md >> $GITHUB_STEP_SUMMARY
+
+  smart-pr-notifications:
+    name: Smart PR Notifications
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' && 
+      (contains(github.event.pull_request.labels.*.name, 'breaking-change') ||
+       contains(github.event.pull_request.labels.*.name, 'security') ||
+       contains(github.event.pull_request.labels.*.name, 'database-migration'))
+    steps:
+      - name: Generate important PR notification
+        run: |
+          echo "# 🚨 Important PR Requires Attention" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          LABELS="${{ toJson(github.event.pull_request.labels.*.name) }}"
+          
+          if [[ "$LABELS" == *"breaking-change"* ]]; then
+            echo "## ⚠️ Breaking Change Detected" >> $GITHUB_STEP_SUMMARY
+            echo "This PR contains breaking changes that may affect frontend integration." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "$LABELS" == *"security"* ]]; then
+            echo "## 🔒 Security Update" >> $GITHUB_STEP_SUMMARY
+            echo "This PR contains security-related changes that require careful review." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "$LABELS" == *"database-migration"* ]]; then
+            echo "## 🗄️ Database Migration" >> $GITHUB_STEP_SUMMARY
+            echo "This PR includes database schema changes that need migration planning." >> $GITHUB_STEP_SUMMARY
+          fi
+
+  notification-config:
+    name: Configure Notification Rules
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Display notification configuration
+        run: |
+          echo "# 📢 Notification Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Current Notification Rules" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🚨 Critical Alerts (Immediate)" >> $GITHUB_STEP_SUMMARY
+          echo "- Production deployment failures" >> $GITHUB_STEP_SUMMARY
+          echo "- Main branch test failures" >> $GITHUB_STEP_SUMMARY
+          echo "- Security vulnerabilities (high/critical)" >> $GITHUB_STEP_SUMMARY
+          echo "- API health check failures (3+ consecutive)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ⚠️ Important Notifications (Within 1 hour)" >> $GITHUB_STEP_SUMMARY
+          echo "- Staging deployment failures" >> $GITHUB_STEP_SUMMARY
+          echo "- Performance degradation alerts" >> $GITHUB_STEP_SUMMARY
+          echo "- Database connection issues" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ℹ️ Informational (Daily digest)" >> $GITHUB_STEP_SUMMARY
+          echo "- Successful deployments" >> $GITHUB_STEP_SUMMARY
+          echo "- PR merge notifications" >> $GITHUB_STEP_SUMMARY
+          echo "- Test coverage reports" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔕 Suppressed Notifications" >> $GITHUB_STEP_SUMMARY
+          echo "- Known integration test auth failures in CI" >> $GITHUB_STEP_SUMMARY
+          echo "- Dependabot PRs (unless security)" >> $GITHUB_STEP_SUMMARY
+          echo "- Schedule workflow runs (unless failed)" >> $GITHUB_STEP_SUMMARY

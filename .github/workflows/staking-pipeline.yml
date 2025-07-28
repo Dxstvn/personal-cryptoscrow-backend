@@ -1,0 +1,548 @@
+name: Staking Mechanism Pipeline
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'src/contract/contracts/StakingMechanism.sol'
+      - 'src/contract/contracts/interfaces/IStakingMechanism.sol'
+      - 'src/contract/test/StakingMechanism.test.js'
+      - 'src/services/stakingService.js'
+      - 'src/api/routes/staking/**'
+      - 'test/**/*staking*'
+      - '.github/workflows/staking-pipeline.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/contract/contracts/StakingMechanism.sol'
+      - 'src/contract/contracts/interfaces/IStakingMechanism.sol'
+      - 'src/services/stakingService.js'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+          - 'test'
+          - 'deploy-testnet'
+          - 'security-audit'
+          - 'gas-optimization'
+        default: 'test'
+      network:
+        description: 'Network for deployment'
+        required: false
+        type: choice
+        options:
+          - 'sepolia'
+          - 'arbitrum-sepolia'
+          - 'polygon-amoy'
+        default: 'sepolia'
+
+env:
+  NODE_VERSION: '18.x'
+  SOLIDITY_VERSION: '0.8.19'
+  STAKING_MIN_AMOUNT: '10000000000000000'  # 0.01 ETH in wei
+  STAKING_MAX_VALIDATORS: '5'
+
+jobs:
+  # Smart contract compilation and basic checks
+  contract-validation:
+    name: Validate Staking Contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: |
+          npm ci --prefer-offline --no-audit
+          cd src/contract && npm ci --prefer-offline --no-audit
+          
+      - name: Compile contracts
+        run: |
+          cd src/contract
+          npx hardhat compile
+          
+      - name: Check contract size
+        run: |
+          cd src/contract
+          npx hardhat size-contracts
+          
+          # Ensure contract is not too large for deployment
+          echo "Checking contract sizes..."
+          if grep -E "StakingMechanism.*[3-9][0-9]{4}|[0-9]{6}" size-contracts.txt; then
+            echo "::error::StakingMechanism contract is too large (>30KB)"
+            exit 1
+          fi
+          
+      - name: Run Slither security analysis
+        run: |
+          cd src/contract
+          pip3 install slither-analyzer
+          slither contracts/StakingMechanism.sol --print human-summary || true
+          
+      - name: Upload compilation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: staking-contract-artifacts
+          path: |
+            src/contract/artifacts/contracts/StakingMechanism.sol/
+            src/contract/artifacts/contracts/interfaces/IStakingMechanism.sol/
+          retention-days: 7
+
+  # Comprehensive staking tests
+  staking-tests:
+    name: Staking Test Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: contract-validation
+    strategy:
+      matrix:
+        test-group:
+          - 'unit'
+          - 'integration'
+          - 'edge-cases'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: |
+          npm ci --prefer-offline --no-audit
+          cd src/contract && npm ci --prefer-offline --no-audit
+          
+      - name: Install Firebase CLI
+        if: matrix.test-group == 'integration'
+        run: npm install -g firebase-tools
+        
+      - name: Start Firebase Emulators
+        if: matrix.test-group == 'integration'
+        run: |
+          npm run emulator:start &
+          EMULATOR_PID=$!
+          npx wait-on tcp:9099 tcp:5004 tcp:9199 -t 60000
+          echo "EMULATOR_PID=$EMULATOR_PID" >> $GITHUB_ENV
+          
+      - name: Run staking tests - ${{ matrix.test-group }}
+        run: |
+          case "${{ matrix.test-group }}" in
+            unit)
+              # Run contract unit tests
+              cd src/contract
+              npx hardhat test test/StakingMechanism.test.js --network hardhat
+              
+              # Run service unit tests
+              cd ../..
+              npm run test:unit -- --testPathPattern=staking
+              ;;
+            integration)
+              # Run integration tests with Firebase
+              npm run test:integration -- --testPathPattern=staking
+              ;;
+            edge-cases)
+              # Run edge case and stress tests
+              cd src/contract
+              npx hardhat test test/StakingMechanism.edge.test.js --network hardhat
+              ;;
+          esac
+        env:
+          NODE_ENV: test
+          FIREBASE_AUTH_EMULATOR_HOST: localhost:9099
+          FIRESTORE_EMULATOR_HOST: localhost:5004
+          FIREBASE_STORAGE_EMULATOR_HOST: localhost:9199
+          
+      - name: Stop Firebase Emulators
+        if: always() && matrix.test-group == 'integration'
+        run: |
+          if [ ! -z "$EMULATOR_PID" ]; then
+            kill $EMULATOR_PID || true
+          fi
+          
+      - name: Generate coverage report
+        if: matrix.test-group == 'unit'
+        run: |
+          cd src/contract
+          npx hardhat coverage --testfiles "test/StakingMechanism.test.js"
+          
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staking-test-results-${{ matrix.test-group }}
+          path: |
+            coverage/
+            test-results/
+            src/contract/coverage/
+          retention-days: 7
+
+  # Gas optimization analysis
+  gas-optimization:
+    name: Gas Optimization Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: contract-validation
+    if: |
+      github.event_name == 'workflow_dispatch' && 
+      github.event.inputs.action == 'gas-optimization'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: |
+          cd src/contract
+          npm ci --prefer-offline --no-audit
+          
+      - name: Run gas reporter
+        run: |
+          cd src/contract
+          REPORT_GAS=true npx hardhat test test/StakingMechanism.test.js --network hardhat
+          
+      - name: Generate optimization report
+        run: |
+          cd src/contract
+          echo "# Gas Optimization Report" > gas-report.md
+          echo "" >> gas-report.md
+          echo "## Function Gas Costs" >> gas-report.md
+          echo "" >> gas-report.md
+          
+          # Parse gas reporter output
+          if [ -f gasReporterOutput.txt ]; then
+            cat gasReporterOutput.txt >> gas-report.md
+          fi
+          
+          echo "" >> gas-report.md
+          echo "## Optimization Suggestions" >> gas-report.md
+          echo "" >> gas-report.md
+          echo "1. Consider batch operations for validator management" >> gas-report.md
+          echo "2. Optimize storage layout for frequently accessed variables" >> gas-report.md
+          echo "3. Use events instead of storage for historical data" >> gas-report.md
+          echo "4. Implement circuit breakers for gas-intensive operations" >> gas-report.md
+          
+          cat gas-report.md >> $GITHUB_STEP_SUMMARY
+          
+      - name: Upload gas report
+        uses: actions/upload-artifact@v4
+        with:
+          name: gas-optimization-report
+          path: src/contract/gas-report.md
+          retention-days: 30
+
+  # Security audit
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [contract-validation, staking-tests]
+    if: |
+      github.event_name == 'push' && github.ref == 'refs/heads/main' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'security-audit')
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: |
+          cd src/contract
+          npm ci --prefer-offline --no-audit
+          pip3 install slither-analyzer
+          npm install -g @consensys/surya
+          
+      - name: Run comprehensive security checks
+        run: |
+          cd src/contract
+          echo "# Security Audit Report" > security-audit.md
+          echo "**Date:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> security-audit.md
+          echo "" >> security-audit.md
+          
+          echo "## 1. Slither Analysis" >> security-audit.md
+          echo '```' >> security-audit.md
+          slither contracts/StakingMechanism.sol --print human-summary 2>&1 | tee -a security-audit.md || true
+          echo '```' >> security-audit.md
+          echo "" >> security-audit.md
+          
+          echo "## 2. Known Vulnerabilities Check" >> security-audit.md
+          echo "" >> security-audit.md
+          
+          # Check for common vulnerabilities
+          echo "### Reentrancy" >> security-audit.md
+          if grep -n "call\|transfer\|send" contracts/StakingMechanism.sol; then
+            echo "⚠️ External calls detected - ensure reentrancy protection" >> security-audit.md
+          else
+            echo "✅ No direct external calls found" >> security-audit.md
+          fi
+          echo "" >> security-audit.md
+          
+          echo "### Integer Overflow/Underflow" >> security-audit.md
+          echo "✅ Using Solidity 0.8.x with built-in overflow protection" >> security-audit.md
+          echo "" >> security-audit.md
+          
+          echo "### Access Control" >> security-audit.md
+          if grep -n "onlyOwner\|require.*owner\|modifier.*admin" contracts/StakingMechanism.sol; then
+            echo "✅ Access control modifiers found" >> security-audit.md
+          else
+            echo "⚠️ Verify access control implementation" >> security-audit.md
+          fi
+          echo "" >> security-audit.md
+          
+          echo "## 3. Contract Complexity" >> security-audit.md
+          echo '```' >> security-audit.md
+          surya describe contracts/StakingMechanism.sol 2>&1 | tee -a security-audit.md || true
+          echo '```' >> security-audit.md
+          echo "" >> security-audit.md
+          
+          echo "## 4. Recommendations" >> security-audit.md
+          echo "" >> security-audit.md
+          echo "1. Ensure all validator operations have proper access control" >> security-audit.md
+          echo "2. Implement rate limiting for stake/unstake operations" >> security-audit.md
+          echo "3. Add emergency pause functionality" >> security-audit.md
+          echo "4. Consider implementing timelocks for critical operations" >> security-audit.md
+          echo "5. Ensure proper event emission for all state changes" >> security-audit.md
+          
+          cat security-audit.md >> $GITHUB_STEP_SUMMARY
+          
+      - name: Upload security audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-report
+          path: src/contract/security-audit.md
+          retention-days: 90
+
+  # Deploy to testnet
+  deploy-testnet:
+    name: Deploy to Testnet
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [contract-validation, staking-tests, security-audit]
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'deploy-testnet')
+    environment: testnet-deployment
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: |
+          cd src/contract
+          npm ci --prefer-offline --no-audit
+          
+      - name: Configure network
+        run: |
+          NETWORK="${{ github.event.inputs.network || 'sepolia' }}"
+          echo "DEPLOYMENT_NETWORK=$NETWORK" >> $GITHUB_ENV
+          
+          # Set RPC URL based on network
+          case "$NETWORK" in
+            sepolia)
+              echo "RPC_URL=${{ secrets.SEPOLIA_RPC_URL }}" >> $GITHUB_ENV
+              echo "CHAIN_ID=11155111" >> $GITHUB_ENV
+              ;;
+            arbitrum-sepolia)
+              echo "RPC_URL=${{ secrets.ARBITRUM_SEPOLIA_RPC_URL }}" >> $GITHUB_ENV
+              echo "CHAIN_ID=421614" >> $GITHUB_ENV
+              ;;
+            polygon-amoy)
+              echo "RPC_URL=${{ secrets.POLYGON_AMOY_RPC_URL }}" >> $GITHUB_ENV
+              echo "CHAIN_ID=80002" >> $GITHUB_ENV
+              ;;
+          esac
+          
+      - name: Deploy StakingMechanism
+        run: |
+          cd src/contract
+          
+          # Create deployment script
+          cat > scripts/deploy-staking.js << 'EOF'
+          const hre = require("hardhat");
+          
+          async function main() {
+            console.log("Deploying StakingMechanism to", hre.network.name);
+            
+            const StakingMechanism = await hre.ethers.getContractFactory("StakingMechanism");
+            
+            const minStakeAmount = process.env.STAKING_MIN_AMOUNT || "10000000000000000"; // 0.01 ETH
+            const maxValidators = process.env.STAKING_MAX_VALIDATORS || 5;
+            
+            console.log("Deploy parameters:");
+            console.log("- Min stake amount:", minStakeAmount);
+            console.log("- Max validators:", maxValidators);
+            
+            const staking = await StakingMechanism.deploy(minStakeAmount, maxValidators);
+            await staking.deployed();
+            
+            console.log("StakingMechanism deployed to:", staking.address);
+            
+            // Wait for confirmations
+            console.log("Waiting for confirmations...");
+            await staking.deployTransaction.wait(5);
+            
+            // Verify on Etherscan
+            console.log("Verifying contract...");
+            try {
+              await hre.run("verify:verify", {
+                address: staking.address,
+                constructorArguments: [minStakeAmount, maxValidators],
+              });
+              console.log("Contract verified successfully");
+            } catch (error) {
+              console.log("Verification failed:", error.message);
+            }
+            
+            // Save deployment info
+            const deployment = {
+              network: hre.network.name,
+              address: staking.address,
+              minStakeAmount,
+              maxValidators,
+              deployedAt: new Date().toISOString(),
+              deployer: (await hre.ethers.getSigners())[0].address,
+              transactionHash: staking.deployTransaction.hash
+            };
+            
+            console.log("\nDeployment complete!");
+            console.log(JSON.stringify(deployment, null, 2));
+            
+            // Write to file for GitHub Actions
+            require('fs').writeFileSync('deployment.json', JSON.stringify(deployment, null, 2));
+          }
+          
+          main().catch((error) => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+          EOF
+          
+          # Deploy contract
+          PRIVATE_KEY="${{ secrets.TESTNET_DEPLOYER_KEY }}" \
+          npx hardhat run scripts/deploy-staking.js --network ${{ env.DEPLOYMENT_NETWORK }}
+          
+      - name: Generate deployment report
+        run: |
+          cd src/contract
+          if [ -f deployment.json ]; then
+            echo "# 🚀 Testnet Deployment Report" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## Deployment Details" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            cat deployment.json >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## Next Steps" >> $GITHUB_STEP_SUMMARY
+            echo "1. Test the deployed contract on testnet" >> $GITHUB_STEP_SUMMARY
+            echo "2. Run integration tests against testnet deployment" >> $GITHUB_STEP_SUMMARY
+            echo "3. Monitor contract for any issues" >> $GITHUB_STEP_SUMMARY
+            echo "4. Prepare for mainnet deployment" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+      - name: Upload deployment artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: testnet-deployment-${{ env.DEPLOYMENT_NETWORK }}
+          path: |
+            src/contract/deployment.json
+            src/contract/artifacts/
+          retention-days: 90
+          
+      - name: Create deployment issue
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const deployment = JSON.parse(fs.readFileSync('src/contract/deployment.json', 'utf8'));
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[TESTNET] StakingMechanism deployed to ${deployment.network}`,
+              body: `## Deployment Information
+              
+              **Network:** ${deployment.network}
+              **Contract Address:** \`${deployment.address}\`
+              **Transaction Hash:** \`${deployment.transactionHash}\`
+              **Deployer:** \`${deployment.deployer}\`
+              **Deployed At:** ${deployment.deployedAt}
+              
+              ### Configuration
+              - Min Stake Amount: ${deployment.minStakeAmount} wei
+              - Max Validators: ${deployment.maxValidators}
+              
+              ### Action Items
+              - [ ] Run testnet integration tests
+              - [ ] Verify contract on block explorer
+              - [ ] Test staking operations
+              - [ ] Test validator management
+              - [ ] Monitor for any issues
+              
+              ### Resources
+              - [View on Explorer](https://sepolia.etherscan.io/address/${deployment.address})
+              - [Deployment Artifacts](${context.payload.repository.html_url}/actions/runs/${context.runId})
+              `,
+              labels: ['deployment', 'testnet', 'staking']
+            });
+
+  # Summary and notifications
+  staking-summary:
+    name: Staking Pipeline Summary
+    runs-on: ubuntu-latest
+    needs: [contract-validation, staking-tests, security-audit, deploy-testnet]
+    if: always()
+    steps:
+      - name: Generate summary
+        run: |
+          echo "# 📊 Staking Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Run Time:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "## Pipeline Status" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Contract Validation | ${{ needs.contract-validation.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Staking Tests | ${{ needs.staking-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Audit | ${{ needs.security-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Testnet Deployment | ${{ needs.deploy-testnet.result }} |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.deploy-testnet.result }}" == "success" ]]; then
+            echo "✅ **Staking mechanism successfully deployed to testnet!**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Next Steps:" >> $GITHUB_STEP_SUMMARY
+            echo "1. Run integration tests against testnet deployment" >> $GITHUB_STEP_SUMMARY
+            echo "2. Perform manual testing of staking operations" >> $GITHUB_STEP_SUMMARY
+            echo "3. Monitor contract for 24-48 hours" >> $GITHUB_STEP_SUMMARY
+            echo "4. Prepare mainnet deployment plan" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.staking-tests.result }}" == "failure" ]]; then
+            echo "❌ **Staking tests failed** - Fix test failures before proceeding" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.security-audit.result }}" == "failure" ]]; then
+            echo "⚠️ **Security audit requires attention** - Review security findings" >> $GITHUB_STEP_SUMMARY
+          fi

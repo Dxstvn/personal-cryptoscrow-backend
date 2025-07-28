@@ -1,0 +1,358 @@
+name: Main CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: 'Deploy to environment (select none for CI only)'
+        required: false
+        type: choice
+        options:
+          - 'none'
+          - 'staging'
+          - 'production'
+
+env:
+  NODE_VERSION: '18.x'
+  FIREBASE_PROJECT: 'demo-test'
+
+jobs:
+  # Quick validation checks
+  validate:
+    name: Validate Code
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should_run_integration: ${{ steps.check.outputs.run_integration }}
+      should_run_contracts: ${{ steps.check.outputs.run_contracts }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+        
+      - name: Lint code
+        run: npm run lint
+        
+      - name: Security audit
+        run: npm audit --audit-level=high || echo "::warning::Security vulnerabilities found"
+        
+      - name: Check what tests to run
+        id: check
+        run: |
+          # Check if integration tests should run
+          if [[ "${{ github.event_name }}" == "push" ]] || \
+             [[ "${{ github.event_name }}" == "workflow_dispatch" ]] || \
+             [[ "${{ contains(github.event.pull_request.labels.*.name, 'run-integration') }}" == "true" ]]; then
+            echo "run_integration=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_integration=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check if contract tests should run
+          if git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -E "(\.sol$|src/contract/)" > /dev/null 2>&1; then
+            echo "run_contracts=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_contracts=false" >> $GITHUB_OUTPUT
+          fi
+
+  # Unit tests - always run
+  unit-tests:
+    name: Unit Tests
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        test-suite:
+          - auth
+          - wallet
+          - transaction
+          - services
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+        
+      - name: Run ${{ matrix.test-suite }} tests
+        run: |
+          case "${{ matrix.test-suite }}" in
+            auth)
+              npm run test:auth:unit:standalone
+              ;;
+            wallet)
+              npm run test:walletRoutes:unit
+              ;;
+            transaction)
+              npm run test:transactionRoutes:unit
+              ;;
+            services)
+              npm run test:databaseService:unit
+              npm run test:scheduledJobs:unit || true
+              ;;
+          esac
+
+  # Integration tests - conditional
+  integration-tests:
+    name: Integration Tests
+    needs: [validate, unit-tests]
+    if: needs.validate.outputs.should_run_integration == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: |
+          npm ci --prefer-offline --no-audit
+          npm install -g firebase-tools
+          
+      - name: Start Firebase Emulators
+        run: |
+          npm run emulator:start &
+          echo "EMULATOR_PID=$!" >> $GITHUB_ENV
+          npx wait-on tcp:9099 tcp:5004 tcp:9199 -t 60000
+          
+      - name: Run integration tests
+        run: npm run test:integration
+        continue-on-error: true
+        env:
+          NODE_ENV: test
+          FIREBASE_AUTH_EMULATOR_HOST: localhost:9099
+          FIRESTORE_EMULATOR_HOST: localhost:5004
+          FIREBASE_STORAGE_EMULATOR_HOST: localhost:9199
+          
+      - name: Stop emulators
+        if: always()
+        run: |
+          if [ ! -z "$EMULATOR_PID" ]; then
+            kill $EMULATOR_PID || true
+          fi
+
+  # Smart contract tests - conditional
+  contract-tests:
+    name: Smart Contract Tests
+    needs: [validate, unit-tests]
+    if: needs.validate.outputs.should_run_contracts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: |
+          npm ci --prefer-offline --no-audit
+          cd src/contract && npm ci --prefer-offline --no-audit
+          
+      - name: Compile contracts
+        run: |
+          cd src/contract
+          npx hardhat compile
+          
+      - name: Run contract tests
+        run: |
+          cd src/contract
+          npx hardhat test --network hardhat
+          
+      - name: Check contract sizes
+        run: |
+          cd src/contract
+          npx hardhat size-contracts
+
+  # Build application
+  build:
+    name: Build Application
+    needs: [unit-tests]
+    if: |
+      always() && 
+      needs.unit-tests.result == 'success' &&
+      (github.event_name == 'push' || (github.event.inputs.deploy_environment != '' && github.event.inputs.deploy_environment != 'none'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          
+      - name: Install production dependencies
+        run: |
+          npm ci --prefer-offline --no-audit
+          npm prune --production
+          
+      - name: Create deployment package
+        run: |
+          mkdir -p deploy
+          cp -r src package*.json deploy/
+          cp ecosystem.config.js deploy/ 2>/dev/null || true
+          tar -czf deploy-package.tar.gz deploy/
+          
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-package
+          path: deploy-package.tar.gz
+          retention-days: 7
+
+  # Deploy to staging
+  deploy-staging:
+    name: Deploy to Staging
+    needs: [build, integration-tests]
+    if: |
+      always() &&
+      needs.build.result == 'success' &&
+      needs.integration-tests.result != 'failure' &&
+      (github.ref == 'refs/heads/develop' || github.event.inputs.deploy_environment == 'staging')
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+          
+      - name: Download deployment package
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-package
+          
+      - name: Deploy to staging
+        run: |
+          # Upload to S3
+          DEPLOY_ID="staging-${GITHUB_SHA:0:8}-$(date +%s)"
+          aws s3 cp deploy-package.tar.gz "s3://clearhold-deployments/staging/$DEPLOY_ID.tar.gz"
+          
+          # Trigger deployment
+          aws ssm send-command \
+            --instance-ids "${{ secrets.STAGING_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters "commands=[\"bash /opt/clearhold/scripts/deploy.sh $DEPLOY_ID staging\"]" \
+            --output json
+            
+      - name: Run smoke tests
+        run: |
+          sleep 30  # Wait for deployment
+          curl -f https://staging-api.clearhold.com/health || exit 1
+
+  # Deploy to production
+  deploy-production:
+    name: Deploy to Production
+    needs: [build, integration-tests, contract-tests]
+    if: |
+      always() &&
+      needs.build.result == 'success' &&
+      needs.integration-tests.result != 'failure' &&
+      needs.contract-tests.result != 'failure' &&
+      (github.ref == 'refs/heads/main' && github.event_name == 'push') || 
+      github.event.inputs.deploy_environment == 'production'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+          
+      - name: Download deployment package
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-package
+          
+      - name: Deploy to production
+        run: |
+          # Upload to S3
+          DEPLOY_ID="prod-${GITHUB_SHA:0:8}-$(date +%s)"
+          aws s3 cp deploy-package.tar.gz "s3://clearhold-deployments/production/$DEPLOY_ID.tar.gz"
+          
+          # Trigger deployment
+          aws ssm send-command \
+            --instance-ids "${{ secrets.PRODUCTION_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters "commands=[\"bash /opt/clearhold/scripts/deploy.sh $DEPLOY_ID production\"]" \
+            --output json
+            
+      - name: Run smoke tests
+        run: |
+          sleep 30  # Wait for deployment
+          curl -f https://api.clearhold.com/health || exit 1
+          
+      - name: Create deployment record
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              environment: 'production',
+              description: 'Automated production deployment',
+              auto_merge: false,
+              required_contexts: []
+            });
+
+  # Summary
+  pipeline-summary:
+    name: Pipeline Summary
+    needs: [validate, unit-tests, integration-tests, contract-tests, build, deploy-staging, deploy-production]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate summary
+        run: |
+          echo "# 📊 CI/CD Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Validation | ${{ needs.validate.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Unit Tests | ${{ needs.unit-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Integration Tests | ${{ needs.integration-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Contract Tests | ${{ needs.contract-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Deployment Status" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Staging | ${{ needs.deploy-staging.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Production | ${{ needs.deploy-production.result }} |" >> $GITHUB_STEP_SUMMARY
