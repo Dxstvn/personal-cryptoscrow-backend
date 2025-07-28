@@ -250,6 +250,62 @@ router.get('/tiers', async (req, res) => {
 });
 
 /**
+ * @route GET /api/reputation/stats
+ * @description Get reputation statistics for the authenticated user
+ * @returns {Object} User reputation and dispute statistics
+ */
+router.get('/stats', authMiddleware, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        
+        const db = await getDb();
+        
+        // Get dispute stats
+        const stakesSnapshot = await db.collection('disputeStakes')
+            .where('userId', '==', userId)
+            .get();
+
+        let totalDisputes = 0;
+        let successfulDisputes = 0;
+        let failedDisputes = 0;
+        let totalStaked = 0;
+        let totalReturned = 0;
+        let totalSlashed = 0;
+
+        stakesSnapshot.forEach(doc => {
+            const stake = doc.data();
+            totalDisputes++;
+            totalStaked += stake.stakeAmount || 0;
+            
+            if (stake.outcome === 'resolved_in_favor') {
+                successfulDisputes++;
+                totalReturned += stake.amountReturned || stake.stakeAmount || 0;
+            } else if (stake.outcome === 'resolved_against') {
+                failedDisputes++;
+                totalSlashed += stake.amountSlashed || stake.stakeAmount || 0;
+            }
+        });
+
+        res.json({
+            disputeStats: {
+                totalDisputes,
+                successfulDisputes,
+                failedDisputes,
+                totalStaked,
+                totalReturned,
+                totalSlashed
+            }
+        });
+    } catch (error) {
+        console.error('[REPUTATION STATS ERROR]', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
  * @route GET /api/reputation/leaderboard
  * @description Get reputation leaderboard (public endpoint)
  * @query limit - Number of users to return (default 10, max 50)

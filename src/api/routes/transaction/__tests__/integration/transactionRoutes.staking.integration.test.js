@@ -398,7 +398,7 @@ describe('Transaction Routes - Staking Integration Tests', () => {
 
       // Step 9: Get user stats
       const statsRes = await request(expressApp)
-        .get('/api/transaction/reputation/stats')
+        .get('/api/reputation/stats')
         .set('Authorization', `Bearer ${buyer.token}`);
 
       expect(statsRes.status).toBe(200);
