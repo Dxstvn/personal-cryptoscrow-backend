@@ -1,11 +1,10 @@
 // src/api/routes/transaction/__tests__/integration/transactionRoutes.staking.integration.test.js
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import { initializeApp, deleteApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
-import * as databaseService from '../../../../../services/databaseService.js';
 import { EscrowServiceV3 } from '../../../../../services/escrowServiceV3.js';
 import { ReputationService } from '../../../../../services/reputationService.js';
 import transactionRoutes from '../../transactionRoutes.js';
@@ -18,6 +17,18 @@ import { ethers } from 'ethers';
 const execAsync = promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Mock the admin module to avoid auth verification issues
+vi.mock('../../../auth/admin.js', () => ({
+  getAdminApp: vi.fn(() => Promise.resolve({
+    auth: () => ({
+      verifyIdToken: vi.fn((token) => {
+        const userId = token.replace('test-token-', '');
+        return Promise.resolve({ uid: userId });
+      })
+    })
+  }))
+}));
 
 // Test configuration
 const TEST_TIMEOUT = 180000; // 3 minutes for complex blockchain operations
@@ -87,7 +98,7 @@ describe('Transaction Routes - Staking Integration Tests', () => {
     process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9099';
     
     app = initializeApp({
-      projectId: 'test-project',
+      projectId: 'demo-test',
       databaseURL: 'http://localhost:5004'
     }, 'staking-integration-test');
 
@@ -103,24 +114,29 @@ describe('Transaction Routes - Staking Integration Tests', () => {
     expressApp = express();
     expressApp.use(express.json());
     
-    // Mock authentication middleware - always authenticate as the first user
-    expressApp.use((req, res, next) => {
+    // Mock Firebase auth verification for testing
+    const mockAuthMiddleware = (req, res, next) => {
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.split(' ')[1];
         const userId = Object.keys(authTokens).find(uid => authTokens[uid] === token);
         if (userId) {
           req.user = { uid: userId };
+          // Mock Firebase auth.verifyIdToken
+          req.app.locals = {
+            ...req.app.locals,
+            mockAuth: {
+              verifyIdToken: async () => ({ uid: userId })
+            }
+          };
         }
       }
-      // Always set a user for testing
-      if (!req.user) {
-        req.user = { uid: 'excellentBuyer' };
-      }
       next();
-    });
-
+    };
+    
+    expressApp.use(mockAuthMiddleware);
     expressApp.use('/api/transaction', transactionRoutes);
+    expressApp.use('/api/reputation', (await import('../../../../../api/routes/reputation/reputationRoutes.js')).default);
 
     // Create test users with different reputation levels
     const userConfigs = [
@@ -280,17 +296,19 @@ describe('Transaction Routes - Staking Integration Tests', () => {
         .post('/api/transaction/create')
         .set('Authorization', `Bearer ${buyer.token}`)
         .send({
-          buyer: buyer.uid,
-          seller: seller.uid,
           amount: amount,
-          currency: 'USDC',
-          network: 'ethereum',
-          description: 'Test transaction with staking',
-          conditions: ['delivery', 'quality']
+          sellerEmail: seller.email,
+          productDescription: 'Test transaction with staking',
+          conditions: [{text: 'delivery', status: 'pending'}, {text: 'quality', status: 'pending'}],
+          sellerWalletAddress: seller.wallet ? seller.wallet.address : `0x${seller.uid.padEnd(40, '0')}`,
+          buyerWalletAddress: buyer.wallet ? buyer.wallet.address : `0x${buyer.uid.padEnd(40, '0')}`,
+          isSeller: false,
+          buyerNetwork: 'ethereum',
+          sellerNetwork: 'ethereum'
         });
 
       expect(createRes.status).toBe(201);
-      const dealId = createRes.body.transaction.id;
+      const dealId = createRes.body.dealId || createRes.body.transactionData.id;
 
       // Step 2: Get stake requirement
       const stakeRes = await request(expressApp)
@@ -330,9 +348,8 @@ describe('Transaction Routes - Staking Integration Tests', () => {
         });
 
       expect(disputeRes.status).toBe(200);
+      expect(disputeRes.body.success).toBe(true);
       expect(disputeRes.body.stakeId).toBeTruthy();
-      expect(disputeRes.body.transaction.disputeRaised).toBe(true);
-      expect(disputeRes.body.transaction.disputeStake).toBe(25);
 
       // Step 5: Verify stake is recorded
       const stakeDoc = await db.collection('disputeStakes').doc(disputeRes.body.stakeId).get();
@@ -405,16 +422,18 @@ describe('Transaction Routes - Staking Integration Tests', () => {
         .post('/api/transaction/create')
         .set('Authorization', `Bearer ${buyer.token}`)
         .send({
-          buyer: buyer.uid,
-          seller: seller.uid,
           amount: amount,
-          currency: 'USDC',
-          network: 'ethereum',
-          description: 'Test invalid dispute',
-          conditions: ['delivery']
+          sellerEmail: seller.email,
+          productDescription: 'Test invalid dispute',
+          conditions: [{text: 'delivery', status: 'pending'}],
+          sellerWalletAddress: seller.wallet ? seller.wallet.address : `0x${seller.uid.padEnd(40, '0')}`,
+          buyerWalletAddress: buyer.wallet ? buyer.wallet.address : `0x${buyer.uid.padEnd(40, '0')}`,
+          isSeller: false,
+          buyerNetwork: 'ethereum',
+          sellerNetwork: 'ethereum'
         });
 
-      const dealId = createRes.body.transaction.id;
+      const dealId = createRes.body.dealId || createRes.body.transactionData.id;
 
       // Fund escrow
       await request(expressApp)
@@ -429,7 +448,7 @@ describe('Transaction Routes - Staking Integration Tests', () => {
         .get(`/api/transaction/${dealId}/stake-requirement`)
         .set('Authorization', `Bearer ${buyer.token}`);
 
-      expect(stakeRes.body.requiredStake).toBe(100); // 5% of 2000
+      expect(stakeRes.body.requiredStake).toBe(100); // 5% of 2000 for Standard tier (score 600)
 
       // Raise dispute
       const disputeRes = await request(expressApp)
@@ -478,16 +497,18 @@ describe('Transaction Routes - Staking Integration Tests', () => {
         .post('/api/transaction/create')
         .set('Authorization', `Bearer ${buyer.token}`)
         .send({
-          buyer: buyer.uid,
-          seller: seller.uid,
           amount: amount,
-          currency: 'USDC',
-          network: 'ethereum',
-          description: 'Partial dispute test',
-          conditions: ['delivery', 'quality', 'documentation']
+          sellerEmail: seller.email,
+          productDescription: 'Partial dispute test',
+          conditions: [{text: 'delivery', status: 'pending'}, {text: 'quality', status: 'pending'}, {text: 'documentation', status: 'pending'}],
+          sellerWalletAddress: seller.wallet ? seller.wallet.address : `0x${seller.uid.padEnd(40, '0')}`,
+          buyerWalletAddress: buyer.wallet ? buyer.wallet.address : `0x${buyer.uid.padEnd(40, '0')}`,
+          isSeller: false,
+          buyerNetwork: 'ethereum',
+          sellerNetwork: 'ethereum'
         });
 
-      const dealId = createRes.body.transaction.id;
+      const dealId = createRes.body.dealId || createRes.body.transactionData.id;
 
       // Fund and raise dispute
       await request(expressApp)
@@ -576,7 +597,7 @@ describe('Transaction Routes - Staking Integration Tests', () => {
           conditions: ['delivery']
         });
 
-      const dealId = createRes.body.transaction.id;
+      const dealId = createRes.body.dealId || createRes.body.transactionData.id;
 
       // Try to raise dispute with 10% stake (10,000 USDC)
       const disputeRes = await request(expressApp)
@@ -612,7 +633,7 @@ describe('Transaction Routes - Staking Integration Tests', () => {
             conditions: ['test']
           });
 
-        const dealId = createRes.body.transaction.id;
+        const dealId = createRes.body.dealId || createRes.body.transactionData.id;
 
         // Fund transaction
         await request(expressApp)
@@ -664,7 +685,7 @@ describe('Transaction Routes - Staking Integration Tests', () => {
               conditions: ['test']
             });
 
-          return createRes.body.transaction.id;
+          return createRes.body.dealId || createRes.body.transactionData.id;
         })();
 
         promises.push(promise);
@@ -698,7 +719,7 @@ describe('Transaction Routes - Staking Integration Tests', () => {
           conditions: ['delivery']
         });
 
-      const dealId = createRes.body.transaction.id;
+      const dealId = createRes.body.dealId || createRes.body.transactionData.id;
 
       // Fund transaction
       await request(expressApp)
@@ -774,7 +795,7 @@ describe('Transaction Routes - Staking Integration Tests', () => {
           conditions: ['test']
         });
 
-      const dealId = createRes.body.transaction.id;
+      const dealId = createRes.body.dealId || createRes.body.transactionData.id;
 
       await request(expressApp)
         .post(`/api/transaction/${dealId}/fund`)

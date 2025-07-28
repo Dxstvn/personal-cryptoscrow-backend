@@ -11,6 +11,7 @@ import securityLogger from '../../../services/securityLogger.js';
 
 // Import the new V3 escrow service
 import { EscrowServiceV3 } from '../../../services/escrowServiceV3.js';
+import { reputationService } from '../../../services/reputationService.js';
 
 // Initialize escrow service
 const escrowService = new EscrowServiceV3();
@@ -1796,5 +1797,433 @@ async function validateUserStakeBalance(userId, requiredStake, token, chainId) {
         return { sufficient: true, balance: 0 };
     }
 }
+
+// Reputation-related endpoints (for compatibility with tests)
+router.get('/dispute/stake-requirements', async (req, res) => {
+    try {
+        const idToken = req.headers.authorization?.split('Bearer ')[1];
+        if (!idToken) {
+            return res.status(401).json({ success: false, error: 'No authorization token provided' });
+        }
+
+        const { auth, db } = await getFirebaseServices();
+        let userId;
+        try {
+            const decodedToken = await auth.verifyIdToken(idToken);
+            userId = decodedToken.uid;
+        } catch (authError) {
+            return res.status(401).json({ success: false, error: 'Invalid authorization token' });
+        }
+
+        const { dealId } = req.query;
+        
+        if (!dealId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing dealId parameter'
+            });
+        }
+
+        // Get deal to determine amount
+        const dealSnapshot = await db.collection('deals').doc(dealId).get();
+        if (!dealSnapshot.exists) {
+            return res.status(404).json({ success: false, error: 'Deal not found' });
+        }
+
+        const deal = dealSnapshot.data();
+        const transactionAmount = deal.amount;
+
+        const stakeRequirements = await reputationService.calculateStakeRequirement(userId, transactionAmount);
+        
+        res.json({
+            success: true,
+            userId,
+            dealId,
+            transactionAmount,
+            reputationScore: stakeRequirements.reputationScore,
+            reputationLevel: stakeRequirements.reputationLevel,
+            stakePercentage: stakeRequirements.stakePercentage,
+            requiredStake: stakeRequirements.requiredStake,
+            currency: stakeRequirements.currency
+        });
+    } catch (error) {
+        console.error('[DISPUTE STAKE REQUIREMENTS ERROR]', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+router.post('/stake-requirement', async (req, res) => {
+    try {
+        const idToken = req.headers.authorization?.split('Bearer ')[1];
+        if (!idToken) {
+            return res.status(401).json({ success: false, error: 'No authorization token provided' });
+        }
+
+        const { auth } = await getFirebaseServices();
+        let userId;
+        try {
+            const decodedToken = await auth.verifyIdToken(idToken);
+            userId = decodedToken.uid;
+        } catch (authError) {
+            return res.status(401).json({ success: false, error: 'Invalid authorization token' });
+        }
+
+        const { transactionAmount } = req.body;
+        
+        if (!transactionAmount || transactionAmount <= 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid transaction amount'
+            });
+        }
+
+        const stakeRequirements = await reputationService.calculateStakeRequirement(userId, transactionAmount);
+        
+        res.json({
+            reputationScore: stakeRequirements.reputationScore,
+            reputationLevel: stakeRequirements.reputationLevel,
+            stakePercentage: stakeRequirements.stakePercentage,
+            requiredStake: stakeRequirements.requiredStake,
+            currency: stakeRequirements.currency
+        });
+    } catch (error) {
+        console.error('[STAKE REQUIREMENT ERROR]', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+router.get('/reputation/stats', async (req, res) => {
+    try {
+        const idToken = req.headers.authorization?.split('Bearer ')[1];
+        if (!idToken) {
+            return res.status(401).json({ success: false, error: 'No authorization token provided' });
+        }
+
+        const { auth, db } = await getFirebaseServices();
+        let userId;
+        try {
+            const decodedToken = await auth.verifyIdToken(idToken);
+            userId = decodedToken.uid;
+        } catch (authError) {
+            return res.status(401).json({ success: false, error: 'Invalid authorization token' });
+        }
+
+        // Get dispute stats
+        const stakesSnapshot = await db.collection('disputeStakes')
+            .where('userId', '==', userId)
+            .get();
+
+        let totalDisputes = 0;
+        let successfulDisputes = 0;
+        let failedDisputes = 0;
+        let totalStaked = 0;
+        let totalReturned = 0;
+        let totalSlashed = 0;
+
+        stakesSnapshot.forEach(doc => {
+            const stake = doc.data();
+            totalDisputes++;
+            totalStaked += stake.stakeAmount || 0;
+            
+            if (stake.outcome === 'resolved_in_favor') {
+                successfulDisputes++;
+                totalReturned += stake.amountReturned || stake.stakeAmount || 0;
+            } else if (stake.outcome === 'resolved_against') {
+                failedDisputes++;
+                totalSlashed += stake.amountSlashed || stake.stakeAmount || 0;
+            }
+        });
+
+        res.json({
+            disputeStats: {
+                totalDisputes,
+                successfulDisputes,
+                failedDisputes,
+                totalStaked,
+                totalReturned,
+                totalSlashed
+            }
+        });
+    } catch (error) {
+        console.error('[REPUTATION STATS ERROR]', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+router.get('/disputes/history', async (req, res) => {
+    try {
+        const idToken = req.headers.authorization?.split('Bearer ')[1];
+        if (!idToken) {
+            return res.status(401).json({ success: false, error: 'No authorization token provided' });
+        }
+
+        const { auth, db } = await getFirebaseServices();
+        let userId;
+        try {
+            const decodedToken = await auth.verifyIdToken(idToken);
+            userId = decodedToken.uid;
+        } catch (authError) {
+            return res.status(401).json({ success: false, error: 'Invalid authorization token' });
+        }
+
+        // Get dispute history
+        const stakesSnapshot = await db.collection('disputeStakes')
+            .where('userId', '==', userId)
+            .orderBy('createdAt', 'desc')
+            .get();
+
+        const disputes = [];
+        stakesSnapshot.forEach(doc => {
+            const stake = doc.data();
+            disputes.push({
+                id: doc.id,
+                ...stake
+            });
+        });
+
+        res.json({
+            success: true,
+            disputes,
+            count: disputes.length
+        });
+    } catch (error) {
+        console.error('[DISPUTES HISTORY ERROR]', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+router.get('/reputation/history', async (req, res) => {
+    try {
+        const idToken = req.headers.authorization?.split('Bearer ')[1];
+        if (!idToken) {
+            return res.status(401).json({ success: false, error: 'No authorization token provided' });
+        }
+
+        const { auth, db } = await getFirebaseServices();
+        let userId;
+        try {
+            const decodedToken = await auth.verifyIdToken(idToken);
+            userId = decodedToken.uid;
+        } catch (authError) {
+            return res.status(401).json({ success: false, error: 'Invalid authorization token' });
+        }
+
+        // Get dispute history
+        const stakesSnapshot = await db.collection('disputeStakes')
+            .where('userId', '==', userId)
+            .orderBy('createdAt', 'desc')
+            .get();
+
+        const disputes = [];
+        let totalStaked = 0;
+
+        stakesSnapshot.forEach(doc => {
+            const stake = doc.data();
+            disputes.push({
+                id: doc.id,
+                ...stake
+            });
+            totalStaked += stake.stakeAmount || 0;
+        });
+
+        res.json({
+            disputes,
+            disputeCount: disputes.length,
+            totalStaked
+        });
+    } catch (error) {
+        console.error('[REPUTATION HISTORY ERROR]', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+router.post('/:dealId/dispute/resolve', async (req, res) => {
+    try {
+        const idToken = req.headers.authorization?.split('Bearer ')[1];
+        if (!idToken) {
+            return res.status(401).json({ success: false, error: 'No authorization token provided' });
+        }
+
+        const { auth, db } = await getFirebaseServices();
+        let userId;
+        try {
+            const decodedToken = await auth.verifyIdToken(idToken);
+            userId = decodedToken.uid;
+        } catch (authError) {
+            return res.status(401).json({ success: false, error: 'Invalid authorization token' });
+        }
+
+        const { dealId } = req.params;
+        const { resolution, customAmount, network } = req.body;
+
+        // Get deal
+        const dealSnapshot = await db.collection('deals').doc(dealId).get();
+        if (!dealSnapshot.exists) {
+            return res.status(404).json({ success: false, error: 'Deal not found' });
+        }
+
+        const deal = dealSnapshot.data();
+        
+        // Check if user is participant
+        if (deal.buyer !== userId && deal.seller !== userId) {
+            return res.status(403).json({ success: false, error: 'Unauthorized' });
+        }
+
+        // Find stake
+        const stakeSnapshot = await db.collection('disputeStakes')
+            .where('dealId', '==', dealId)
+            .where('status', '==', 'locked')
+            .limit(1)
+            .get();
+
+        let stakeId = null;
+        let stakeData = null;
+        if (!stakeSnapshot.empty) {
+            stakeId = stakeSnapshot.docs[0].id;
+            stakeData = stakeSnapshot.docs[0].data();
+        }
+
+        // Resolve dispute
+        await resolveDealDispute(dealId, resolution, userId, customAmount, network);
+
+        // Handle stake resolution
+        let stakeResolution = {
+            outcome: 'no_stake',
+            stakeReturned: 0,
+            stakeSlashed: 0,
+            reputationChange: 0
+        };
+
+        if (stakeData) {
+            const isDisputeWinner = (resolution === 'RESOLVED_FOR_BUYER' && stakeData.userId === deal.buyer) ||
+                                   (resolution === 'RESOLVED_FOR_SELLER' && stakeData.userId === deal.seller);
+
+            if (isDisputeWinner) {
+                // Return stake
+                stakeResolution = {
+                    outcome: 'resolved_in_favor',
+                    stakeReturned: stakeData.stakeAmount,
+                    stakeSlashed: 0,
+                    reputationChange: 0
+                };
+
+                await db.collection('disputeStakes').doc(stakeId).update({
+                    status: 'returned',
+                    outcome: 'resolved_in_favor',
+                    amountReturned: stakeData.stakeAmount,
+                    amountSlashed: 0,
+                    resolvedAt: Timestamp.now()
+                });
+            } else {
+                // Slash stake
+                stakeResolution = {
+                    outcome: 'resolved_against',
+                    stakeReturned: 0,
+                    stakeSlashed: stakeData.stakeAmount,
+                    reputationChange: -100
+                };
+
+                await db.collection('disputeStakes').doc(stakeId).update({
+                    status: 'slashed',
+                    outcome: 'resolved_against',
+                    amountReturned: 0,
+                    amountSlashed: stakeData.stakeAmount,
+                    resolvedAt: Timestamp.now()
+                });
+
+                // Update reputation
+                await reputationService.updateUserReputation(stakeData.userId, -100, 'Failed dispute - stake slashed');
+            }
+        }
+
+        res.json({
+            success: true,
+            stakeResolution
+        });
+    } catch (error) {
+        console.error('[DISPUTE RESOLVE ERROR]', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+router.get('/:dealId/dispute/status', async (req, res) => {
+    try {
+        const idToken = req.headers.authorization?.split('Bearer ')[1];
+        if (!idToken) {
+            return res.status(401).json({ success: false, error: 'No authorization token provided' });
+        }
+
+        const { auth, db } = await getFirebaseServices();
+        let userId;
+        try {
+            const decodedToken = await auth.verifyIdToken(idToken);
+            userId = decodedToken.uid;
+        } catch (authError) {
+            return res.status(401).json({ success: false, error: 'Invalid authorization token' });
+        }
+
+        const { dealId } = req.params;
+
+        // Get deal
+        const dealSnapshot = await db.collection('deals').doc(dealId).get();
+        if (!dealSnapshot.exists) {
+            return res.status(404).json({ success: false, error: 'Deal not found' });
+        }
+
+        const deal = dealSnapshot.data();
+        
+        // Check if user is participant
+        if (deal.buyer !== userId && deal.seller !== userId) {
+            return res.status(403).json({ success: false, error: 'Unauthorized' });
+        }
+
+        // Get stake info
+        const stakeSnapshot = await db.collection('disputeStakes')
+            .where('dealId', '==', dealId)
+            .limit(1)
+            .get();
+
+        let stakeInfo = null;
+        if (!stakeSnapshot.empty) {
+            const stake = stakeSnapshot.docs[0].data();
+            stakeInfo = {
+                active: stake.status === 'locked',
+                raisedBy: stake.userId,
+                stakeAmount: stake.stakeAmount,
+                reputationAtStake: stake.reputationScoreAtStake
+            };
+        }
+
+        res.json({
+            dispute: stakeInfo || {
+                active: false
+            }
+        });
+    } catch (error) {
+        console.error('[DISPUTE STATUS ERROR]', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
 
 export default router;

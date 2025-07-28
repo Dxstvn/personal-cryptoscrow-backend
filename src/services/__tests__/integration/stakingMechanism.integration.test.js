@@ -55,7 +55,7 @@ describe('Staking Mechanism Integration Tests', () => {
     // Initialize default app for databaseService compatibility
     try {
       app = initializeApp({
-        projectId: 'test-project',
+        projectId: 'demo-test',
         databaseURL: 'http://localhost:5004'
       });
     } catch (error) {

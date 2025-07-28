@@ -46,7 +46,7 @@ describe('ReputationService Integration Tests', () => {
     process.env.NODE_ENV = 'test';
     
     app = initializeApp({
-      projectId: 'test-project',
+      projectId: 'demo-test',
       databaseURL: 'http://localhost:5004'
     }, 'reputation-integration-test');
 

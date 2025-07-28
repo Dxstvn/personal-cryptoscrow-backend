@@ -40,7 +40,7 @@ describe('Dispute Staking Integration Tests', () => {
     process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9099';
     
     app = initializeApp({
-      projectId: 'test-project',
+      projectId: 'demo-test',
       databaseURL: 'http://localhost:5004'
     }, 'dispute-staking-test');
 

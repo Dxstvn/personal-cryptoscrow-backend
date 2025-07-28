@@ -16,7 +16,7 @@ describe('ReputationService Stake Token Handling', () => {
   beforeAll(async () => {
     // Initialize Firebase Admin for testing
     app = initializeApp({
-      projectId: 'test-project',
+      projectId: 'demo-test',
       databaseURL: 'http://localhost:9000'
     }, 'reputation-stake-token-test');
     

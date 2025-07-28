@@ -1,5 +1,5 @@
 import { getAuth } from 'firebase-admin/auth';
-import { getAdminApp } from '../../auth/admin.js';
+import { getAdminApp } from '../routes/auth/admin.js';
 
 // Helper function to get Firebase services
 async function getFirebaseServices() {
