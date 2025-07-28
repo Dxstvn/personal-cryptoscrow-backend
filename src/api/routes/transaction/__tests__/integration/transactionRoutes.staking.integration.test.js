@@ -18,16 +18,10 @@ const execAsync = promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Mock the admin module to avoid auth verification issues
+// Mock getAdminApp to use test Firebase instance
+const mockGetAdminApp = vi.fn();
 vi.mock('../../../auth/admin.js', () => ({
-  getAdminApp: vi.fn(() => Promise.resolve({
-    auth: () => ({
-      verifyIdToken: vi.fn((token) => {
-        const userId = token.replace('test-token-', '');
-        return Promise.resolve({ uid: userId });
-      })
-    })
-  }))
+  getAdminApp: mockGetAdminApp
 }));
 
 // Test configuration
@@ -104,6 +98,9 @@ describe('Transaction Routes - Staking Integration Tests', () => {
 
     db = getFirestore(app);
     auth = getAuth(app);
+    
+    // Configure mock to return test app
+    mockGetAdminApp.mockResolvedValue(app);
 
     // Initialize services
     // databaseService is already imported as a module
