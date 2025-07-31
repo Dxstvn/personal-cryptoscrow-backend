@@ -88,6 +88,7 @@ import contactRouter from './api/routes/contact/contactRoutes.js';
 import transactionRouter from './api/routes/transaction/transactionRoutes.js';
 import walletRouter from './api/routes/wallet/walletRoutes.js';
 import reputationRouter from './api/routes/reputation/reputationRoutes.js';
+import kycRouter from './api/routes/kyc/kycIndex.js';
 
 // Import services for real-time sync
 import ContractConditionSync from './services/contractConditionSync.js';
@@ -125,6 +126,7 @@ app.use('/contact', contactRouter);
 app.use('/transaction', transactionRouter);
 app.use('/wallet', walletRouter);
 app.use('/reputation', reputationRouter);
+app.use('/api/kyc', kycRouter);
 
 // Default route
 app.get('/', (req, res) => {

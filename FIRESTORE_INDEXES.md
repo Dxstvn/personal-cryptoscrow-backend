@@ -22,6 +22,86 @@ db.collection('contactInvitations')
   .orderBy('createdAt', 'desc')
 ```
 
+### 2. KYC Status Index
+**Collection:** `users`
+
+**Fields:**
+- `kycStatus.status` (Ascending)
+- `kycStatus.lastUpdated` (Descending)
+
+**Purpose:** Query users by KYC status, ordered by last update time.
+
+### 3. KYC Level and Risk Index
+**Collection:** `users`
+
+**Fields:**
+- `kycStatus.level` (Ascending)
+- `riskProfile.overallRisk` (Ascending)
+
+**Purpose:** Query users by KYC level and risk profile for compliance monitoring.
+
+### 4. Manual Review Queue Index
+**Collection:** `users`
+
+**Fields:**
+- `riskProfile.requiresManualReview` (Ascending)
+- `kycStatus.lastUpdated` (Descending)
+
+**Purpose:** Efficiently query users requiring manual KYC review.
+
+### 5. KYC Sessions by User Index
+**Collection:** `kycSessions`
+
+**Fields:**
+- `userId` (Ascending)
+- `startedAt` (Descending)
+
+**Purpose:** Query KYC sessions for a specific user.
+
+### 6. KYC Sessions by Status Index
+**Collection:** `kycSessions`
+
+**Fields:**
+- `status` (Ascending)
+- `startedAt` (Descending)
+
+**Purpose:** Query active or abandoned KYC sessions.
+
+### 7. Compliance Audits by User Index
+**Collection:** `complianceAudits`
+
+**Fields:**
+- `userId` (Ascending)
+- `timestamp` (Descending)
+
+**Purpose:** Query audit history for a specific user.
+
+### 8. Compliance Audits by Action Index
+**Collection:** `complianceAudits`
+
+**Fields:**
+- `action` (Ascending)
+- `timestamp` (Descending)
+
+**Purpose:** Query audits by specific actions (e.g., manual reviews).
+
+### 9. AML Watchlists Index
+**Collection:** `amlWatchlists`
+
+**Fields:**
+- `listType` (Ascending)
+- `source` (Ascending)
+
+**Purpose:** Efficiently query specific watchlist types and sources.
+
+### 10. Document Hash Index
+**Collection:** `documentHashes`
+
+**Fields:**
+- `hash` (Ascending)
+
+**Purpose:** Check for document reuse across accounts.
+
 ## How to Create Indexes
 
 ### Option 1: Firebase Console (Recommended)
@@ -33,7 +113,7 @@ db.collection('contactInvitations')
 6. Click "Create"
 
 ### Option 2: Firebase CLI
-1. Update your `firestore.indexes.json` file:
+1. Update your `firestore.indexes.json` file with all required indexes:
 ```json
 {
   "indexes": [
@@ -41,21 +121,84 @@ db.collection('contactInvitations')
       "collectionGroup": "contactInvitations",
       "queryScope": "COLLECTION",
       "fields": [
-        {
-          "fieldPath": "receiverId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "status",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "createdAt",
-          "order": "DESCENDING"
-        }
+        { "fieldPath": "receiverId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "kycStatus.status", "order": "ASCENDING" },
+        { "fieldPath": "kycStatus.lastUpdated", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "kycStatus.level", "order": "ASCENDING" },
+        { "fieldPath": "riskProfile.overallRisk", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "riskProfile.requiresManualReview", "order": "ASCENDING" },
+        { "fieldPath": "kycStatus.lastUpdated", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "kycSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "startedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "kycSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "startedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "complianceAudits",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "complianceAudits",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "action", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "amlWatchlists",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "listType", "order": "ASCENDING" },
+        { "fieldPath": "source", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "documentHashes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "hash", "order": "ASCENDING" }
       ]
     }
-  ]
+  ],
+  "fieldOverrides": []
 }
 ```
 

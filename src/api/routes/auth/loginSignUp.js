@@ -69,7 +69,7 @@ router.post("/signUpEmailPass", async (req, res) => {
       emailVerified: false
     });
     
-    // Create user profile in Firestore
+    // Create user profile in Firestore with KYC fields
     const userProfileData = {
       email: email.toLowerCase(),
       first_name: '',
@@ -85,7 +85,77 @@ router.post("/signUpEmailPass", async (req, res) => {
       createdAt: new Date(),
       uid: userRecord.uid,
       reputationScore: 1000, // New users start with full reputation
-      lastReputationUpdate: new Date()
+      lastReputationUpdate: new Date(),
+      
+      // KYC/AML fields
+      kycStatus: {
+        level: 'none',
+        status: 'pending',
+        lastUpdated: new Date(),
+        expiryDate: null,
+        reviewRequired: false
+      },
+      kycDocuments: {
+        identity: {
+          type: null,
+          documentId: null,
+          verified: false,
+          extractedData: {
+            documentNumber: null,
+            fullName: null,
+            dateOfBirth: null,
+            expiryDate: null,
+            nationality: null,
+            mrz: null
+          },
+          uploadedAt: null,
+          verifiedAt: null
+        },
+        proofOfAddress: {
+          type: null,
+          documentId: null,
+          verified: false,
+          extractedAddress: null,
+          uploadedAt: null
+        },
+        selfie: {
+          imageId: null,
+          livenessScore: 0,
+          faceMatchScore: 0,
+          uploadedAt: null
+        }
+      },
+      amlStatus: {
+        lastScreened: null,
+        riskScore: 0,
+        sanctions: {
+          checked: false,
+          matches: [],
+          lastChecked: null
+        },
+        pep: {
+          isPEP: false,
+          details: null,
+          lastChecked: null
+        },
+        adverseMedia: {
+          hasAdverseMedia: false,
+          sources: [],
+          lastChecked: null
+        }
+      },
+      verificationHistory: [],
+      riskProfile: {
+        overallRisk: 'low',
+        factors: {
+          geographic: 0,
+          transactional: 0,
+          behavioral: 0,
+          documentary: 0
+        },
+        requiresManualReview: false,
+        lastCalculated: new Date()
+      }
     };
     
     try {
@@ -222,7 +292,7 @@ router.post("/signInGoogle", async (req, res) => {
     try {
       const profileDoc = await db.collection('users').doc(uid).get();
       if (!profileDoc.exists) {
-        // Create user profile for first-time Google sign-in
+        // Create user profile for first-time Google sign-in with KYC fields
         userProfile = {
           email: email,
           first_name: decodedToken.name ? decodedToken.name.split(' ')[0] : '',
@@ -232,7 +302,77 @@ router.post("/signInGoogle", async (req, res) => {
           createdAt: new Date(),
           uid: uid,
           reputationScore: 1000, // New users start with full reputation
-          lastReputationUpdate: new Date()
+          lastReputationUpdate: new Date(),
+          
+          // KYC/AML fields
+          kycStatus: {
+            level: 'none',
+            status: 'pending',
+            lastUpdated: new Date(),
+            expiryDate: null,
+            reviewRequired: false
+          },
+          kycDocuments: {
+            identity: {
+              type: null,
+              documentId: null,
+              verified: false,
+              extractedData: {
+                documentNumber: null,
+                fullName: null,
+                dateOfBirth: null,
+                expiryDate: null,
+                nationality: null,
+                mrz: null
+              },
+              uploadedAt: null,
+              verifiedAt: null
+            },
+            proofOfAddress: {
+              type: null,
+              documentId: null,
+              verified: false,
+              extractedAddress: null,
+              uploadedAt: null
+            },
+            selfie: {
+              imageId: null,
+              livenessScore: 0,
+              faceMatchScore: 0,
+              uploadedAt: null
+            }
+          },
+          amlStatus: {
+            lastScreened: null,
+            riskScore: 0,
+            sanctions: {
+              checked: false,
+              matches: [],
+              lastChecked: null
+            },
+            pep: {
+              isPEP: false,
+              details: null,
+              lastChecked: null
+            },
+            adverseMedia: {
+              hasAdverseMedia: false,
+              sources: [],
+              lastChecked: null
+            }
+          },
+          verificationHistory: [],
+          riskProfile: {
+            overallRisk: 'low',
+            factors: {
+              geographic: 0,
+              transactional: 0,
+              behavioral: 0,
+              documentary: 0
+            },
+            requiresManualReview: false,
+            lastCalculated: new Date()
+          }
         };
         await db.collection('users').doc(uid).set(userProfile);
         console.log(`/signInGoogle: Created profile for new Google user ${uid}`);
