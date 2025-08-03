@@ -4,7 +4,8 @@ import { getDb } from '../databaseService.js';
 import { v4 as uuidv4 } from 'uuid';
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
-import fs from 'fs/promises';
+import fs from 'fs';
+import * as fsPromises from 'fs/promises';
 import path from 'path';
 
 /**
@@ -173,8 +174,10 @@ export class ComplianceReportingService {
 
     sessionsSnapshot.forEach(doc => {
       const session = doc.data();
-      if (session.completedAt) {
-        const time = new Date(session.completedAt) - new Date(session.createdAt);
+      if (session.completedAt && session.createdAt) {
+        const completedAt = session.completedAt instanceof Date ? session.completedAt : new Date(session.completedAt);
+        const createdAt = session.createdAt instanceof Date ? session.createdAt : new Date(session.createdAt);
+        const time = completedAt - createdAt;
         totalTime += time;
         completedCount++;
       }
@@ -188,8 +191,11 @@ export class ComplianceReportingService {
     const dailyCounts = {};
     sessionsSnapshot.forEach(doc => {
       const session = doc.data();
-      const date = new Date(session.createdAt).toISOString().split('T')[0];
-      dailyCounts[date] = (dailyCounts[date] || 0) + 1;
+      if (session.createdAt) {
+        const createdAt = session.createdAt instanceof Date ? session.createdAt : new Date(session.createdAt);
+        const date = createdAt.toISOString().split('T')[0];
+        dailyCounts[date] = (dailyCounts[date] || 0) + 1;
+      }
     });
 
     data.dailyVerifications = Object.entries(dailyCounts).map(([date, count]) => ({
@@ -497,7 +503,7 @@ export class ComplianceReportingService {
     const filePath = path.join(process.cwd(), 'reports', fileName);
 
     // Ensure reports directory exists
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fsPromises.mkdir(path.dirname(filePath), { recursive: true });
 
     // Create write stream
     const stream = doc.pipe(fs.createWriteStream(filePath));
@@ -613,7 +619,7 @@ export class ComplianceReportingService {
     const fileName = `${reportType}_${new Date().getTime()}.xlsx`;
     const filePath = path.join(process.cwd(), 'reports', fileName);
     
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fsPromises.mkdir(path.dirname(filePath), { recursive: true });
     await workbook.xlsx.writeFile(filePath);
 
     return filePath;
@@ -686,8 +692,8 @@ export class ComplianceReportingService {
     const fileName = `${reportType}_${new Date().getTime()}.json`;
     const filePath = path.join(process.cwd(), 'reports', fileName);
     
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, JSON.stringify(report, null, 2));
+    await fsPromises.mkdir(path.dirname(filePath), { recursive: true });
+    await fsPromises.writeFile(filePath, JSON.stringify(report, null, 2), 'utf8');
 
     return filePath;
   }
@@ -917,7 +923,7 @@ export class ComplianceReportingService {
         
         // Delete file
         try {
-          await fs.unlink(report.filePath);
+          await fsPromises.unlink(report.filePath);
           console.log(`[ComplianceReporting] Deleted expired report file: ${report.filePath}`);
         } catch (error) {
           console.error(`[ComplianceReporting] Error deleting file ${report.filePath}:`, error);

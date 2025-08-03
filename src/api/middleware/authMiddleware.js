@@ -30,6 +30,7 @@ export async function authMiddleware(req, res, next) {
         // First try to verify as ID token - but in test mode, allow different audiences
         const decodedToken = await auth.verifyIdToken(token, false); // Don't check revocation in test
         req.userId = decodedToken.uid;
+        req.user = { uid: decodedToken.uid };
         console.log(`🧪 Test mode: ID token verified for user ${req.userId}`);
         next();
         return;
@@ -41,6 +42,7 @@ export async function authMiddleware(req, res, next) {
           // Handle test tokens
           const testUserId = token.replace('test-token-', '');
           req.userId = testUserId;
+          req.user = { uid: testUserId };
           console.log(`🧪 Test mode: Using test token for user ${testUserId}`);
           next();
           return;
@@ -51,6 +53,7 @@ export async function authMiddleware(req, res, next) {
           // Try verifying as session cookie
           const decodedClaims = await auth.verifySessionCookie(token, false);
           req.userId = decodedClaims.uid;
+          req.user = { uid: decodedClaims.uid };
           console.log(`🧪 Test mode: Session cookie verified for user ${req.userId}`);
           next();
           return;
@@ -61,6 +64,7 @@ export async function authMiddleware(req, res, next) {
         // Last resort: in test mode, if the token looks like a UID, use it directly
         if (token.length >= 20 && token.length <= 128 && /^[a-zA-Z0-9_-]+$/.test(token)) {
           req.userId = token;
+          req.user = { uid: token };
           console.log(`🧪 Test mode: Using token as direct UID: ${token}`);
           next();
           return;
@@ -72,6 +76,7 @@ export async function authMiddleware(req, res, next) {
       // In production, strictly verify ID tokens
       const decodedToken = await auth.verifyIdToken(token);
       req.userId = decodedToken.uid;
+      req.user = { uid: decodedToken.uid };
       next();
     }
   } catch (error) {

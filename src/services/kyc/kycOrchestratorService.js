@@ -491,6 +491,60 @@ export class KYCOrchestratorService {
       // Don't throw - audit logging should not break the flow
     }
   }
+
+  /**
+   * Get a KYC session by ID
+   * @param {string} sessionId - Session ID
+   */
+  async getSessionById(sessionId) {
+    try {
+      const db = await getDb();
+      const sessionDoc = await db.collection('kycSessions').doc(sessionId).get();
+      
+      if (!sessionDoc.exists) {
+        throw new Error('KYC session not found');
+      }
+      
+      return sessionDoc.data();
+    } catch (error) {
+      console.error('[KYCOrchestrator] Error getting session:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update user's KYC status
+   * @param {string} userId - User ID
+   * @param {Object} statusUpdate - Status update object
+   */
+  async updateUserKYCStatus(userId, statusUpdate) {
+    try {
+      const db = await getDb();
+      
+      const updateData = {
+        'kycStatus.level': statusUpdate.level,
+        'kycStatus.status': statusUpdate.status,
+        'kycStatus.lastUpdated': FieldValue.serverTimestamp()
+      };
+      
+      if (statusUpdate.expiryDate) {
+        updateData['kycStatus.expiryDate'] = statusUpdate.expiryDate;
+      }
+      
+      await db.collection('users').doc(userId).update(updateData);
+      
+      // Log audit entry
+      await this.logAuditEntry(userId, 'kyc_status_updated', {
+        newStatus: statusUpdate.status,
+        newLevel: statusUpdate.level
+      });
+      
+      return { success: true };
+    } catch (error) {
+      console.error('[KYCOrchestrator] Error updating user KYC status:', error);
+      throw error;
+    }
+  }
 }
 
 // Export singleton instance

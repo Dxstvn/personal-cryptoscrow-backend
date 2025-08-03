@@ -3,6 +3,7 @@
 import { getDb } from '../databaseService.js';
 import { v4 as uuidv4 } from 'uuid';
 import nodemailer from 'nodemailer';
+import admin from 'firebase-admin';
 
 /**
  * KYC Notification Service
@@ -74,7 +75,7 @@ export class KYCNotificationService {
       if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
         this.emailTransporter = nodemailer.createTransport({
           host: process.env.SMTP_HOST,
-          port: process.env.SMTP_PORT || 587,
+          port: parseInt(process.env.SMTP_PORT) || 587,
           secure: process.env.SMTP_SECURE === 'true',
           auth: {
             user: process.env.SMTP_USER,
@@ -121,14 +122,18 @@ export class KYCNotificationService {
       // Create in-app notification
       const notification = await this.createInAppNotification(userId, type, template, data);
 
+      const methods = ['in_app'];
+
       // Send email if available and user has email notifications enabled
       if (user.email && user.notificationPreferences?.email !== false && this.emailTransporter) {
         await this.sendEmailNotification(user, template, data);
+        methods.push('email');
       }
 
       // Send push notification if enabled
       if (user.pushToken && user.notificationPreferences?.push !== false) {
         await this.sendPushNotification(user, template, data);
+        methods.push('push');
       }
 
       // Log notification
@@ -137,7 +142,7 @@ export class KYCNotificationService {
       return {
         success: true,
         notificationId: notification.id,
-        methods: ['in_app', user.email ? 'email' : null, user.pushToken ? 'push' : null].filter(Boolean)
+        methods
       };
     } catch (error) {
       console.error('[KYCNotification] Error sending notification:', error);

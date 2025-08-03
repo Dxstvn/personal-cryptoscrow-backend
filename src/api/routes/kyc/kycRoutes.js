@@ -3,7 +3,7 @@
 import express from 'express';
 import multer from 'multer';
 import { authMiddleware } from '../../middleware/authMiddleware.js';
-import { rateLimiter } from '../../middleware/rateLimiter.js';
+import rateLimiters from '../../middleware/rateLimiter.js';
 import { kycOrchestrator } from '../../../services/kyc/kycOrchestratorService.js';
 import { documentProcessor } from '../../../services/kyc/documentProcessorService.js';
 import { faceVerifier } from '../../../services/kyc/faceVerificationService.js';
@@ -33,7 +33,7 @@ const upload = multer({
  */
 router.post('/session/start', 
   authMiddleware, 
-  rateLimiter({ max: 5, windowMs: 60 * 60 * 1000 }), // 5 per hour
+  rateLimiters.api, // Use the API rate limiter
   async (req, res) => {
     try {
       const { requiredLevel = 'basic' } = req.body;
@@ -76,7 +76,7 @@ router.post('/session/start',
  */
 router.post('/document/upload',
   authMiddleware,
-  rateLimiter({ max: 10, windowMs: 15 * 60 * 1000 }), // 10 per 15 minutes
+  rateLimiters.api, // API rate limiter
   upload.single('document'),
   async (req, res) => {
     try {
@@ -157,7 +157,7 @@ router.post('/document/upload',
  */
 router.post('/liveness/check',
   authMiddleware,
-  rateLimiter({ max: 20, windowMs: 5 * 60 * 1000 }), // 20 per 5 minutes
+  rateLimiters.api, // API rate limiter
   async (req, res) => {
     try {
       const { sessionId, imageData } = req.body;
@@ -250,7 +250,7 @@ router.get('/status',
  */
 router.post('/personal',
   authMiddleware,
-  rateLimiter({ max: 10, windowMs: 60 * 60 * 1000 }), // 10 per hour
+  rateLimiters.api, // API rate limiter
   async (req, res) => {
     try {
       const { sessionId, personalInfo } = req.body;
@@ -300,7 +300,7 @@ router.post('/personal',
  */
 router.post('/session/complete',
   authMiddleware,
-  rateLimiter({ max: 3, windowMs: 60 * 60 * 1000 }), // 3 per hour
+  rateLimiters.api, // API rate limiter
   async (req, res) => {
     try {
       const { sessionId } = req.body;

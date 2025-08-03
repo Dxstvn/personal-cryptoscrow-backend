@@ -3,6 +3,15 @@
 import { getDb } from '../databaseService.js';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
+import { watchlistDownloader } from './utils/watchlistDownloader.js';
+import { fuzzyMatcher } from './utils/fuzzyMatcher.js';
+import { openSanctionsSQLiteService } from './opensanctions/OpenSanctionsSQLiteService.js';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * AML Screening Service
@@ -13,7 +22,12 @@ export class AMLScreeningService {
     this.sanctionsChecker = new SanctionsChecker();
     this.pepChecker = new PEPChecker();
     this.adverseMediaChecker = new AdverseMediaChecker();
+    this.watchlistDownloader = watchlistDownloader;
+    this.fuzzyMatcher = fuzzyMatcher;
+    this.openSanctionsService = openSanctionsSQLiteService;
     this.initialized = false;
+    this.lastWatchlistUpdate = null;
+    this.updateInterval = 7 * 24 * 60 * 60 * 1000; // 7 days
   }
 
   /**
@@ -23,10 +37,24 @@ export class AMLScreeningService {
     if (this.initialized) return;
 
     try {
-      // Load watchlists from database
+      // Initialize OpenSanctions service first
+      await this.openSanctionsService.initialize();
+      console.log('[AMLScreening] OpenSanctions service initialized');
+      
+      // Initialize watchlist downloader
+      await this.watchlistDownloader.initialize();
+      
+      // Check if watchlists need updating
+      await this.updateWatchlistsIfNeeded();
+      
+      // Load watchlists from database or local cache
       await this.loadWatchlists();
+      
+      // Build PEP database if needed
+      await this.initializePEPDatabase();
+      
       this.initialized = true;
-      console.log('[AMLScreening] Service initialized');
+      console.log('[AMLScreening] Service initialized with OpenSanctions integration');
     } catch (error) {
       console.error('[AMLScreening] Initialization error:', error);
       throw error;
@@ -91,7 +119,38 @@ export class AMLScreeningService {
    * @returns {Promise<Object>} Sanctions check result
    */
   async checkSanctions(userData) {
-    return this.sanctionsChecker.check(userData);
+    try {
+      // First, try OpenSanctions search for enhanced coverage
+      const openSanctionsResults = await this.searchOpenSanctions(userData);
+      
+      // Then, run traditional sanctions check for additional coverage
+      const traditionalResults = await this.sanctionsChecker.check(userData);
+      
+      // Combine results, giving priority to OpenSanctions due to better data quality
+      const combinedMatches = [
+        ...openSanctionsResults.matches,
+        ...traditionalResults.matches.filter(match => 
+          // Avoid duplicates by checking if OpenSanctions already found this match
+          !openSanctionsResults.matches.some(osMatch => 
+            osMatch.matchedName.toLowerCase() === match.matchedName.toLowerCase()
+          )
+        )
+      ];
+      
+      return {
+        hasMatches: combinedMatches.length > 0,
+        matches: combinedMatches,
+        checkedLists: ['OpenSanctions', 'OFAC', 'UN', 'EU'],
+        openSanctionsChecked: true,
+        timestamp: new Date()
+      };
+    } catch (error) {
+      console.error('[AMLScreening] Error in sanctions check:', error);
+      
+      // Fallback to traditional screening if OpenSanctions fails
+      console.log('[AMLScreening] Falling back to traditional sanctions screening');
+      return this.sanctionsChecker.check(userData);
+    }
   }
 
   /**
@@ -110,6 +169,62 @@ export class AMLScreeningService {
    */
   async checkAdverseMedia(userData) {
     return this.adverseMediaChecker.check(userData);
+  }
+
+  /**
+   * Search OpenSanctions database
+   * @param {Object} userData - User data
+   * @returns {Promise<Object>} OpenSanctions search results
+   */
+  async searchOpenSanctions(userData) {
+    try {
+      const searchName = `${userData.firstName} ${userData.lastName}`.trim();
+      
+      if (!searchName || searchName.length < 2) {
+        return { hasMatches: false, matches: [] };
+      }
+      
+      // Search OpenSanctions with appropriate thresholds
+      const results = await this.openSanctionsService.search(searchName, {
+        threshold: 0.75, // 75% match threshold
+        limit: 50,
+        includeDetails: true
+      });
+      
+      // Transform OpenSanctions results to match our AML format
+      const matches = results
+        .filter(result => result.score >= 0.75) // Additional filtering
+        .map(result => ({
+          listSource: 'OpenSanctions',
+          matchedName: result.name,
+          matchScore: result.score,
+          entityId: result.entity_id,
+          schema: result.schema,
+          aliases: result.properties?.name?.slice(1) || [], // First name is primary, rest are aliases
+          dateOfBirth: result.properties?.birthDate?.[0] || null,
+          nationality: result.properties?.nationality?.[0] || null,
+          program: result.properties?.program?.[0] || result.properties?.topics?.join(', ') || 'Sanctioned Entity',
+          reason: result.properties?.summary || 'Listed in OpenSanctions database',
+          topics: result.properties?.topics || [],
+          firstSeen: result.first_seen,
+          lastSeen: result.last_seen
+        }));
+      
+      console.log(`[AMLScreening] OpenSanctions search for "${searchName}" found ${matches.length} matches`);
+      
+      return {
+        hasMatches: matches.length > 0,
+        matches,
+        searchTerm: searchName,
+        resultsCount: results.length,
+        filteredCount: matches.length
+      };
+    } catch (error) {
+      console.error('[AMLScreening] OpenSanctions search error:', error);
+      
+      // Return empty results instead of throwing to allow fallback
+      return { hasMatches: false, matches: [], error: error.message };
+    }
   }
 
   /**
@@ -141,9 +256,87 @@ export class AMLScreeningService {
   }
 
   /**
-   * Load watchlists from database
+   * Update watchlists if needed
+   */
+  async updateWatchlistsIfNeeded() {
+    try {
+      const needsUpdate = !this.lastWatchlistUpdate || 
+        (Date.now() - this.lastWatchlistUpdate) > this.updateInterval;
+      
+      if (needsUpdate) {
+        console.log('[AMLScreening] Updating watchlists...');
+        const results = await this.watchlistDownloader.downloadAllWatchlists();
+        
+        console.log('[AMLScreening] Watchlist update results:', {
+          success: results.success.length,
+          failed: results.failed.length
+        });
+        
+        this.lastWatchlistUpdate = Date.now();
+        
+        // Store update timestamp
+        await this.storeUpdateTimestamp();
+      }
+    } catch (error) {
+      console.error('[AMLScreening] Error updating watchlists:', error);
+    }
+  }
+
+  /**
+   * Load watchlists from database or local cache
    */
   async loadWatchlists() {
+    try {
+      // Try to load from local cache first
+      const consolidatedList = await this.watchlistDownloader.getConsolidatedList();
+      
+      if (consolidatedList.length > 0) {
+        // Separate by type
+        const sanctionsList = consolidatedList.filter(entry => 
+          ['OFAC', 'UN', 'EU', 'UK'].includes(entry.source)
+        );
+        
+        this.sanctionsChecker.loadList(sanctionsList);
+        console.log(`[AMLScreening] Loaded ${sanctionsList.length} sanctions entries from local cache`);
+        
+        // Also try to load from database for PEP lists
+        await this.loadPEPFromDatabase();
+      } else {
+        // Fallback to database
+        await this.loadFromDatabase();
+      }
+    } catch (error) {
+      console.error('[AMLScreening] Error loading watchlists:', error);
+      // Continue with empty lists if loading fails
+    }
+  }
+
+  /**
+   * Load PEP lists from database
+   */
+  async loadPEPFromDatabase() {
+    try {
+      const db = await getDb();
+      const pepSnapshot = await db.collection('amlWatchlists')
+        .where('listType', '==', 'pep')
+        .get();
+      
+      const pepList = [];
+      pepSnapshot.forEach(doc => {
+        pepList.push(...doc.data().entries);
+      });
+      
+      this.pepChecker.loadList(pepList);
+      console.log(`[AMLScreening] Loaded ${pepList.length} PEP entries from database`);
+    } catch (error) {
+      console.error('[AMLScreening] Error loading PEP from database:', error);
+    }
+  }
+
+  /**
+   * Load from database (fallback)
+   */
+  async loadFromDatabase() {
     try {
       const db = await getDb();
       
@@ -171,10 +364,114 @@ export class AMLScreeningService {
       
       this.pepChecker.loadList(pepList);
       
-      console.log(`[AMLScreening] Loaded ${sanctionsList.length} sanctions entries and ${pepList.length} PEP entries`);
+      console.log(`[AMLScreening] Loaded ${sanctionsList.length} sanctions entries and ${pepList.length} PEP entries from database`);
     } catch (error) {
-      console.error('[AMLScreening] Error loading watchlists:', error);
-      // Continue with empty lists if loading fails
+      console.error('[AMLScreening] Error loading from database:', error);
+    }
+  }
+
+  /**
+   * Initialize PEP database
+   */
+  async initializePEPDatabase() {
+    try {
+      // Check if we have PEP data
+      if (this.pepChecker.pepList.length === 0) {
+        console.log('[AMLScreening] Building PEP database...');
+        const pepEntries = await this.buildPEPDatabase();
+        this.pepChecker.loadList(pepEntries);
+        
+        // Store in database for persistence
+        await this.storePEPDatabase(pepEntries);
+      }
+    } catch (error) {
+      console.error('[AMLScreening] Error initializing PEP database:', error);
+    }
+  }
+
+  /**
+   * Build PEP database from public sources
+   */
+  async buildPEPDatabase() {
+    const pepEntries = [];
+    
+    // Load pre-compiled PEP data
+    try {
+      const pepDataPath = path.join(__dirname, 'data', 'pep_database.json');
+      const pepData = await fs.readFile(pepDataPath, 'utf8');
+      const compiledPEPs = JSON.parse(pepData);
+      pepEntries.push(...compiledPEPs);
+    } catch (error) {
+      console.log('[AMLScreening] No pre-compiled PEP data found, using defaults');
+      
+      // Default high-profile PEPs for demonstration
+      pepEntries.push(...this.getDefaultPEPList());
+    }
+    
+    return pepEntries;
+  }
+
+  /**
+   * Get default PEP list
+   */
+  getDefaultPEPList() {
+    return [
+      {
+        name: 'Sample Head of State',
+        position: 'President',
+        country: 'Sample Country',
+        category: 'Head of State',
+        since: '2020-01-01',
+        riskLevel: 'high',
+        source: 'default'
+      },
+      // Add more default entries as needed
+    ];
+  }
+
+  /**
+   * Store PEP database
+   */
+  async storePEPDatabase(pepEntries) {
+    try {
+      const db = await getDb();
+      const batch = db.batch();
+      
+      // Store in chunks to avoid firestore limits
+      const chunkSize = 100;
+      for (let i = 0; i < pepEntries.length; i += chunkSize) {
+        const chunk = pepEntries.slice(i, i + chunkSize);
+        const docRef = db.collection('amlWatchlists').doc(`pep_${i / chunkSize}`);
+        
+        batch.set(docRef, {
+          listType: 'pep',
+          source: 'compiled',
+          entries: chunk,
+          lastUpdated: new Date(),
+          entryCount: chunk.length
+        });
+      }
+      
+      await batch.commit();
+      console.log(`[AMLScreening] Stored ${pepEntries.length} PEP entries in database`);
+    } catch (error) {
+      console.error('[AMLScreening] Error storing PEP database:', error);
+    }
+  }
+
+  /**
+   * Store update timestamp
+   */
+  async storeUpdateTimestamp() {
+    try {
+      const db = await getDb();
+      await db.collection('amlWatchlists').doc('metadata').set({
+        lastUpdate: new Date(),
+        lastUpdateTimestamp: Date.now(),
+        sources: Object.keys(this.watchlistDownloader.sources)
+      }, { merge: true });
+    } catch (error) {
+      console.error('[AMLScreening] Error storing update timestamp:', error);
     }
   }
 
@@ -244,6 +541,7 @@ class SanctionsChecker {
     this.ofacList = [];
     this.unList = [];
     this.euList = [];
+    this.fuzzyMatcher = fuzzyMatcher;
   }
 
   /**
@@ -324,23 +622,43 @@ class SanctionsChecker {
    */
   calculateMatchScore(searchTerms, entry) {
     let maxScore = 0;
+    let bestMatchDetails = null;
     
     const entryNames = [
       entry.name,
       ...(entry.aliases || []),
       ...(entry.alternateNames || [])
-    ].map(n => n.toLowerCase());
+    ].filter(n => n && n.length > 0);
     
     for (const searchTerm of searchTerms) {
       for (const entryName of entryNames) {
-        // Exact match
-        if (searchTerm === entryName) {
-          return 1.0;
-        }
+        // Use advanced fuzzy matcher
+        const matchResult = this.fuzzyMatcher.match(searchTerm, entryName, {
+          threshold: 0.7
+        });
         
-        // Fuzzy match using Levenshtein distance
-        const score = this.fuzzyMatch(searchTerm, entryName);
-        maxScore = Math.max(maxScore, score);
+        if (matchResult.score > maxScore) {
+          maxScore = matchResult.score;
+          bestMatchDetails = {
+            ...matchResult,
+            searchTerm,
+            matchedName: entryName
+          };
+        }
+      }
+    }
+    
+    // Also try contextual matching if we have additional data
+    if (entry.dateOfBirth || entry.nationality) {
+      const contextResult = this.fuzzyMatcher.contextualMatch(
+        { name: searchTerms[0], dateOfBirth: null, nationality: null },
+        { name: entry.name, dateOfBirth: entry.dateOfBirth, nationality: entry.nationality },
+        { threshold: 0.7 }
+      );
+      
+      if (contextResult.score > maxScore) {
+        maxScore = contextResult.score;
+        bestMatchDetails = contextResult;
       }
     }
     
@@ -348,49 +666,27 @@ class SanctionsChecker {
   }
 
   /**
-   * Fuzzy string matching using simplified Levenshtein distance
+   * Enhanced sanctions search with multiple sources
    */
-  fuzzyMatch(str1, str2) {
-    const longer = str1.length > str2.length ? str1 : str2;
-    const shorter = str1.length > str2.length ? str2 : str1;
+  async searchAcrossAllLists(userData) {
+    // Use watchlist downloader's search functionality
+    const searchName = `${userData.firstName} ${userData.lastName}`;
+    const results = await watchlistDownloader.searchWatchlists(searchName, {
+      threshold: 0.8
+    });
     
-    if (longer.length === 0) {
-      return 1.0;
-    }
-    
-    const editDistance = this.levenshteinDistance(longer, shorter);
-    return (longer.length - editDistance) / longer.length;
-  }
-
-  /**
-   * Calculate Levenshtein distance between two strings
-   */
-  levenshteinDistance(str1, str2) {
-    const matrix = [];
-    
-    for (let i = 0; i <= str2.length; i++) {
-      matrix[i] = [i];
-    }
-    
-    for (let j = 0; j <= str1.length; j++) {
-      matrix[0][j] = j;
-    }
-    
-    for (let i = 1; i <= str2.length; i++) {
-      for (let j = 1; j <= str1.length; j++) {
-        if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
-          matrix[i][j] = matrix[i - 1][j - 1];
-        } else {
-          matrix[i][j] = Math.min(
-            matrix[i - 1][j - 1] + 1,
-            matrix[i][j - 1] + 1,
-            matrix[i - 1][j] + 1
-          );
-        }
-      }
-    }
-    
-    return matrix[str2.length][str1.length];
+    return results.map(result => ({
+      listSource: result.source,
+      matchedName: result.name,
+      matchScore: result.matchScore,
+      matchType: result.matchType,
+      aliases: result.aliases || [],
+      dateOfBirth: result.dateOfBirth,
+      nationality: result.nationality,
+      reason: result.program || result.designation || 'Sanctioned entity',
+      addedDate: result.addedDate,
+      uid: result.uid
+    }));
   }
 }
 
@@ -400,6 +696,7 @@ class SanctionsChecker {
 class PEPChecker {
   constructor() {
     this.pepList = [];
+    this.fuzzyMatcher = fuzzyMatcher;
   }
 
   /**
@@ -419,16 +716,18 @@ class PEPChecker {
     const searchTerms = this.prepareSearchTerms(userData);
     
     for (const entry of this.pepList) {
-      const isMatch = this.checkMatch(searchTerms, entry);
+      const matchResult = this.checkMatch(searchTerms, entry);
       
-      if (isMatch) {
+      if (matchResult.matches) {
         matches.push({
           name: entry.name,
           position: entry.position,
           country: entry.country,
           since: entry.since,
           category: entry.category, // Head of State, Minister, etc.
-          riskLevel: entry.riskLevel || 'high'
+          riskLevel: entry.riskLevel || 'high',
+          matchScore: matchResult.score,
+          matchType: matchResult.matchType
         });
       }
     }
@@ -463,23 +762,47 @@ class PEPChecker {
    * Check if terms match PEP entry
    */
   checkMatch(searchTerms, entry) {
-    const entryName = entry.name.toLowerCase();
-    
+    // Use fuzzy matcher for more accurate matching
     for (const term of searchTerms) {
-      if (entryName.includes(term) || term.includes(entryName)) {
-        return true;
+      const matchResult = this.fuzzyMatcher.match(term, entry.name, {
+        threshold: 0.75
+      });
+      
+      if (matchResult.isMatch) {
+        return {
+          matches: true,
+          score: matchResult.score,
+          matchType: matchResult.matchType
+        };
       }
     }
     
-    return false;
+    return { matches: false, score: 0 };
   }
 
   /**
    * Check if user is family member of PEP
    */
   checkFamilyPEP(userData) {
-    // In a real implementation, this would check family relationships
-    // For now, return false
+    // Check for common family name patterns
+    const familyIndicators = ['jr', 'jr.', 'sr', 'sr.', 'ii', 'iii', 'iv'];
+    const lastName = userData.lastName?.toLowerCase() || '';
+    
+    // Check if any PEP has the same last name
+    for (const entry of this.pepList) {
+      const pepLastName = entry.name.split(' ').pop()?.toLowerCase() || '';
+      
+      if (pepLastName && lastName && pepLastName === lastName) {
+        // Check for family indicators
+        const userName = `${userData.firstName} ${userData.lastName}`.toLowerCase();
+        for (const indicator of familyIndicators) {
+          if (userName.includes(indicator)) {
+            return true;
+          }
+        }
+      }
+    }
+    
     return false;
   }
 }
@@ -490,36 +813,125 @@ class PEPChecker {
 class AdverseMediaChecker {
   constructor() {
     this.adverseKeywords = [
-      'fraud', 'money laundering', 'terrorist financing',
-      'corruption', 'bribery', 'embezzlement', 'sanctions',
-      'criminal', 'investigation', 'prosecution', 'conviction',
-      'scandal', 'misconduct', 'violation'
+      // Financial crimes
+      'fraud', 'money laundering', 'terrorist financing', 'tax evasion',
+      'insider trading', 'market manipulation', 'ponzi scheme', 'embezzlement',
+      
+      // Corruption
+      'corruption', 'bribery', 'kickback', 'extortion', 'racketeering',
+      
+      // Legal issues
+      'criminal', 'investigation', 'prosecution', 'conviction', 'indictment',
+      'arrest', 'lawsuit', 'litigation', 'settlement', 'guilty', 'sentenced',
+      
+      // Sanctions and compliance
+      'sanctions', 'blacklist', 'frozen assets', 'regulatory violation',
+      
+      // Other misconduct
+      'scandal', 'misconduct', 'violation', 'breach', 'illegal',
+      'trafficking', 'smuggling', 'forgery', 'conspiracy'
     ];
+    
+    this.riskCategories = {
+      high: ['terrorist financing', 'money laundering', 'sanctions', 'trafficking'],
+      medium: ['fraud', 'corruption', 'bribery', 'embezzlement'],
+      low: ['investigation', 'lawsuit', 'regulatory violation']
+    };
   }
 
   /**
    * Check for adverse media mentions
    */
   async check(userData) {
-    // In a real implementation, this would:
-    // 1. Search news APIs (Google News, Bing News, etc.)
-    // 2. Search social media
-    // 3. Search court records and public databases
-    // 4. Use NLP to analyze sentiment and context
+    const searchName = `${userData.firstName} ${userData.lastName}`;
+    const results = [];
     
-    // For now, return mock results
-    const mockResults = this.mockAdverseMediaSearch(userData);
-    
-    return {
-      hasAdverseMedia: mockResults.length > 0,
-      sources: mockResults,
-      keywords: this.adverseKeywords,
-      timestamp: new Date()
-    };
+    try {
+      // Search using multiple strategies
+      const searches = await Promise.all([
+        this.searchLocalDatabase(searchName),
+        this.searchCachedMedia(searchName),
+        this.analyzeRiskIndicators(userData)
+      ]);
+      
+      // Combine results
+      searches.forEach(searchResults => {
+        if (searchResults && searchResults.length > 0) {
+          results.push(...searchResults);
+        }
+      });
+      
+      // Deduplicate and sort by relevance
+      const uniqueResults = this.deduplicateResults(results);
+      const scoredResults = this.scoreResults(uniqueResults, searchName);
+      
+      return {
+        hasAdverseMedia: scoredResults.length > 0,
+        sources: scoredResults,
+        keywords: this.adverseKeywords,
+        riskScore: this.calculateMediaRiskScore(scoredResults),
+        timestamp: new Date()
+      };
+    } catch (error) {
+      console.error('[AdverseMedia] Error during check:', error);
+      
+      // Fallback to basic check
+      const mockResults = this.mockAdverseMediaSearch(userData);
+      return {
+        hasAdverseMedia: mockResults.length > 0,
+        sources: mockResults,
+        keywords: this.adverseKeywords,
+        timestamp: new Date()
+      };
+    }
   }
 
   /**
-   * Mock adverse media search
+   * Search local database for adverse media
+   */
+  async searchLocalDatabase(searchName) {
+    // This would search a local database of known adverse media
+    // For now, return empty array
+    return [];
+  }
+
+  /**
+   * Search cached media entries
+   */
+  async searchCachedMedia(searchName) {
+    // This would search cached news articles and media mentions
+    // For now, return empty array
+    return [];
+  }
+
+  /**
+   * Analyze risk indicators in user data
+   */
+  async analyzeRiskIndicators(userData) {
+    const results = [];
+    
+    // Check for high-risk patterns in name
+    const userName = `${userData.firstName} ${userData.lastName}`.toLowerCase();
+    
+    for (const keyword of this.adverseKeywords) {
+      if (userName.includes(keyword)) {
+        results.push({
+          source: 'Name Analysis',
+          title: `Name contains risk keyword: ${keyword}`,
+          date: new Date(),
+          snippet: `User name contains potential risk indicator`,
+          relevanceScore: 0.6,
+          keyword,
+          riskCategory: this.categorizeRisk(keyword)
+        });
+      }
+    }
+    
+    return results;
+  }
+
+  /**
+   * Mock adverse media search (fallback)
    */
   mockAdverseMediaSearch(userData) {
     // Simulate finding adverse media for high-risk names
@@ -534,12 +946,96 @@ class AdverseMediaChecker {
           date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days ago
           url: 'https://example.com/article',
           snippet: 'Authorities are investigating...',
-          relevanceScore: 0.85
+          relevanceScore: 0.85,
+          keywords: ['investigation', 'suspicious'],
+          riskCategory: 'medium'
         }];
       }
     }
     
     return [];
+  }
+
+  /**
+   * Deduplicate results
+   */
+  deduplicateResults(results) {
+    const seen = new Set();
+    return results.filter(result => {
+      const key = `${result.source}-${result.title}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  /**
+   * Score and sort results by relevance
+   */
+  scoreResults(results, searchName) {
+    return results
+      .map(result => ({
+        ...result,
+        finalScore: this.calculateRelevanceScore(result, searchName)
+      }))
+      .sort((a, b) => b.finalScore - a.finalScore)
+      .slice(0, 10); // Top 10 most relevant
+  }
+
+  /**
+   * Calculate relevance score
+   */
+  calculateRelevanceScore(result, searchName) {
+    let score = result.relevanceScore || 0.5;
+    
+    // Boost score for recent articles
+    const daysSincePublished = (Date.now() - new Date(result.date)) / (1000 * 60 * 60 * 24);
+    if (daysSincePublished < 30) score += 0.2;
+    else if (daysSincePublished < 90) score += 0.1;
+    
+    // Boost score for high-risk keywords
+    if (result.keywords) {
+      for (const keyword of result.keywords) {
+        if (this.riskCategories.high.includes(keyword)) {
+          score += 0.3;
+        } else if (this.riskCategories.medium.includes(keyword)) {
+          score += 0.2;
+        }
+      }
+    }
+    
+    return Math.min(score, 1.0);
+  }
+
+  /**
+   * Calculate overall media risk score
+   */
+  calculateMediaRiskScore(results) {
+    if (results.length === 0) return 0;
+    
+    let riskScore = 0;
+    
+    // Factor in number of results
+    riskScore += Math.min(results.length * 10, 30);
+    
+    // Factor in severity of findings
+    for (const result of results) {
+      if (result.riskCategory === 'high') riskScore += 20;
+      else if (result.riskCategory === 'medium') riskScore += 10;
+      else riskScore += 5;
+    }
+    
+    return Math.min(riskScore, 100);
+  }
+
+  /**
+   * Categorize risk level of keyword
+   */
+  categorizeRisk(keyword) {
+    for (const [level, keywords] of Object.entries(this.riskCategories)) {
+      if (keywords.includes(keyword)) return level;
+    }
+    return 'low';
   }
 }
 

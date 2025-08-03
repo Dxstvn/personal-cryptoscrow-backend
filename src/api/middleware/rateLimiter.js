@@ -11,10 +11,15 @@ const createRedisClient = () => {
     return null;
   }
   
-  const redisUrl = config.get('REDIS_URL');
-  
-  if (redisUrl) {
-    return new Redis(redisUrl);
+  try {
+    const redisUrl = config.get('REDIS_URL');
+    
+    if (redisUrl) {
+      return new Redis(redisUrl);
+    }
+  } catch (error) {
+    // Config not initialized yet, fall back to in-memory
+    console.warn('[RateLimiter] Config not initialized, using in-memory rate limiting');
   }
   
   // Fallback to in-memory if Redis not configured
