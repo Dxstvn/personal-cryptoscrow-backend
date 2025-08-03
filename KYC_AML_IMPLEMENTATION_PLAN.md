@@ -1946,7 +1946,14 @@ NEXT_PUBLIC_MAX_FILE_SIZE=10485760         # 10MB
 - Test face verification with various lighting conditions
 - Validate AML screening results
 
-### 9. Production Considerations
+### 9. User Acceptance Testing
+- **Manual End-to-End Testing**: Complete the full KYC/AML onboarding flow from a user's perspective
+- **Real Document Testing**: Use actual identity documents and selfies
+- **User Experience Validation**: Verify the flow is intuitive and error messages are helpful
+- **Performance Testing**: Ensure acceptable response times for each step
+- **Edge Case Testing**: Test with various document qualities and lighting conditions
+
+### 10. Production Considerations
 - Implement proper loading states during API calls
 - Add user-friendly error messages
 - Ensure graceful degradation if services are down
@@ -2017,6 +2024,40 @@ The frontend team needs to:
 - **Rate Limiting**: Prevents abuse and DOS attacks
 - **Audit Logging**: All actions are logged
 
+## Testing Approach
+
+### Live User Testing Plan
+
+Given the complexity of ML-based services (OCR and face verification), the recommended approach is:
+
+1. **Manual Testing First**: Complete the entire KYC/AML flow manually to validate:
+   - Document upload and OCR accuracy
+   - Face verification and liveness detection
+   - AML screening results
+   - Overall user experience
+
+2. **Testing Steps**:
+   ```bash
+   # 1. Start Firebase emulators
+   npm run emulator
+   
+   # 2. Start the backend server
+   npm run dev
+   
+   # 3. Use a REST client (Postman/Insomnia) or frontend to:
+   #    - Create a test user account
+   #    - Start a KYC session
+   #    - Upload real identity documents
+   #    - Complete selfie verification
+   #    - Review results
+   ```
+
+3. **Why Manual Testing**:
+   - ML models behave differently with real vs. synthetic data
+   - User experience validation requires human judgment
+   - Edge cases are better discovered through actual usage
+   - Performance characteristics are more accurately assessed
+
 ## Conclusion
 
 The ClearHold platform now has a **fully functional backend KYC/AML system** that meets regulatory requirements while maintaining cost-effectiveness through open-source solutions. The system has been thoroughly tested with 22 integration tests and is ready for frontend integration.
@@ -2028,4 +2069,4 @@ The backend provides:
 - ✅ Comprehensive compliance reporting
 - ✅ Production-ready security measures
 
-The frontend team can now proceed with integration, leveraging the existing UI components and connecting them to the live backend APIs. With both systems integrated, ClearHold will have a complete, regulatory-compliant KYC/AML solution at a fraction of the cost of commercial alternatives.
+**Next Step**: Complete the KYC/AML onboarding flow from a user's perspective to validate the entire system before frontend integration. This manual testing approach will ensure the ML components (Tesseract.js OCR and @vladmandic/human face verification) work correctly with real-world data.
