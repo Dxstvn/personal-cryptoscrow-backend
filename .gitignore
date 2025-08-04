@@ -111,3 +111,7 @@ aws-deployment/
 tsconfig.tsbuildinfo
 .tscache/
 mcp/
+
+# Ngrok
+.ngrok-url
+ngrok.yml
