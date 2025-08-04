@@ -144,3 +144,11 @@ When working with the frontend locally, there are specific initialization patter
    - Local development uses `http://localhost:3000`
    - Production uses environment variables or domain-based URLs
    - The API service should dynamically determine the correct URL based on the environment
+
+## Git Commit Guidelines
+
+### 📝 **Commit Message Rules**
+- **NEVER credit yourself in git commit messages**
+- Do not include phrases like "Generated with Claude", "Co-Authored-By: Claude", or any self-attribution
+- Write clear, concise commit messages that describe the changes made
+- Focus on what was changed and why, not who made the changes

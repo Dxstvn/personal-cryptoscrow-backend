@@ -154,9 +154,10 @@ export const corsOptions = {
       'http://clearhold.app:3000',
       // Add Vercel preview domains for development
       /^https:\/\/.*\.vercel\.app$/,
-      // Add ngrok domains for testing
+      // Add ngrok URLs for local development with Vercel
       /^https:\/\/.*\.ngrok\.io$/,
       /^https:\/\/.*\.ngrok-free\.app$/,
+      /^https:\/\/.*\.ngrok\.app$/,
       process.env.FRONTEND_URL,
       process.env.DOMAIN_URL
     ].filter(Boolean); // Remove any undefined values
