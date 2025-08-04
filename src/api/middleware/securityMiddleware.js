@@ -179,6 +179,6 @@ export const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-forwarded-for', 'x-forwarded-proto'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-forwarded-for', 'x-forwarded-proto', 'ngrok-skip-browser-warning'],
   maxAge: 86400 // 24 hours
 }; 
