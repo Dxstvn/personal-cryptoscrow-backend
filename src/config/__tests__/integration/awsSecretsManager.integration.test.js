@@ -100,7 +100,7 @@ describe('AWS Secrets Manager Integration Tests', () => {
         const stagingAppSecrets = {
           JWT_SECRET: 'staging-jwt-secret',
           ENCRYPTION_KEY: 'staging-encryption-key',
-          FRONTEND_URL: 'https://staging.clearhold.app'
+          FRONTEND_URL: 'https://api.clearhold.app'
         };
 
         vi.spyOn(mockSecretsManager, 'send').mockResolvedValue({
