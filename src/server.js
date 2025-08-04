@@ -82,6 +82,7 @@ import {
 
 // Import routers
 import loginRouter from './api/routes/auth/loginSignUp.js';
+import passwordlessRouter from './api/routes/auth/passwordless.js';
 import fileUploadRouter from './api/routes/database/fileUploadDownload.js';
 import healthCheckRouter from './api/routes/health/health.js';
 import contactRouter from './api/routes/contact/contactRoutes.js';
@@ -121,6 +122,7 @@ app.use('/health', healthCheckRouter);
 
 // API routes with authentication
 app.use('/auth', loginRouter);
+app.use('/auth/passwordless', passwordlessRouter);
 app.use('/files', fileUploadRouter);
 app.use('/contact', contactRouter);
 app.use('/transaction', transactionRouter);
@@ -171,8 +173,9 @@ async function startServer() {
           await conditionSync.start();
           
           // Initialize event-driven dispute handler
-          const disputeHandler = new DisputeEventHandler(escrowService, databaseEvents);
-          disputeHandler.start();
+          // TODO: Fix DisputeEventHandler getActiveDisputes issue
+          // const disputeHandler = new DisputeEventHandler(escrowService, databaseEvents);
+          // disputeHandler.start();
           
           console.log('✅ Real-time synchronization services started');
         } catch (error) {

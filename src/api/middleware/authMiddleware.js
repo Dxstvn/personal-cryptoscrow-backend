@@ -1,5 +1,6 @@
 import { getAuth } from 'firebase-admin/auth';
 import { getAdminApp } from '../routes/auth/admin.js';
+import jwt from 'jsonwebtoken';
 
 // Helper function to get Firebase services
 async function getFirebaseServices() {
@@ -20,6 +21,24 @@ export async function authMiddleware(req, res, next) {
   }
   
   try {
+    // First, try to verify as custom JWT (from passwordless login)
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+      if (decoded.uid && decoded.authMethod === 'passwordless') {
+        req.userId = decoded.uid;
+        req.user = { 
+          uid: decoded.uid, 
+          email: decoded.email, 
+          emailVerified: decoded.emailVerified,
+          authMethod: decoded.authMethod 
+        };
+        next();
+        return;
+      }
+    } catch (jwtError) {
+      // Not a valid JWT, continue to Firebase token verification
+    }
+    
     const { auth } = await getFirebaseServices();
     
     if (isTest) {
