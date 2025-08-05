@@ -141,6 +141,7 @@ export const corsOptions = {
     
     const allowedOrigins = [
       'http://localhost:3000',
+      'http://localhost:3001', // Frontend dev server for E2E testing
       'http://localhost:5173',
       'http://44.202.141.56:3000',
       'https://44.202.141.56:3000',
@@ -179,6 +180,6 @@ export const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-forwarded-for', 'x-forwarded-proto', 'ngrok-skip-browser-warning'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-forwarded-for', 'x-forwarded-proto', 'ngrok-skip-browser-warning', 'x-request-id', 'x-e2e-test'],
   maxAge: 86400 // 24 hours
 }; 
