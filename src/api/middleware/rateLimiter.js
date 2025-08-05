@@ -50,6 +50,10 @@ export const createDisputeRateLimiter = () => {
     standardHeaders: true,
     legacyHeaders: false,
     skipSuccessfulRequests: false,
+    skip: (req) => {
+      // Skip rate limiting for E2E tests
+      return req.headers['x-e2e-test'] === 'true' && (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test' || process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'staging');
+    },
     keyGenerator: (req) => {
       // Use authenticated user ID if available, otherwise IP
       return req.user?.uid || req.userId || req.ip;
@@ -94,6 +98,10 @@ export const createApiRateLimiter = () => {
     },
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req) => {
+      // Skip rate limiting for E2E tests
+      return req.headers['x-e2e-test'] === 'true' && (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test' || process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'staging');
+    },
     keyGenerator: (req) => req.ip
   };
   
@@ -117,6 +125,10 @@ export const createAuthRateLimiter = () => {
     max: 5, // 5 attempts per 15 minutes
     skipSuccessfulRequests: true, // Don't count successful logins
     delayMs: progressiveDelay, // Progressive delay for repeated failures
+    skip: (req) => {
+      // Skip rate limiting for E2E tests
+      return req.headers['x-e2e-test'] === 'true' && (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test' || process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'staging');
+    },
     message: {
       success: false,
       error: 'Too many failed authentication attempts. Please try again later.'
@@ -149,7 +161,8 @@ export const createHighValueRateLimiter = () => {
       // Skip rate limiting for operations below threshold
       const amount = req.body?.amount || req.body?.dealAmount || 0;
       const threshold = 10000; // $10,000 USD
-      return amount < threshold;
+      // Also skip for E2E tests
+      return amount < threshold || (req.headers['x-e2e-test'] === 'true' && (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test' || process.env.NODE_ENV === 'development'));
     },
     keyGenerator: (req) => {
       return req.user?.uid || req.userId || req.ip;

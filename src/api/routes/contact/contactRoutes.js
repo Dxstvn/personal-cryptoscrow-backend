@@ -18,7 +18,7 @@ async function getFirebaseServices() {
 async function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-  const isTest = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test';
+  const isTest = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'e2e_test' || process.env.NODE_ENV === 'staging';
   
   if (!token) return res.status(401).json({ error: 'No token provided' });
   
